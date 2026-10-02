@@ -1,0 +1,9 @@
+// Change this if Sideloadly reports the bundle ID is already taken.
+PRODUCT_BUNDLE_IDENTIFIER = com.glassessolver.k7q3m2
+
+// Empty Meta values = Developer Mode (the SDK skips app attestation).
+// CI overrides these from GitHub Actions secrets via Secrets.xcconfig.
+META_APP_ID =
+CLIENT_TOKEN =
+
+#include? "Secrets.xcconfig"

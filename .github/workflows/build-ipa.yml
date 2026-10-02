@@ -1,0 +1,62 @@
+name: Build unsigned IPA
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      # Meta's SDK 1.0.0 requires Xcode 26.4+.
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_26.6.app
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      # Optional. Empty secrets leave the app in Meta Developer Mode.
+      - name: Write Meta config from secrets
+        env:
+          META_APP_ID: ${{ secrets.META_APP_ID }}
+          META_CLIENT_TOKEN: ${{ secrets.META_CLIENT_TOKEN }}
+        run: |
+          printf 'META_APP_ID = %s\nCLIENT_TOKEN = %s\n' "$META_APP_ID" "$META_CLIENT_TOKEN" > Config/Secrets.xcconfig
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build (unsigned)
+        run: |
+          xcodebuild build \
+            -project GlassesSolver.xcodeproj \
+            -scheme GlassesSolver \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=""
+
+      - name: Package IPA
+        run: |
+          rm -rf Payload
+          mkdir Payload
+          cp -R build/Build/Products/Release-iphoneos/GlassesSolver.app Payload/
+          zip -qry GlassesSolver-unsigned.ipa Payload
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: GlassesSolver-unsigned-ipa
+          path: GlassesSolver-unsigned.ipa
+          if-no-files-found: error
+          # Short retention: if Meta secrets are set, they are inside this IPA.
+          retention-days: 3
