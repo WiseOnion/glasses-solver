@@ -7,6 +7,7 @@ enum GlassesError: LocalizedError {
   case sessionEnded(String?)
   case cameraUnavailable
   case captureRejected
+  case sessionPaused
   case camera(String)
   case timedOut(String)
 
@@ -20,6 +21,8 @@ enum GlassesError: LocalizedError {
       return "Couldn't start the glasses camera. Try again."
     case .captureRejected:
       return "The glasses are busy with another capture. Try again in a moment."
+    case .sessionPaused:
+      return "The glasses session is paused. Tap the touchpad once to resume it."
     case .camera(let message):
       return message
     case .timedOut(let step):
@@ -30,6 +33,7 @@ enum GlassesError: LocalizedError {
 
 /// Takes one photo from the glasses: starts (or reuses) a DeviceSession, attaches the
 /// camera, captures, then detaches the camera so the next capture starts clean.
+/// The hands-free session shares this DeviceSession, since only one can run at a time.
 @MainActor
 final class GlassesCamera {
   private let wearables: any WearablesInterface
@@ -43,9 +47,11 @@ final class GlassesCamera {
     self.selector = selector
   }
 
+  /// The current session, if one has been created and not ended.
+  var currentSession: DeviceSession? { session }
+
   /// Returns the photo's encoded bytes (JPEG, or HEIC for the high-res path).
   func capturePhoto(highResolution: Bool) async throws -> Data {
-    guard selector.activeDevice != nil else { throw GlassesError.noGlasses }
     let session = try await startedSession()
 
     let config = StreamConfiguration(videoCodec: .raw, resolution: .high, frameRate: 15)
@@ -63,7 +69,15 @@ final class GlassesCamera {
 
   // MARK: - Session
 
-  private func startedSession() async throws -> DeviceSession {
+  /// Ends the current session, if any. The next capture starts a new one.
+  func endSession() {
+    session?.stop()
+    session = nil
+    sessionTokens.clear()
+  }
+
+  func startedSession() async throws -> DeviceSession {
+    guard selector.activeDevice != nil else { throw GlassesError.noGlasses }
     if let existing = session {
       if existing.state == .started { return existing }
       // Paused, stopping, or stopped: end it and start fresh.

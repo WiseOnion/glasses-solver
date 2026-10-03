@@ -49,9 +49,12 @@
 		<string>$(DEVELOPMENT_TEAM)</string>
 	</dict>
 
-	<!-- Link types the SDK uses: Bluetooth LE, Bluetooth Classic, Wi-Fi -->
+	<!-- Link types the SDK uses: Bluetooth LE, Bluetooth Classic, Wi-Fi.
+	     bluetooth-central keeps the hands-free session alive in the background;
+	     audio lets the answer be spoken while the phone is locked. -->
 	<key>UIBackgroundModes</key>
 	<array>
+		<string>audio</string>
 		<string>processing</string>
 		<string>bluetooth-central</string>
 		<string>bluetooth-peripheral</string>

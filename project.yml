@@ -35,4 +35,7 @@ targets:
         product: MWDATCore
       - package: MetaWearablesDAT
         product: MWDATCamera
+      # Experimental in SDK 1.0: fine for Developer Mode, not yet publishable.
+      - package: MetaWearablesDAT
+        product: MWDATInputs
     scheme: {}

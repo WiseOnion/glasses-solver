@@ -30,7 +30,7 @@ enum ClaudeError: LocalizedError {
 /// Calls the Claude Messages API over raw HTTP (there is no official Swift SDK).
 struct ClaudeClient: Sendable {
   static let model = "claude-opus-5-5"
-  static let prompt =
+  static let defaultPrompt =
     "Solve the problem in this photo step by step. Keep it short and plain enough to hear read aloud."
   static let system =
     "Your reply is read aloud by text-to-speech. Write plain spoken sentences only: no Markdown, "
@@ -39,7 +39,7 @@ struct ClaudeClient: Sendable {
 
   let apiKey: String
 
-  func solve(photo: Data) async throws -> String {
+  func solve(photo: Data, prompt: String = defaultPrompt) async throws -> String {
     guard let jpeg = Self.preparedJPEG(from: photo) else { throw ClaudeError.badImage }
 
     var request = URLRequest(url: URL(string: "https://api.anthropic.com/v1/messages")!)
@@ -69,7 +69,7 @@ struct ClaudeClient: Sendable {
                 "data": jpeg.base64EncodedString(),
               ],
             ],
-            ["type": "text", "text": Self.prompt],
+            ["type": "text", "text": prompt],
           ],
         ]
       ],
