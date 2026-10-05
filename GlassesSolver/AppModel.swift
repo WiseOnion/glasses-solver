@@ -62,10 +62,27 @@ final class AppModel {
   @ObservationIgnored private let shutter = ShutterButton()
   @ObservationIgnored private var sessionStateTask: Task<Void, Never>?
   @ObservationIgnored private var pendingSessionPrompt: String?
+  @ObservationIgnored private var shutterReviveTask: Task<Void, Never>?
+  @ObservationIgnored private var shutterAttempts = 0
+  @ObservationIgnored private var shutterProblemReported = false
+  /// Attempts to (re)attach button events before telling the wearer they're unavailable.
+  private static let maxShutterAttempts = 4
+  /// Presses closer together than this (by the glasses' clock) count as one. Covers a
+  /// burst delivered at once when the app wakes, and a fast double press that may arrive
+  /// as two short presses.
+  private static let pressDebounceMs: Int64 = 800
+  @ObservationIgnored private var lastPressTimestampMs: Int64?
+  /// Smallest (phone clock − glasses clock) seen, i.e. the fastest delivery so far. A press
+  /// whose offset is well above it waited somewhere, likely while iOS had the app suspended.
+  @ObservationIgnored private var pressOffsetBaselineMs: Int64?
+  @ObservationIgnored private var lastSeenPressTimestampMs: Int64?
+  @ObservationIgnored private var lastLateNotice: Date?
+  private static let latePressThresholdMs: Int64 = 5000
+  @ObservationIgnored private var saidStillWorking = false
   @ObservationIgnored private var registrationTask: Task<Void, Never>?
   @ObservationIgnored private var deviceTask: Task<Void, Never>?
 
-  init() {
+  init(sdkSetupError: String? = nil) {
     let wearables = Wearables.shared
     let selector = AutoDeviceSelector(wearables: wearables)
     self.wearables = wearables
@@ -74,6 +91,10 @@ final class AppModel {
     self.registrationState = wearables.registrationState
     self.hasAPIKey = Keychain.read(Self.apiKeyAccount) != nil
     self.useHighResPhoto = UserDefaults.standard.bool(forKey: Self.highResDefaultsKey)
+    if let sdkSetupError {
+      errorMessage =
+        "The Meta glasses SDK failed to start, so glasses features may not work.\n\nDetails: \(sdkSetupError)"
+    }
 
     registrationTask = Task { [weak self] in
       for await state in wearables.registrationStateStream() {
@@ -109,7 +130,7 @@ final class AppModel {
       do {
         try await wearables.startRegistration()
       } catch {
-        errorMessage = error.localizedDescription
+        errorMessage = ErrorDetail.alertText(error)
       }
     }
   }
@@ -119,7 +140,7 @@ final class AppModel {
       do {
         try await wearables.startUnregistration()
       } catch {
-        errorMessage = error.localizedDescription
+        errorMessage = ErrorDetail.alertText(error)
       }
     }
   }
@@ -134,7 +155,7 @@ final class AppModel {
       do {
         _ = try await wearables.handleUrl(url)
       } catch {
-        errorMessage = error.localizedDescription
+        errorMessage = ErrorDetail.alertText(error)
       }
     }
   }
@@ -163,7 +184,7 @@ final class AppModel {
         showCameraPermissionPrompt = true
       }
     } catch {
-      errorMessage = error.localizedDescription
+      errorMessage = ErrorDetail.alertText(error)
     }
   }
 
@@ -172,7 +193,9 @@ final class AppModel {
     let pendingPrompt = pendingSessionPrompt
     pendingSessionPrompt = nil
     do {
-      guard try await wearables.requestPermission(.camera) == .granted else {
+      let status = try await wearables.requestPermission(.camera)
+      diag("permission", "requestPermission(.camera) -> \(status)")
+      guard status == .granted else {
         errorMessage = "Camera permission wasn't granted in the Meta AI app."
         return
       }
@@ -182,7 +205,8 @@ final class AppModel {
         await run()
       }
     } catch {
-      errorMessage = error.localizedDescription
+      diag("permission", "requestPermission(.camera) FAILED: \(ErrorDetail.describe(error))")
+      errorMessage = ErrorDetail.alertText(error)
     }
   }
 
@@ -205,31 +229,80 @@ final class AppModel {
       hasAPIKey = false
       return
     }
-    // A capture-button press may wake the app in the background; ask iOS for time to finish.
-    let backgroundActivity = BackgroundActivity(name: "Solve")
+    // A capture-button press may wake the app in the background. iOS then allows roughly
+    // 30 seconds; if that runs out mid-photo, stop the camera rather than be suspended with
+    // a stream running (SDK issue #231).
+    let backgroundActivity = BackgroundActivity(name: "Solve") { [weak self] in
+      self?.camera.abortCapture()
+    }
+    saidStillWorking = false
     speaker.stop()
     defer {
       phase = .idle
       backgroundActivity.end()
     }
     let prompt = sessionActive ? sessionPrompt : ClaudeClient.defaultPrompt
+    diag("solve", "start (app \(Self.appStateDescription), hands-free \(sessionActive))")
 
+    let photo: Data
     do {
       phase = .capturing
-      let photo = try await camera.capturePhoto(highResolution: useHighResPhoto)
-      lastPhoto = UIImage(data: photo)
+      photo = try await camera.capturePhoto(highResolution: useHighResPhoto, keepSession: sessionActive)
+      diag("solve", "photo received, \(photo.count) bytes; calling Claude")
+    } catch {
+      phase = .idle
+      scheduleShutterRevive("after a failed photo", force: true)
+      reportSolveFailure(error)
+      speaker.endKeepAliveAfterSpeech()
+      return
+    }
+    lastPhoto = UIImage(data: photo)
+    phase = .thinking
+    // A photo can drop button events, sometimes without saying so; re-add them while
+    // Claude works, since the button can't be used until the answer is spoken anyway.
+    scheduleShutterRevive("after a photo", force: true)
 
-      phase = .thinking
+    // Claude can take longer than iOS's background allowance. Playing (silent) audio keeps
+    // the app running until the spoken answer, which keeps it running to the end.
+    speaker.beginKeepAlive()
+    do {
       speaker.speak("Got it. Working on it.")
       let answer = try await ClaudeClient(apiKey: apiKey).solve(photo: photo, prompt: prompt)
       lastAnswer = answer
+      diag("solve", "answer received, \(answer.count) characters (app \(Self.appStateDescription))")
       speaker.speak(answer)
     } catch {
-      let message = error.localizedDescription
-      errorMessage = message
-      // The user may be looking through the glasses, not at the phone.
-      speaker.speak("Sorry. \(message)")
+      reportSolveFailure(error)
     }
+    speaker.endKeepAliveAfterSpeech()
+  }
+
+  /// How much later this press arrived than the fastest press so far, in milliseconds.
+  private func pressLateness(_ timestampMs: Int64) -> Int64 {
+    if let last = lastSeenPressTimestampMs, timestampMs < last {
+      pressOffsetBaselineMs = nil  // the glasses' clock restarted
+    }
+    lastSeenPressTimestampMs = timestampMs
+    let offset = Int64(Date.now.timeIntervalSince1970 * 1000) - timestampMs
+    let baseline = min(pressOffsetBaselineMs ?? offset, offset)
+    pressOffsetBaselineMs = baseline
+    return offset - baseline
+  }
+
+  private static var appStateDescription: String {
+    switch UIApplication.shared.applicationState {
+    case .active: "foreground"
+    case .inactive: "inactive"
+    case .background: "background"
+    @unknown default: "unknown"
+    }
+  }
+
+  private func reportSolveFailure(_ error: Error) {
+    diag("solve", "FAILED: \(ErrorDetail.describe(error))")
+    errorMessage = ErrorDetail.alertText(error)
+    // The user may be looking through the glasses, not at the phone.
+    speaker.speak("Sorry. \(error.localizedDescription)")
   }
 
   // MARK: - Hands-free session
@@ -238,6 +311,9 @@ final class AppModel {
   /// of the glasses' capture button, using `prompt`.
   func startSession(prompt: String) async {
     let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+    diag(
+      "start", "Start Session tapped: registration \(registrationState), glasses detected \(hasActiveDevice), "
+        + "API key \(hasAPIKey), already active \(sessionActive), starting \(isStartingSession)")
     guard !trimmed.isEmpty, !sessionActive, !isStartingSession else { return }
     guard hasAPIKey else {
       errorMessage = "Add your Anthropic API key in Settings first."
@@ -249,22 +325,28 @@ final class AppModel {
     }
     do {
       // Ask now: the Meta AI permission screen can't open from the lock screen later.
-      if try await wearables.checkPermissionStatus(.camera) == .granted {
+      let status = try await wearables.checkPermissionStatus(.camera)
+      diag("permission", "checkPermissionStatus(.camera) -> \(status)")
+      if status == .granted {
         await beginSession(prompt: trimmed)
       } else {
         pendingSessionPrompt = trimmed
         showCameraPermissionPrompt = true
       }
     } catch {
-      errorMessage = error.localizedDescription
+      diag("permission", "checkPermissionStatus(.camera) FAILED: \(ErrorDetail.describe(error))")
+      errorMessage = ErrorDetail.alertText(error)
     }
   }
 
   func stopSession() {
     guard sessionActive else { return }
+    diag("start", "Stop session tapped")
     sessionActive = false
     sessionStateTask?.cancel()
     sessionStateTask = nil
+    shutterReviveTask?.cancel()
+    shutterReviveTask = nil
     shutter.detach(from: camera.currentSession)
     camera.endSession()
     resetSessionState()
@@ -277,9 +359,11 @@ final class AppModel {
     do {
       session = try await camera.startedSession()
     } catch {
-      errorMessage = error.localizedDescription
+      diag("start", "session start FAILED: \(ErrorDetail.describe(error))")
+      errorMessage = ErrorDetail.alertText(error)
       return
     }
+    diag("start", "session started; attaching capture button")
     sessionPrompt = prompt
     sessionActive = true
     sessionPaused = session.state == .paused
@@ -299,14 +383,15 @@ final class AppModel {
   }
 
   private func sessionStateChanged(_ state: DeviceSessionState, session: DeviceSession) {
+    diag("session", "hands-free session state -> \(state)")
     guard sessionActive else { return }
     switch state {
     case .started:
-      sessionPaused = false
-      // Reattach if button events dropped while paused, unless retrying can't help.
-      switch shutterStatus {
-      case .off, .unavailable(_, true): attachShutter(to: session)
-      case .activating, .active, .unavailable(_, false): break
+      if sessionPaused {
+        sessionPaused = false
+        // Button events may have dropped while paused; a resume earns a fresh set of tries.
+        shutterAttempts = 0
+        scheduleShutterRevive("session resumed")
       }
     case .paused:
       sessionPaused = true
@@ -314,6 +399,8 @@ final class AppModel {
       // Ended from the glasses (touchpad tap-and-hold, hinges closed) or lost connection.
       sessionActive = false
       sessionStateTask = nil
+      shutterReviveTask?.cancel()
+      shutterReviveTask = nil
       shutter.detach(from: nil)
       resetSessionState()
       speaker.speak("Glasses session ended.")
@@ -323,9 +410,10 @@ final class AppModel {
   }
 
   private func attachShutter(to session: DeviceSession) {
+    shutterAttempts += 1
     shutter.attach(
       to: session,
-      onPress: { [weak self] in self?.shutterPressed() },
+      onPress: { [weak self] timestampMs in self?.shutterPressed(at: timestampMs) },
       onStatus: { [weak self] status in self?.shutterStatusChanged(status) }
     )
     shutterStatus = shutter.status
@@ -333,7 +421,79 @@ final class AppModel {
 
   private func shutterStatusChanged(_ status: ShutterButton.Status) {
     shutterStatus = status
-    guard case .unavailable(let reason, _) = status else { return }
+    switch status {
+    case .active:
+      shutterAttempts = 0
+      shutterProblemReported = false
+    case .activating:
+      break
+    case .off:
+      // Dropped after being active, typically by a photo transfer.
+      scheduleShutterRevive("button events dropped")
+    case .unavailable(_, true):
+      if shutterAttempts < Self.maxShutterAttempts {
+        scheduleShutterRevive("retrying after an error")
+      } else {
+        reportShutterUnavailable()
+      }
+    case .unavailable(_, false):
+      reportShutterUnavailable()
+    }
+  }
+
+  /// Re-adds button events after they dropped or failed in a way a retry can fix. Waits a
+  /// beat first (longer on each attempt), since the glasses can't take the request while a
+  /// photo is still transferring or the link is still coming up.
+  /// With `force`, an `active` capability is replaced too: Meta's sample saw one report
+  /// `active` and deliver nothing, which can't be detected from here.
+  private func scheduleShutterRevive(_ reason: String, force: Bool = false) {
+    guard sessionActive else { return }
+    if force {
+      // A fresh cycle after each photo; replaces any pending, non-forced retry.
+      shutterReviveTask?.cancel()
+      shutterReviveTask = nil
+      shutterAttempts = 0
+    }
+    guard shutterReviveTask == nil else { return }
+    let delay = Duration.milliseconds(750 * max(1, shutterAttempts))
+    shutterReviveTask = Task { [weak self] in
+      try? await Task.sleep(for: delay)
+      guard !Task.isCancelled, let self else { return }
+      self.shutterReviveTask = nil
+      self.reviveShutter(reason, force: force)
+    }
+  }
+
+  private func reviveShutter(_ reason: String, force: Bool = false) {
+    switch shutterStatus {
+    case .unavailable(_, false): return
+    case .active, .activating: if !force { return }
+    case .off, .unavailable(_, true): break
+    }
+    guard sessionActive, !sessionPaused, phase != .capturing,
+      let session = camera.currentSession, session.state == .started
+    else {
+      // A later trigger (end of the photo, session resuming) tries again.
+      diag("inputs", "re-add skipped (\(reason)): paused \(sessionPaused), phase \(phase)")
+      return
+    }
+    guard shutterAttempts < Self.maxShutterAttempts else {
+      reportShutterUnavailable()
+      return
+    }
+    diag("inputs", "re-adding button events (\(reason)), attempt \(shutterAttempts + 1)")
+    attachShutter(to: session)
+  }
+
+  private func reportShutterUnavailable() {
+    guard !shutterProblemReported else { return }
+    shutterProblemReported = true
+    let reason: String
+    if case .unavailable(let message, _) = shutterStatus {
+      reason = message
+    } else {
+      reason = "Button events stopped and didn't come back after \(shutterAttempts) tries."
+    }
     errorMessage =
       "The capture button can't trigger Solve. \(reason)\n\n"
       + "Still works: the session stays on, and the Solve button in this app uses your session prompt."
@@ -341,10 +501,32 @@ final class AppModel {
     speaker.speak("The capture button isn't available. Use the Solve button in the app.")
   }
 
-  private func shutterPressed() {
+  private func shutterPressed(at timestampMs: Int64) {
+    let lateness = pressLateness(timestampMs)
+    diag(
+      "inputs",
+      "capture press: app \(Self.appStateDescription), \(lateness) ms later than the fastest delivery, "
+        + "active \(sessionActive), busy \(isBusy), paused \(sessionPaused)")
     guard sessionActive else { return }
+    if lateness > Self.latePressThresholdMs {
+      // The view has likely changed since; a photo now wouldn't show what was pressed for.
+      if lastLateNotice.map({ Date.now.timeIntervalSince($0) > 10 }) ?? true {
+        lastLateNotice = .now
+        speaker.speak("That button press reached the phone late. Press again.")
+      }
+      return
+    }
+    if let last = lastPressTimestampMs, timestampMs >= last, timestampMs - last < Self.pressDebounceMs {
+      diag("inputs", "press ignored: \(timestampMs - last) ms after the previous one")
+      return
+    }
+    lastPressTimestampMs = timestampMs
     guard !isBusy else {
-      speaker.speak("Still working on the last one.")
+      // Once per solve, so repeated presses don't keep cutting off the speech.
+      if !saidStillWorking {
+        saidStillWorking = true
+        speaker.speak("Still working on the last one.")
+      }
       return
     }
     guard !sessionPaused else {
@@ -357,6 +539,11 @@ final class AppModel {
   private func resetSessionState() {
     sessionPaused = false
     shutterStatus = .off
+    shutterAttempts = 0
+    shutterProblemReported = false
+    lastPressTimestampMs = nil
+    lastSeenPressTimestampMs = nil
+    pressOffsetBaselineMs = nil
     sessionPrompt = ClaudeClient.defaultPrompt
   }
 }
@@ -366,9 +553,13 @@ final class AppModel {
 private final class BackgroundActivity {
   private var identifier: UIBackgroundTaskIdentifier = .invalid
 
-  init(name: String) {
+  init(name: String, onExpire: @escaping @MainActor @Sendable () -> Void = {}) {
     identifier = UIApplication.shared.beginBackgroundTask(withName: name) { [weak self] in
-      MainActor.assumeIsolated { self?.end() }
+      MainActor.assumeIsolated {
+        diag("app", "background time for \(name) ran out")
+        onExpire()
+        self?.end()
+      }
     }
   }
 

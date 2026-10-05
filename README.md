@@ -18,6 +18,7 @@ You can also tap **Start Session** for hands-free use: the session stays open in
 | `Support/Info.plist` | URL scheme, `MWDAT` config, Bluetooth/Wi-Fi keys |
 | `GlassesSolver/GlassesCamera.swift` | Session → camera → one photo |
 | `GlassesSolver/ClaudeClient.swift` | Messages API call (raw HTTP; Swift has no official SDK) |
+| `GlassesSolver/DiagnosticsLog.swift` | In-app diagnostic log and detailed error descriptions |
 | `GlassesSolver/ShutterButton.swift` | Capture-button presses via the Inputs capability |
 | `GlassesSolver/Speaker.swift` | Text-to-speech (`AVSpeechSynthesizer`) |
 | `GlassesSolver/Keychain.swift` | Stores the Anthropic API key on the phone |
@@ -83,13 +84,30 @@ There is no entitlements file. Everything here works with a free Apple ID:
 
 Caveats:
 - **Inputs is experimental in SDK 1.0.** You can build and test with it, but apps that use it can't be published yet. Meta can also gate it per app or account: it has no permission prompt, and the glasses may refuse it (*permission denied*, *activation failed*, *unavailable*). It needs Meta AI app V290+ and glasses firmware V128+. The SDK reports Gen 1 and Gen 2 Ray-Ban Meta as the same model, so support is only known once you try.
-- **Background time is limited.** `bluetooth-central` keeps the connection, and a button press wakes the app. iOS then gives it roughly 30 seconds to take the photo and get Claude's answer. A slow answer while the phone is locked may get cut off. If that happens, try the effort setting `"low"` (see below).
+- **How it stays running with the phone locked.** `bluetooth-central` keeps the connection, and a button press should wake the app. iOS gives a woken app roughly 30 seconds, which covers the photo. Claude can take longer, so while the answer is pending the app plays silent audio, which iOS allows for apps with the `audio` background mode. The spoken answer then keeps it running to the end. If time runs out mid-photo anyway, the app stops the camera cleanly, because a stream left running when iOS suspends the app can leave the glasses refusing sessions ([#231](https://github.com/facebook/meta-wearables-dat-ios/issues/231)).
+- **Late presses are skipped.** If a press reaches the phone more than 5 seconds later than usual (for example, held back while iOS had the app suspended), the app says "That button press reached the phone late" instead of photographing a view that has probably changed. The diagnostics log shows the app state and delay for every press, so you can see whether presses wake the app with the phone locked.
+- **Choose "Allow always" for camera access.** "Allow once" ends with the session, and Meta AI can't open to grant it again while the phone is locked.
+- Presses less than 0.8 seconds apart count as one, and repeated presses while it's working get one "Still working" reply.
 - Only a **short press** triggers a solve. Hold and double press are ignored.
+- **How the button is wired (from Meta's BirdSpotter sample, which was tested on real glasses):**
+  - The app asks for the temple touchpad and action button as well as the capture button. Asked for alone, the capture button once showed as active but sent nothing. Touchpad events are only logged. Single tap and tap-and-hold stay with the glasses, and volume stays with the system.
+  - Taking a photo can drop button events, so the app re-adds them after every photo. It retries quietly a few times before reporting the button unavailable.
+- **Locked phone:** the SDK pauses a raw video stream while the app is in the background, so photos taken then use the compressed (HEVC) stream, which keeps running.
 
 **Troubleshooting**
+- *Any error:* tap **Copy log** on the error alert, or open **Settings → Diagnostics log**. It records SDK setup, device state, each session and capture-button step, and the exact SDK error type and code. Paste it when reporting a problem.
+- *Meta AI shows "Internal error — The operation could not be completed":* this message comes from the Meta AI app, not this app. Meta traced it to a Meta AI bug that lost the Developer Mode setting during approval ([SDK issue #205](https://github.com/facebook/meta-wearables-dat-ios/issues/205)). Fix: update Meta AI, force-quit and reopen it, and try again. If it persists, turn Developer Mode off and on in Meta AI (tap **Install** next to the glasses if it's shown). Then disconnect and reconnect the glasses from this app's Settings. Meta AI keeps only one Developer Mode app registered at a time, so registering another app (such as a Meta sample) unregisters this one.
+- *Every session fails with "Session ended by device" or "Device unavailable":* turn the glasses off with the power switch and back on ([#292](https://github.com/facebook/meta-wearables-dat-ios/issues/292)). If Meta AI shows "broadcast in progress", stop it there. If needed, close the glasses in their case for about a minute ([#231](https://github.com/facebook/meta-wearables-dat-ios/issues/231)).
+- *Versions:* SDK 1.0.0 needs Meta AI app V290+ and glasses firmware V128+. Older firmware can connect but still refuse sessions.
+- *Meta SDK log:* **Settings → Diagnostics log → Share Meta SDK log** sends the SDK's own log files, which name link and authentication failures the app can't see.
 - *No glasses found / timed out connecting:* unfold the glasses, check they're connected in Meta AI, and confirm Meta Developer Mode is still on.
 - *Speech plays from the phone:* the glasses aren't the active Bluetooth audio output. Pick them in Control Center's audio route menu.
 - *API key rejected:* re-enter it in Settings. Check the key's workspace has credit.
+
+**Known SDK limits that affect this app (open issues on Meta's SDK repo)**
+- A capture-button press while a camera stream is running may pause the session instead of reaching the app ([#312](https://github.com/facebook/meta-wearables-dat-ios/issues/312)). This app runs the stream only for the second or two of each photo, so presses between photos shouldn't hit this.
+- Starting a camera stream can stop Bluetooth audio playing through the glasses ([#256](https://github.com/facebook/meta-wearables-dat-ios/issues/256)). If the answer isn't heard in the glasses after a photo, that's the likely cause.
+- The SDK leaks a little memory per second of streaming until the app restarts ([#324](https://github.com/facebook/meta-wearables-dat-ios/issues/324)). The short stream per photo keeps this small.
 
 ## Notes on the Claude call
 

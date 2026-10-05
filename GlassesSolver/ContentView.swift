@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct ContentView: View {
   @Bindable var model: AppModel
@@ -94,7 +95,10 @@ struct ContentView: View {
         Button("Open Meta AI") { Task { await model.confirmCameraPermission() } }
         Button("Cancel", role: .cancel) { model.cancelCameraPermission() }
       } message: {
-        Text("The Meta AI app will open so you can let this app use your glasses' camera.")
+        Text(
+          "The Meta AI app will open so you can let this app use your glasses' camera. "
+            + "Choose Allow always: Allow once ends with the session, and it can't be granted again while your phone is locked."
+        )
       }
       .alert(
         "Something went wrong",
@@ -103,6 +107,7 @@ struct ContentView: View {
           set: { if !$0 { model.errorMessage = nil } }
         )
       ) {
+        Button("Copy log") { UIPasteboard.general.string = DiagnosticsLog.shared.text }
         Button("OK", role: .cancel) {}
       } message: {
         Text(model.errorMessage ?? "")
@@ -218,6 +223,12 @@ struct SettingsView: View {
           Text("Uses the SDK's experimental standalone photo capture. Sharper for small print, but slower to transfer.")
         }
 
+        Section {
+          NavigationLink("Diagnostics log") { DiagnosticsView() }
+        } footer: {
+          Text("Session, capture-button and error details. Copy it and send it along when reporting a problem.")
+        }
+
         if model.isRegistered {
           Section {
             Button("Disconnect glasses from this app", role: .destructive) {
@@ -284,5 +295,56 @@ struct StartSessionView: View {
         }
       }
     }
+  }
+}
+
+struct DiagnosticsView: View {
+  private let log = DiagnosticsLog.shared
+  @State private var sdkLogFiles: [URL] = []
+
+  var body: some View {
+    ScrollView {
+      VStack(alignment: .leading, spacing: 12) {
+        if sdkLogFiles.isEmpty {
+          Text("No Meta SDK log files yet.")
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+        } else {
+          // The SDK's own log has link and authentication details the app never sees.
+          ShareLink(items: sdkLogFiles) {
+            Label("Share Meta SDK log (\(sdkLogFiles.count) file\(sdkLogFiles.count == 1 ? "" : "s"))",
+              systemImage: "square.and.arrow.up")
+          }
+          .buttonStyle(.bordered)
+        }
+        Text(log.lines.isEmpty ? "Nothing logged yet." : log.text)
+          .font(.caption.monospaced())
+          .textSelection(.enabled)
+          .frame(maxWidth: .infinity, alignment: .leading)
+      }
+      .padding()
+    }
+    .defaultScrollAnchor(.bottom)
+    .navigationTitle("Diagnostics")
+    .navigationBarTitleDisplayMode(.inline)
+    .onAppear { sdkLogFiles = Self.findSDKLogFiles() }
+    .toolbar {
+      ToolbarItemGroup(placement: .topBarTrailing) {
+        Button("Copy", systemImage: "doc.on.doc") { UIPasteboard.general.string = log.text }
+          .disabled(log.lines.isEmpty)
+        Button("Clear", systemImage: "trash") { log.clear() }
+          .disabled(log.lines.isEmpty)
+      }
+    }
+  }
+
+  /// The SDK writes to Library/Caches/MetaWearablesDAT/Logs inside the app's container.
+  private static func findSDKLogFiles() -> [URL] {
+    guard let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else {
+      return []
+    }
+    let folder = caches.appending(path: "MetaWearablesDAT/Logs", directoryHint: .isDirectory)
+    let files = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []
+    return files.sorted { $0.lastPathComponent < $1.lastPathComponent }
   }
 }

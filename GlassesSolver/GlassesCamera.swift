@@ -1,6 +1,7 @@
 import Foundation
 import MWDATCamera
 import MWDATCore
+import UIKit
 
 enum GlassesError: LocalizedError {
   case noGlasses
@@ -41,6 +42,12 @@ final class GlassesCamera {
   private var session: DeviceSession?
   private let sessionTokens = ListenerTokenBag()
   private let lastSessionError = LockedValue<String?>(nil)
+  private var lastSessionStop: ContinuousClock.Instant?
+  private var activeCamera: Camera?
+
+  /// Meta's workaround for glasses that get stuck refusing sessions (SDK issue #231):
+  /// leave at least this long between stopping one session and starting the next.
+  private static let sessionRestartGap = Duration.seconds(2)
 
   init(wearables: any WearablesInterface, selector: AutoDeviceSelector) {
     self.wearables = wearables
@@ -50,20 +57,65 @@ final class GlassesCamera {
   /// The current session, if one has been created and not ended.
   var currentSession: DeviceSession? { session }
 
+  /// Stops a capture in progress. Used when iOS is about to suspend the app: a stream left
+  /// running through a suspension can leave the glasses refusing sessions (SDK issue #231).
+  func abortCapture() {
+    guard let activeCamera else { return }
+    diag("camera", "aborting capture (app about to be suspended)")
+    activeCamera.stop()
+  }
+
   /// Returns the photo's encoded bytes (JPEG, or HEIC for the high-res path).
-  func capturePhoto(highResolution: Bool) async throws -> Data {
+  /// With `keepSession`, a session that isn't running is reported as paused instead of
+  /// being replaced, so a hands-free session is never torn down by a capture.
+  func capturePhoto(highResolution: Bool, keepSession: Bool = false) async throws -> Data {
+    if keepSession, let existing = self.session, existing.state != .started {
+      diag("camera", "session is \(existing.state); not replacing the hands-free session")
+      throw GlassesError.sessionPaused
+    }
     let session = try await startedSession()
 
-    let config = StreamConfiguration(videoCodec: .raw, resolution: .high, frameRate: 15)
+    // The SDK pauses a `.raw` stream while the app is in the background and keeps an
+    // `.hvc1` one flowing (SDK changelog, 0.5.0). Raw stays the foreground default
+    // because it's the path this app was first tested on.
+    let inBackground = UIApplication.shared.applicationState != .active
+    let config: StreamConfiguration
+    if highResolution {
+      // This stream only wakes the camera for the standalone photo; keep it small.
+      config = StreamConfiguration(videoCodec: .hvc1, resolution: .low, frameRate: 7)
+    } else {
+      config = StreamConfiguration(videoCodec: inBackground ? .hvc1 : .raw, resolution: .high, frameRate: 15)
+    }
+    diag(
+      "camera",
+      "addCamera (highRes \(highResolution), background \(inBackground), "
+        + "codec \(highResolution || inBackground ? "hvc1" : "raw"))")
     guard let camera = try session.addCamera(config: config) else {
+      diag("camera", "addCamera returned nil (session state \(session.state))")
       throw GlassesError.cameraUnavailable
     }
-    defer { camera.stop() }
+    activeCamera = camera
+    defer {
+      camera.stop()
+      activeCamera = nil
+    }
 
-    if highResolution {
-      return try await Self.standalonePhoto(camera.photo)
-    } else {
-      return try await Self.streamPhoto(camera.stream)
+    let startedAt = ContinuousClock.now
+    do {
+      let data: Data
+      if highResolution {
+        data = try await Self.standalonePhoto(camera)
+      } else {
+        data = try await Self.streamPhoto(camera.stream)
+      }
+      diag("camera", "photo: \(data.count) bytes in \(ContinuousClock.now - startedAt)")
+      return data
+    } catch {
+      diag(
+        "camera",
+        "photo FAILED after \(ContinuousClock.now - startedAt): \(ErrorDetail.describe(error)) "
+          + "(stream \(camera.stream.state), camera \(camera.state))")
+      throw error
     }
   }
 
@@ -71,44 +123,93 @@ final class GlassesCamera {
 
   /// Ends the current session, if any. The next capture starts a new one.
   func endSession() {
+    diag("session", "endSession() (state was \(session.map { "\($0.state)" } ?? "none"))")
+    if session != nil { lastSessionStop = .now }
     session?.stop()
     session = nil
     sessionTokens.clear()
   }
 
   func startedSession() async throws -> DeviceSession {
-    guard selector.activeDevice != nil else { throw GlassesError.noGlasses }
+    logDeviceSnapshot()
+    guard selector.activeDevice != nil else {
+      diag("session", "no active device; not creating a session")
+      throw GlassesError.noGlasses
+    }
     if let existing = session {
-      if existing.state == .started { return existing }
+      if existing.state == .started {
+        diag("session", "reusing started session")
+        return existing
+      }
       // Paused, stopping, or stopped: end it and start fresh.
+      diag("session", "existing session is \(existing.state); stopping it first")
       existing.stop()
-      try? await withTimeout(seconds: 5, timeoutError: GlassesError.timedOut("closing the old session")) {
-        for await _ in existing.stateStream() {}
+      do {
+        try await withTimeout(seconds: 5, timeoutError: GlassesError.timedOut("closing the old session")) {
+          for await _ in existing.stateStream() {}
+        }
+      } catch {
+        diag("session", "old session didn't finish stopping: \(ErrorDetail.describe(error))")
       }
       sessionTokens.clear()
       session = nil
+      lastSessionStop = .now
     }
 
-    let newSession = try wearables.createSession(deviceSelector: selector)
+    if let lastSessionStop {
+      let wait = Self.sessionRestartGap - (ContinuousClock.now - lastSessionStop)
+      if wait > .zero {
+        diag("session", "waiting \(wait) before starting a new session")
+        try await Task.sleep(for: wait)
+      }
+    }
+
+    let newSession: DeviceSession
+    do {
+      newSession = try wearables.createSession(deviceSelector: selector)
+      diag("session", "createSession OK (device \(newSession.deviceId))")
+    } catch {
+      diag("session", "createSession FAILED: \(ErrorDetail.describe(error))")
+      throw error
+    }
     session = newSession
     lastSessionError.set(nil)
     let lastError = lastSessionError
     newSession.errorPublisher.listen { error in
-      lastError.set(error.localizedDescription)
+      let detail = ErrorDetail.describe(error)
+      diag("session", "session error: \(detail)")
+      lastError.set(detail)
     }.store(in: sessionTokens)
 
     // Subscribe before start() so no transition is missed.
     let states = newSession.stateStream()
-    try newSession.start()
+    do {
+      try newSession.start()
+      diag("session", "start() returned; waiting for .started")
+    } catch {
+      diag("session", "start() FAILED: \(ErrorDetail.describe(error))")
+      session = nil
+      sessionTokens.clear()
+      throw error
+    }
 
-    let reached = try await withTimeout(
-      seconds: 20, timeoutError: GlassesError.timedOut("connecting to the glasses")
-    ) {
-      for await state in states {
-        if state == .started { return true }
-        if state == .stopped { return false }
+    let startedAt = ContinuousClock.now
+    let reached: Bool
+    do {
+      reached = try await withTimeout(
+        seconds: 20, timeoutError: GlassesError.timedOut("connecting to the glasses")
+      ) {
+        for await state in states {
+          diag("session", "state -> \(state) after \(ContinuousClock.now - startedAt)")
+          if state == .started { return true }
+          if state == .stopped { return false }
+        }
+        diag("session", "state stream finished without .started")
+        return false
       }
-      return false
+    } catch {
+      diag("session", "waiting for .started FAILED: \(ErrorDetail.describe(error)) (state \(newSession.state))")
+      throw error
     }
     guard reached else {
       session = nil
@@ -116,6 +217,23 @@ final class GlassesCamera {
       throw GlassesError.sessionEnded(lastSessionError.get())
     }
     return newSession
+  }
+
+  /// Logs what the SDK reports about the glasses right now.
+  private func logDeviceSnapshot() {
+    let ids = wearables.devices
+    let active = selector.activeDevice ?? "none"
+    var line = "registration \(wearables.registrationState), devices \(ids.count), active \(active)"
+    for id in ids {
+      guard let device = wearables.deviceForIdentifier(id) else {
+        line += "; \(id): no details"
+        continue
+      }
+      line += "; \(device.nameOrId()): type \(device.deviceType().rawValue), link \(device.linkState), "
+        + "compatibility \(device.compatibility()), hinges \(device.hingeState), worn \(device.donState), "
+        + "battery \(device.batteryLevel.map { "\($0)%" } ?? "?")"
+    }
+    diag("device", line)
   }
 
   // MARK: - Capture paths
@@ -162,13 +280,20 @@ final class GlassesCamera {
 
   /// Experimental path (SDK 1.0 `Camera.photo`): a standalone high-quality still,
   /// transferred from the glasses. Slower, but much sharper for small print.
-  nonisolated private static func standalonePhoto(_ photo: MWDATCamera.Photo) async throws -> Data {
+  ///
+  /// Meta's BirdSpotter sample notes that `Photo.start()` on a cold camera can sit at
+  /// `starting`, so a small video stream wakes the sensor first. Stream and Photo compete
+  /// for the camera, so the stream is stopped before the still is taken.
+  nonisolated private static func standalonePhoto(_ camera: Camera) async throws -> Data {
+    let stream = camera.stream
+    let photo = camera.photo
     let tokens = ListenerTokenBag()
     defer {
       tokens.clear()
       photo.stop()
     }
     let shot = OneShot<Data>()
+    let photoStartRequested = LockedValue(false)
 
     return try await withTimeout(seconds: 60, timeoutError: GlassesError.timedOut("transferring the photo")) {
       try await shot.wait {
@@ -178,11 +303,23 @@ final class GlassesCamera {
         photo.errorPublisher.listen { error in
           shot.fail(GlassesError.camera(error.localizedDescription))
         }.store(in: tokens)
+        photo.transferProgressPublisher.listen { progress in
+          diag("camera", "photo transfer \(Int(progress.fraction * 100))%")
+        }.store(in: tokens)
         photo.statePublisher.listen { state in
+          diag("camera", "photo state -> \(state)")
           switch state {
           case .started:
             guard shot.claimTrigger() else { return }
-            photo.capturePhoto(resolution: .large, quality: .high)
+            stream.stop()
+            Task {
+              // A still taken while the stream still holds the sensor is refused.
+              let deadline = ContinuousClock.now + .seconds(2)
+              while stream.state != .stopped, ContinuousClock.now < deadline {
+                try? await Task.sleep(for: .milliseconds(100))
+              }
+              photo.capturePhoto(resolution: .large, quality: .high)
+            }
           case .starting:
             shot.markActive()
           case .stopped:
@@ -195,7 +332,13 @@ final class GlassesCamera {
             break
           }
         }.store(in: tokens)
-        photo.start()
+        stream.statePublisher.listen { state in
+          diag("camera", "wake stream state -> \(state)")
+          guard state == .streaming, !photoStartRequested.get() else { return }
+          photoStartRequested.set(true)
+          photo.start()
+        }.store(in: tokens)
+        stream.start()
       }
     }
   }

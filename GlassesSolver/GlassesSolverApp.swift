@@ -7,12 +7,15 @@ struct GlassesSolverApp: App {
 
   init() {
     // Must run before anything touches `Wearables.shared`.
+    var setupError: String?
     do {
       try Wearables.configure()
+      diag("sdk", "Wearables.configure() OK")
     } catch {
-      NSLog("[GlassesSolver] Failed to configure Wearables SDK: \(error)")
+      setupError = ErrorDetail.describe(error)
+      diag("sdk", "Wearables.configure() FAILED: \(setupError ?? "")")
     }
-    _model = State(initialValue: AppModel())
+    _model = State(initialValue: AppModel(sdkSetupError: setupError))
   }
 
   var body: some Scene {
