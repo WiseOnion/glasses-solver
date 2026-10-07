@@ -129,14 +129,7 @@ struct ClaudeClient: Sendable {
     ]
     request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-    let (data, response) = try await URLSession.shared.data(for: request)
-    let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-    guard status == 200 else {
-      let message =
-        (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error.message
-        ?? String(decoding: data.prefix(300), as: UTF8.self)
-      throw ClaudeError.http(status: status, message: message)
-    }
+    let data = try await send(request)
 
     let message = try JSONDecoder().decode(MessageResponse.self, from: data)
     if message.stopReason == "refusal" { throw ClaudeError.refused }
@@ -147,6 +140,35 @@ struct ClaudeClient: Sendable {
       .trimmingCharacters(in: .whitespacesAndNewlines)
     guard !text.isEmpty else { throw ClaudeError.emptyAnswer }
     return text
+  }
+
+  /// Sends the request, retrying once after a short pause when the failure is temporary
+  /// (rate limit, overload, server error, or a dropped connection).
+  private func send(_ request: URLRequest) async throws -> Data {
+    for attempt in 1...2 {
+      do {
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        if status == 200 { return data }
+        let message =
+          (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error.message
+          ?? String(decoding: data.prefix(300), as: UTF8.self)
+        let error = ClaudeError.http(status: status, message: message)
+        guard attempt == 1, [429, 500, 502, 503, 504, 529].contains(status) else { throw error }
+        diag("claude", "HTTP \(status), retrying once: \(message)")
+      } catch let error as URLError where attempt == 1 && Self.isTransient(error) {
+        diag("claude", "network error, retrying once: \(ErrorDetail.describe(error))")
+      }
+      try await Task.sleep(for: .seconds(2))
+    }
+    throw ClaudeError.emptyAnswer  // not reached: the second attempt returns or throws
+  }
+
+  private static func isTransient(_ error: URLError) -> Bool {
+    let transient: [URLError.Code] = [
+      .timedOut, .networkConnectionLost, .notConnectedToInternet, .cannotConnectToHost, .dnsLookupFailed,
+    ]
+    return transient.contains(error.code)
   }
 
   /// Re-encodes the glasses photo (JPEG or HEIC) as a JPEG with its long edge capped,

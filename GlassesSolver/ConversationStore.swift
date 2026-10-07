@@ -82,8 +82,8 @@ final class ConversationStore {
     }
     sessions[index].ended = .now
     currentSessionID = nil
-    // A session with no answers isn't worth keeping.
-    if entries(inSession: id).isEmpty { sessions.remove(at: index) }
+    // Kept even if empty for now: an answer still in progress can arrive after the session
+    // ends. Empty ended sessions are hidden from the list and pruned on the next launch.
     save()
   }
 
@@ -121,7 +121,10 @@ final class ConversationStore {
 
   // MARK: - Entries
 
-  func add(prompt: String, photo: Data?, answer: String?, error: String?, isTest: Bool) {
+  /// `sessionID` is the session the solve started in (it may have ended since).
+  func add(
+    prompt: String, photo: Data?, answer: String?, error: String?, isTest: Bool, sessionID: UUID?
+  ) {
     let id = UUID()
     var photoFile: String?
     if let photo, let jpeg = ClaudeClient.preparedJPEG(from: photo, maxLongEdge: Self.photoLongEdge) {
@@ -136,12 +139,11 @@ final class ConversationStore {
     entries.append(
       ConversationEntry(
         id: id, date: .now, prompt: prompt, answer: answer, error: error, isTest: isTest,
-        photoFile: photoFile, sessionID: currentSessionID))
+        photoFile: photoFile,
+        sessionID: sessionID.flatMap { id in sessions.contains { $0.id == id } ? id : nil }))
     while entries.count > Self.maxEntries {
       deletePhoto(of: entries.removeFirst())
     }
-    let used = Set(entries.compactMap(\.sessionID))
-    sessions.removeAll { $0.ended != nil && !used.contains($0.id) }
     save()
   }
 
@@ -179,6 +181,9 @@ final class ConversationStore {
       let last = entries.last { $0.sessionID == sessions[index].id }?.date
       sessions[index].ended = last ?? sessions[index].started
     }
+    // Drop sessions that never got an answer.
+    let used = Set(entries.compactMap(\.sessionID))
+    sessions.removeAll { !used.contains($0.id) }
   }
 
   private func save() {

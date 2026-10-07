@@ -161,7 +161,7 @@ struct ContentView: View {
       }
       .buttonStyle(.bordered)
       .controlSize(.large)
-      .disabled(model.isStartingSession || !model.isRegistered || !model.canSolve)
+      .disabled(model.isStartingSession || model.isBusy || !model.isRegistered || !model.canSolve)
     }
   }
 

@@ -58,6 +58,8 @@ final class GlassesCamera {
   private let lastSessionError = LockedValue<String?>(nil)
   private var lastSessionStop: ContinuousClock.Instant?
   private var activeCamera: Camera?
+  /// A session start in progress; concurrent callers share it rather than opening two.
+  private var startInFlight: Task<DeviceSession, Error>?
 
   /// Meta's workaround for glasses that get stuck refusing sessions (SDK issue #231):
   /// leave at least this long between stopping one session and starting the next.
@@ -152,7 +154,20 @@ final class GlassesCamera {
     sessionTokens.clear()
   }
 
+  /// The started session, reusing the current one or opening a new one. Only one start runs
+  /// at a time; a second caller waits for the first.
   func startedSession() async throws -> DeviceSession {
+    if let startInFlight {
+      diag("session", "a session start is already running; waiting for it")
+      return try await startInFlight.value
+    }
+    let task = Task { try await self.startSessionNow() }
+    startInFlight = task
+    defer { startInFlight = nil }
+    return try await task.value
+  }
+
+  private func startSessionNow() async throws -> DeviceSession {
     logDeviceSnapshot()
     guard selector.activeDevice != nil else {
       diag("session", "no active device; not creating a session")
@@ -231,6 +246,11 @@ final class GlassesCamera {
       }
     } catch {
       diag("session", "waiting for .started FAILED: \(ErrorDetail.describe(error)) (state \(newSession.state))")
+      // Close it rather than leave a half-open session on the glasses.
+      newSession.stop()
+      session = nil
+      sessionTokens.clear()
+      lastSessionStop = .now
       throw error
     }
     guard reached else {

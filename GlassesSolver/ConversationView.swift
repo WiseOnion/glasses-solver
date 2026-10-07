@@ -9,6 +9,7 @@ struct ConversationView: View {
   @Environment(\.dismiss) private var dismiss
   @State private var path: [ChatRoute] = []
   @State private var confirmClear = false
+  @State private var didOpenCurrentSession = false
 
   enum ChatRoute: Hashable {
     case session(UUID)
@@ -94,7 +95,10 @@ struct ConversationView: View {
         Button("Delete all", role: .destructive) { store.clear() }
       }
       .onAppear {
-        if let current = store.currentSessionID, path.isEmpty { path = [.session(current)] }
+        // Once per opening; Back from the chat should stay on the list.
+        guard !didOpenCurrentSession else { return }
+        didOpenCurrentSession = true
+        if let current = store.currentSessionID { path = [.session(current)] }
       }
     }
   }

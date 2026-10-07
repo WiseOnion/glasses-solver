@@ -83,7 +83,10 @@ final class AppModel {
     }
   }
 
-  var isBusy: Bool { phase != .idle }
+  /// Set the moment a solve is requested (before any await), so a second press or tap
+  /// can't start a second photo while the first is still getting going.
+  private(set) var solveInFlight = false
+  var isBusy: Bool { phase != .idle || solveInFlight }
   var isRegistered: Bool { registrationState == .registered }
 
   var statusText: String {
@@ -227,6 +230,8 @@ final class AppModel {
 
   func solve() async {
     guard !isBusy else { return }
+    solveInFlight = true
+    defer { solveInFlight = false }
     guard canSolve else {
       errorMessage = "Add your Anthropic API key in Settings first, or turn on Test mode."
       return
@@ -255,6 +260,11 @@ final class AppModel {
     showCameraPermissionPrompt = false
     let pendingPrompt = pendingSessionPrompt
     pendingSessionPrompt = nil
+    if pendingPrompt == nil {
+      guard !isBusy else { return }
+      solveInFlight = true
+    }
+    defer { if pendingPrompt == nil { solveInFlight = false } }
     do {
       let status = try await wearables.requestPermission(.camera)
       diag("permission", "requestPermission(.camera) -> \(status)")
@@ -342,6 +352,8 @@ final class AppModel {
       backgroundActivity.end()
     }
     let prompt = sessionActive ? sessionPrompt : ClaudeClient.defaultPrompt
+    // Captured now, so an answer that arrives after the session ends still files under it.
+    let chatSessionID = conversation.currentSessionID
     diag("solve", "start (app \(Self.appStateDescription), hands-free \(sessionActive), test mode \(testMode))")
 
     let photo: Data
@@ -356,7 +368,8 @@ final class AppModel {
       scheduleShutterRevive("after a failed photo", force: true)
       reportSolveFailure(error)
       conversation.add(
-        prompt: prompt, photo: nil, answer: nil, error: error.localizedDescription, isTest: testMode)
+        prompt: prompt, photo: nil, answer: nil, error: error.localizedDescription, isTest: testMode,
+        sessionID: chatSessionID)
       speaker.endKeepAliveAfterSpeech()
       return
     }
@@ -385,11 +398,13 @@ final class AppModel {
       lastAnswer = answer
       diag("solve", "answer received, \(answer.count) characters (app \(Self.appStateDescription))")
       speaker.speak(answer)
-      conversation.add(prompt: prompt, photo: photo, answer: answer, error: nil, isTest: testMode)
+      conversation.add(
+        prompt: prompt, photo: photo, answer: answer, error: nil, isTest: testMode, sessionID: chatSessionID)
     } catch {
       reportSolveFailure(error)
       conversation.add(
-        prompt: prompt, photo: photo, answer: nil, error: error.localizedDescription, isTest: testMode)
+        prompt: prompt, photo: photo, answer: nil, error: error.localizedDescription, isTest: testMode,
+        sessionID: chatSessionID)
     }
     speaker.endKeepAliveAfterSpeech()
   }
@@ -546,6 +561,8 @@ final class AppModel {
   private func beginSession(prompt: String) async {
     isStartingSession = true
     defer { isStartingSession = false }
+    // A reconnect from the previous session may still be running; one session at a time.
+    await sessionRefreshTask?.value
     let session: DeviceSession
     do {
       session = try await camera.startedSession()
@@ -727,7 +744,11 @@ final class AppModel {
       speaker.speak("The session is paused. Tap the touchpad once to resume.")
       return
     }
-    Task { await run() }
+    solveInFlight = true
+    Task {
+      await run()
+      solveInFlight = false
+    }
   }
 
   private func resetSessionState() {
