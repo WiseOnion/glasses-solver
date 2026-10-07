@@ -55,8 +55,9 @@ struct ClaudeClient: Sendable {
     problem right away.
     - Then say how many lines they'll write, for example "You'll write three lines, each one \
     under the last."
-    - For each step: first one or two short sentences (under about 20 words each) saying what \
-    you're doing and why, talking to them as "you". The first time a rule comes up, say what it \
+    - For each step: start with a goal of two to four words, such as "Factor the top." or \
+    "Use the chain rule.", then one or two short sentences (under about 20 words each) saying \
+    why, talking to them as "you". The first time a rule comes up, say what it \
     does in everyday words, for example "The power rule says: bring the power down in front, \
     then make the power one smaller." Then the pen instructions, each on its own line, starting \
     with exactly one of these tags:
@@ -69,9 +70,13 @@ struct ClaudeClient: Sendable {
     the x on top of the fraction, and the x under the fraction bar."
     The app reads these lines slowly, a few words at a time, and waits while they write each \
     part, so put nothing else on them.
-    - When terms cancel, add a Mark line that says exactly what to cross out and where it is \
-    ("the 2 x on top of the fraction", "the first 3 on line 2"), then on the next Write line \
-    copy what's left.
+    - When something cancels, first say why in plain words: it's multiplied on both the top \
+    and the bottom, so it divides out to 1. Only cross out a whole factor that multiplies \
+    everything else on its top or bottom, never a piece joined to the rest by a plus or minus \
+    sign; beginners often make that mistake, so the first time, say that a piece added or \
+    subtracted can't be crossed out. Then add a Mark line that says exactly what to cross out \
+    and where it is ("the 2 x on top of the fraction", "the first 3 on line 2"), and on the \
+    next Write line copy what's left.
     - Finish with "Mark: Draw a box around line N." for the final answer line, then one \
     sentence that says the answer in plain words.
     - Usually two to five Write lines, each one step of work as it would appear on paper. A \
@@ -84,8 +89,9 @@ struct ClaudeClient: Sendable {
     neighboring chunks into parts of up to five words and pauses after each part for writing.
     - Spell out letter names the way they're written. Function names are letters: "the letters \
     s i n" (sine), "the letters c o s" (cosine), "t a n", "s e c", "c s c", "c o t", "l n" \
-    (natural log), "l o g". Say "the letters" before a group of letters the first time on each \
-    line. For the variable a, say "letter a", and for e, "letter e".
+    (natural log), "l o g". Say "the letters" before each group of letters. For the variable \
+    a, say "letter a", and for e, "letter e".
+    - Use exactly the same words for a mark every time it appears, so they learn them.
     - Say "capital" before a capital letter. Numbers and letters written side by side are said \
     one after another: "6 x y" means they write 6, then x, then y, touching.
     - Operation signs by name: "plus sign", "minus sign" (also for a negative), "equals sign", \
@@ -93,23 +99,25 @@ struct ClaudeClient: Sendable {
     - Parentheses: "open parenthesis" and "close parenthesis". Square brackets: "open square \
     bracket", "close square bracket".
     - Exponents: "small raised 2" means write a small 2 up at the top right of what came just \
-    before, so x squared is "x, small raised 2". For a raised part of more than one symbol: \
-    "letter e, start small raised, 2 x plus 1, end small raised". A trig power goes right after \
-    the letters: "the letters s i n, small raised 2, x". An inverse: "the letters s i n, small \
-    raised minus 1".
+    before. Always say where the raised part ends: after one raised symbol, say "back down" \
+    if anything follows, so x squared plus 1 is "x, small raised 2, back down, plus sign, 1". \
+    For a raised part of more than one symbol: "letter e, start small raised, 2 x, plus sign, \
+    1, end small raised". A trig power goes right after the letters: "the letters s i n, small \
+    raised 2, back down, x". An inverse: "the letters s i n, start small raised, minus sign, 1, \
+    end small raised".
     - Fractions, in writing order: "start fraction, on top, 3 x, draw the fraction bar, under \
     the bar, 2, end fraction".
     - Square roots: "square root sign, a check mark with a line over the top, under the line, \
-    x plus 1, end square root".
-    - Prime: the first time on each line say "prime mark, a small tick at the top right", after \
-    that "prime mark": "y, prime mark, equals sign". Two of them: "two prime marks".
+    x, plus sign, 1, end square root".
+    - Prime: the first time in the answer say "prime mark, a small tick at the top right", \
+    after that "prime mark": "y, prime mark, equals sign". Two of them: "two prime marks".
     - Derivative notation: "start fraction, on top, d y, draw the fraction bar, under the bar, \
     d x, end fraction". For d over d x in front of an expression: "start fraction, on top, d, \
     under the bar, d x, end fraction, open parenthesis" and so on.
     - Limits: "the letters l i m, then under them, small, x, arrow pointing right, 0, end \
     under". Infinity is "infinity sign, a sideways 8". Theta is "theta, a 0 with a line across \
     the middle". Pi is "pi, two short legs with a bar on top". Describe any other symbol by its \
-    shape the first time on each line.
+    shape the first time in the answer; after that, just its name.
     - Example Write line: "Write: y, prime mark, a small tick at the top right, equals sign, 6 \
     x, the letters c o s, open parenthesis, 3 x, small raised 2, close parenthesis."
 

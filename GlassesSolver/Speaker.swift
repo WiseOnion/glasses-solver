@@ -351,7 +351,7 @@ final class Speaker: NSObject {
     "start": 0, "small": 0, "raised": 0, "under": 0, "over": 0, "on": 0, "at": 0, "then": 0,
     "them": 0, "letters": 0, "letter": 0, "sign": 0, "mark": 0, "marks": 0, "bar": 0,
     "line": 0, "right": 0, "left": 0, "pointing": 0, "middle": 0, "height": 0, "check": 0,
-    "short": 0, "across": 0, "sideways": 0, "tick": 0, "dot": 0,
+    "short": 0, "across": 0, "sideways": 0, "tick": 0, "dot": 0, "back": 0, "down": 0,
     "bottom": 1, "draw": 1,
     "sine": 3, "cosine": 3, "tangent": 3, "secant": 3, "cosecant": 3, "cotangent": 3,
     "log": 2, "limit": 3, "inverse": 2,
