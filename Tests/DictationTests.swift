@@ -115,4 +115,81 @@ final class DictationTests: XCTestCase {
       XCTAssertEqual(Speaker.speakable(line), line)
     }
   }
+
+  // MARK: - An answer arriving in pieces
+
+  private static let answer = """
+    I can see problems 3 and 4.
+    Problem: 3
+    This is the derivative of x squared.
+    You'll write two lines.
+    Write: y, equals sign, x, small raised 2
+    Write: y, prime mark, a small tick at the top right, equals sign, 2 x
+    Continue: plus sign, the letters t a n, x
+    Mark: Draw a box around line 2.
+    Problem: 4
+    Sentence: capital the radius, period
+    Done.
+    """
+
+  func testPiecesSoundTheSameAsTheWholeAnswer() {
+    let speaker = Speaker()
+    defer { speaker.stop() }
+    speaker.speak(Self.answer)
+    let whole = speaker.queued
+    XCTAssertGreaterThan(whole.count, 10)
+    // Split anywhere, including inside a line and right after a line break.
+    for size in [1, 7, 40, 500] {
+      speaker.beginAnswer()
+      var rest = Substring(Self.answer)
+      while !rest.isEmpty {
+        speaker.continueAnswer(String(rest.prefix(size)))
+        rest = rest.dropFirst(size)
+      }
+      speaker.finishAnswer()
+      XCTAssertEqual(speaker.queued.map(\.text), whole.map(\.text), "pieces of \(size)")
+      XCTAssertEqual(speaker.queued.map(\.pause), whole.map(\.pause), "pieces of \(size)")
+    }
+  }
+
+  func testALineIsSpokenOnlyOnceItIsComplete() {
+    let speaker = Speaker()
+    defer { speaker.stop() }
+    speaker.beginAnswer()
+    speaker.continueAnswer("Problem: 3\nWrite: y, equals")
+    XCTAssertEqual(speaker.queued.map(\.text), ["Problem 3."])
+    speaker.continueAnswer(" sign, 2\n")
+    XCTAssertEqual(speaker.queued.map(\.text), ["Problem 3.", "Start line 1. y, equals sign, 2."])
+  }
+
+  func testStoppingEndsTheAnswer() {
+    let speaker = Speaker()
+    speaker.beginAnswer()
+    speaker.continueAnswer("Problem: 3\n")
+    speaker.stop()
+    speaker.continueAnswer("Write: x\n")
+    speaker.finishAnswer(notice: "Stop.")
+    XCTAssertTrue(speaker.queued.isEmpty)
+  }
+
+  func testCutOffNoticeIsSpokenLast() {
+    let speaker = Speaker()
+    defer { speaker.stop() }
+    speaker.beginAnswer()
+    speaker.continueAnswer("Problem: 3\nThis is a sum.\nWrite: x, plus")
+    speaker.finishAnswer(notice: "Stop. Cut off.")
+    XCTAssertEqual(
+      speaker.queued.map(\.text), ["Problem 3.", "This is a sum.", "Start line 1. x, plus.", "Stop. Cut off."])
+  }
+
+  func testCutOffNotices() {
+    XCTAssertEqual(
+      Speaker.cutOffNotice(.ranOut, answer: "I can see problems 4 and 5.\nProblem: 4\nWrite: x\nProblem: 5, part a\nWrite: y"),
+      "Stop. The answer ran out of room partway through problem 5, part A, so its last line may be unfinished. "
+        + "Take a new photo of problem 5, part A and any after it.")
+    XCTAssertEqual(
+      Speaker.cutOffNotice(.dropped, answer: "I can see problem 2."),
+      "Stop. The connection dropped before the first problem. Take the photo again.")
+    XCTAssertTrue(Speaker.cutOffNotice(.stopped, answer: "Problem: 7").hasPrefix("Stop. The answer stopped partway"))
+  }
 }

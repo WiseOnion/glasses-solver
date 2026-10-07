@@ -166,6 +166,8 @@ final class AppModel {
   @ObservationIgnored private let selector: AutoDeviceSelector
   @ObservationIgnored private let camera: GlassesCamera
   @ObservationIgnored private let speaker = Speaker()
+  /// True once the current answer's first piece has arrived and begun being spoken.
+  @ObservationIgnored private var answerStarted = false
   @ObservationIgnored private let shutter = ShutterButton()
   @ObservationIgnored private var sessionStateTask: Task<Void, Never>?
   @ObservationIgnored private var pendingSessionPrompt: String?
@@ -487,17 +489,38 @@ final class AppModel {
     // Claude can take longer than iOS's background allowance. Playing (silent) audio keeps
     // the app running until the spoken answer, which keeps it running to the end.
     speaker.beginKeepAlive()
+    answerStarted = false
     do {
       speaker.speak("Got it. Working on it.")
-      let answer: String
+      // The answer is spoken as it arrives, so the first problem starts while Claude is
+      // still writing the rest.
+      let reply: ClaudeClient.Answer
       if let apiKey, !testMode {
-        answer = try await ClaudeClient(apiKey: apiKey).solve(photo: photo, prompt: prompt)
+        reply = try await ClaudeClient(apiKey: apiKey).solve(photo: photo, prompt: prompt) { [weak self] piece in
+          self?.answerArrived(piece)
+        }
       } else {
-        answer = try await simulatedAnswer(photo: photo)
+        let text = try await simulatedAnswer(photo: photo)
+        answerArrived(text)
+        reply = ClaudeClient.Answer(text: text, stopReason: "end_turn")
       }
+      // An answer that ended early says so, and where, rather than sounding complete.
+      let cutOff: Speaker.CutOff? =
+        switch reply.stopReason {
+        case "end_turn", "stop_sequence": nil
+        case "max_tokens", "model_context_window_exceeded": .ranOut
+        case nil: .dropped
+        default: .stopped
+        }
+      let notice = cutOff.map { Speaker.cutOffNotice($0, answer: reply.text) }
+      speaker.finishAnswer(notice: notice)
+      let answer = [reply.text.trimmingCharacters(in: .whitespacesAndNewlines), notice]
+        .compactMap { $0 }.joined(separator: "\n")
       lastAnswer = answer
-      diag("solve", "answer received, \(answer.count) characters (app \(Self.appStateDescription))")
-      speaker.speak(answer)
+      diag(
+        "solve",
+        "answer received, \(reply.text.count) characters, ended by \(reply.stopReason ?? "a dropped connection") "
+          + "(app \(Self.appStateDescription))")
       conversation.add(
         prompt: prompt, photo: photo, answer: answer, error: nil, isTest: testMode, sessionID: chatSessionID)
     } catch {
@@ -507,6 +530,15 @@ final class AppModel {
         sessionID: chatSessionID)
     }
     speaker.endKeepAliveAfterSpeech()
+  }
+
+  /// Speaks the next piece of an answer, starting the answer with the first piece.
+  private func answerArrived(_ piece: String) {
+    if !answerStarted {
+      answerStarted = true
+      speaker.beginAnswer()
+    }
+    speaker.continueAnswer(piece)
   }
 
   /// How much later this press arrived than the fastest press so far, in milliseconds.

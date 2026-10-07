@@ -181,8 +181,42 @@ final class StubAnthropic: URLProtocol, @unchecked Sendable {
   override func stopLoading() {}
 }
 
+/// Server-sent events as the Messages API streams them: a thinking block, then one text
+/// block per entry in `texts` (each sent in two pieces), then the stop reason.
+func streamBody(_ texts: [String], stopReason: String? = "end_turn") -> String {
+  func event(_ name: String, _ json: String) -> String { "event: \(name)\ndata: \(json)\n\n" }
+  func quoted(_ text: String) -> String {
+    String(decoding: try! JSONSerialization.data(withJSONObject: text, options: .fragmentsAllowed), as: UTF8.self)
+  }
+  var body = event("message_start", #"{"type":"message_start","message":{"content":[]}}"#)
+  body += event("ping", #"{"type":"ping"}"#)
+  body += event("content_block_start", #"{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}"#)
+  body += event("content_block_delta", #"{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}}"#)
+  body += event("content_block_stop", #"{"type":"content_block_stop","index":0}"#)
+  for (offset, text) in texts.enumerated() {
+    let index = offset + 1
+    body += event("content_block_start", #"{"type":"content_block_start","index":\#(index),"content_block":{"type":"text","text":""}}"#)
+    let middle = text.index(text.startIndex, offsetBy: text.count / 2)
+    for piece in [String(text[..<middle]), String(text[middle...])] {
+      body += event("content_block_delta", #"{"type":"content_block_delta","index":\#(index),"delta":{"type":"text_delta","text":\#(quoted(piece))}}"#)
+    }
+    body += event("content_block_stop", #"{"type":"content_block_stop","index":\#(index)}"#)
+  }
+  if let stopReason {
+    body += event("message_delta", #"{"type":"message_delta","delta":{"stop_reason":"\#(stopReason)"},"usage":{"output_tokens":9}}"#)
+    body += event("message_stop", #"{"type":"message_stop"}"#)
+  }
+  return body
+}
+
+/// Collects the pieces of text handed on while an answer streams.
+@MainActor
+final class Pieces {
+  var all: [String] = []
+}
+
 final class ClaudeClientTests: XCTestCase {
-  private let answer = #"{"content":[{"type":"text","text":"The answer is 5."}],"stop_reason":"end_turn"}"#
+  private let answer = streamBody(["The answer is 5."])
 
   override func setUp() {
     super.setUp()
@@ -198,16 +232,54 @@ final class ClaudeClientTests: XCTestCase {
 
   func testAnswerAndHeaders() async throws {
     StubAnthropic.responses = [(200, answer)]
-    let text = try await ClaudeClient(apiKey: "sk-test").solve(photo: TestImages.jpeg(), prompt: "Solve")
-    XCTAssertEqual(text, "The answer is 5.")
+    let reply = try await ClaudeClient(apiKey: "sk-test").solve(photo: TestImages.jpeg(), prompt: "Solve")
+    XCTAssertEqual(reply, .init(text: "The answer is 5.", stopReason: "end_turn"))
+    XCTAssertTrue(reply.isComplete)
     XCTAssertEqual(StubAnthropic.lastHeaders["x-api-key"], "sk-test")
     XCTAssertEqual(StubAnthropic.lastHeaders["anthropic-version"], "2023-06-01")
   }
 
+  func testTextIsHandedOnAsItArrives() async throws {
+    StubAnthropic.responses = [(200, streamBody(["I can see problem 3.\nProblem: 3\n", "Done."]))]
+    let pieces = await Pieces()
+    let reply = try await ClaudeClient(apiKey: "k").solve(photo: TestImages.jpeg(), prompt: "Solve") { piece in
+      pieces.all.append(piece)
+    }
+    let all = await pieces.all
+    XCTAssertGreaterThan(all.count, 2)
+    // Separate text blocks are joined with a line break; thinking is skipped.
+    XCTAssertEqual(all.joined(), "I can see problem 3.\nProblem: 3\n\nDone.")
+    XCTAssertEqual(reply.text, all.joined())
+  }
+
+  func testCutOffAnswersSayWhy() async throws {
+    // Ran out of room: the text so far, and the reason.
+    StubAnthropic.responses = [(200, streamBody(["Problem: 4\nWrite: x"], stopReason: "max_tokens"))]
+    var reply = try await ClaudeClient(apiKey: "k").solve(photo: TestImages.jpeg(), prompt: "Solve")
+    XCTAssertEqual(reply, .init(text: "Problem: 4\nWrite: x", stopReason: "max_tokens"))
+    XCTAssertFalse(reply.isComplete)
+    // The stream ended without a stop reason: a dropped connection. Not retried, since
+    // retrying would say the start again.
+    StubAnthropic.requestCount = 0
+    StubAnthropic.responses = [(200, streamBody(["Problem: 4"], stopReason: nil)), (200, answer)]
+    reply = try await ClaudeClient(apiKey: "k").solve(photo: TestImages.jpeg(), prompt: "Solve")
+    XCTAssertEqual(reply, .init(text: "Problem: 4", stopReason: nil))
+    XCTAssertEqual(StubAnthropic.requestCount, 1)
+  }
+
   func testOverloadIsRetriedOnce() async throws {
     StubAnthropic.responses = [(529, #"{"error":{"message":"Overloaded"}}"#), (200, answer)]
-    let text = try await ClaudeClient(apiKey: "sk-test").solve(photo: TestImages.jpeg(), prompt: "Solve")
-    XCTAssertEqual(text, "The answer is 5.")
+    let reply = try await ClaudeClient(apiKey: "sk-test").solve(photo: TestImages.jpeg(), prompt: "Solve")
+    XCTAssertEqual(reply.text, "The answer is 5.")
+    XCTAssertEqual(StubAnthropic.requestCount, 2)
+  }
+
+  func testOverloadInsideTheStreamIsRetriedBeforeAnyText() async throws {
+    let overloaded = #"event: error"# + "\n"
+      + #"data: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"# + "\n\n"
+    StubAnthropic.responses = [(200, overloaded), (200, answer)]
+    let reply = try await ClaudeClient(apiKey: "k").solve(photo: TestImages.jpeg(), prompt: "Solve")
+    XCTAssertEqual(reply.text, "The answer is 5.")
     XCTAssertEqual(StubAnthropic.requestCount, 2)
   }
 
@@ -225,14 +297,14 @@ final class ClaudeClientTests: XCTestCase {
   }
 
   func testRefusalAndEmptyAnswer() async {
-    StubAnthropic.responses = [(200, #"{"content":[],"stop_reason":"refusal"}"#)]
+    StubAnthropic.responses = [(200, streamBody([], stopReason: "refusal"))]
     do {
       _ = try await ClaudeClient(apiKey: "k").solve(photo: TestImages.jpeg(), prompt: "Solve")
       XCTFail("expected refusal")
     } catch ClaudeError.refused {
     } catch { XCTFail("unexpected error \(error)") }
 
-    StubAnthropic.responses = [(200, #"{"content":[{"type":"thinking"}],"stop_reason":"end_turn"}"#)]
+    StubAnthropic.responses = [(200, streamBody([]))]
     do {
       _ = try await ClaudeClient(apiKey: "k").solve(photo: TestImages.jpeg(), prompt: "Solve")
       XCTFail("expected empty answer")

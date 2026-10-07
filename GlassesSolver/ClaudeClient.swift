@@ -212,11 +212,26 @@ struct ClaudeClient: Sendable {
 
   let apiKey: String
 
-  func solve(photo: Data, prompt: String = defaultPrompt) async throws -> String {
+  /// An answer and why it ended. Only "end_turn" means it's complete: "max_tokens" ran out
+  /// of room, "refusal" was stopped partway, and nil means the connection dropped.
+  struct Answer: Sendable, Equatable {
+    var text: String
+    var stopReason: String?
+    var isComplete: Bool { stopReason == "end_turn" }
+  }
+
+  /// Streams the answer, handing each new piece of text to `onText` as it arrives, so it can
+  /// be spoken before the rest is written. Throws only if no text arrived; once some has,
+  /// a dropped connection returns what came, with no stop reason.
+  func solve(
+    photo: Data, prompt: String = defaultPrompt, onText: @escaping @MainActor @Sendable (String) -> Void = { _ in }
+  ) async throws -> Answer {
     guard let jpeg = Self.preparedJPEG(from: photo) else { throw ClaudeError.badImage }
 
     var request = URLRequest(url: URL(string: "https://api.anthropic.com/v1/messages")!)
     request.httpMethod = "POST"
+    // While streaming, this is the longest wait between pieces, not for the whole answer
+    // (the API sends pings while Claude thinks), so a long answer isn't cut off at 180 s.
     request.timeoutInterval = 180
     request.setValue("application/json", forHTTPHeaderField: "content-type")
     request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
@@ -227,6 +242,7 @@ struct ClaudeClient: Sendable {
     let body: [String: Any] = [
       "model": Self.model,
       "max_tokens": 16000,
+      "stream": true,
       "fallbacks": "default",
       "output_config": ["effort": "medium"],
       "system": Self.system,
@@ -249,39 +265,57 @@ struct ClaudeClient: Sendable {
     ]
     request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-    let data = try await send(request)
-
-    let message = try JSONDecoder().decode(MessageResponse.self, from: data)
-    if message.stopReason == "refusal" { throw ClaudeError.refused }
-    let text = message.content
-      .filter { $0.type == "text" }
-      .compactMap(\.text)
-      .joined(separator: "\n")
-      .trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !text.isEmpty else { throw ClaudeError.emptyAnswer }
-    return text
-  }
-
-  /// Sends the request, retrying once after a short pause when the failure is temporary
-  /// (rate limit, overload, server error, or a dropped connection).
-  private func send(_ request: URLRequest) async throws -> Data {
+    // Retried once after a short pause when the failure is temporary (rate limit, overload,
+    // server error, or a dropped connection), but only before any text has arrived, so
+    // nothing is said twice.
     for attempt in 1...2 {
+      var stream = AnswerStream()
       do {
-        let (data, response) = try await URLSession.shared.data(for: request)
-        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-        if status == 200 { return data }
-        let message =
-          (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error.message
-          ?? String(decoding: data.prefix(300), as: UTF8.self)
-        let error = ClaudeError.http(status: status, message: message)
-        guard attempt == 1, [429, 500, 502, 503, 504, 529].contains(status) else { throw error }
+        try await read(request, into: &stream, onText: onText)
+        if stream.text.isEmpty {
+          if stream.stopReason == "refusal" { throw ClaudeError.refused }
+          if let failure = stream.failure { throw failure }
+          throw ClaudeError.emptyAnswer
+        }
+        return Answer(text: stream.text, stopReason: stream.stopReason)
+      } catch ClaudeError.http(let status, let message)
+        where attempt == 1 && stream.text.isEmpty && Self.retriedStatuses.contains(status)
+      {
         diag("claude", "HTTP \(status), retrying once: \(message)")
-      } catch let error as URLError where attempt == 1 && Self.isTransient(error) {
+      } catch let error as URLError where attempt == 1 && stream.text.isEmpty && Self.isTransient(error) {
         diag("claude", "network error, retrying once: \(ErrorDetail.describe(error))")
+      } catch where !stream.text.isEmpty {
+        diag("claude", "the answer stopped partway: \(ErrorDetail.describe(error))")
+        return Answer(text: stream.text, stopReason: nil)
       }
       try await Task.sleep(for: .seconds(2))
     }
     throw ClaudeError.emptyAnswer  // not reached: the second attempt returns or throws
+  }
+
+  private static let retriedStatuses = [429, 500, 502, 503, 504, 529]
+
+  /// Reads the server-sent events into `stream`, passing new text on as it comes.
+  private func read(
+    _ request: URLRequest, into stream: inout AnswerStream, onText: @MainActor @Sendable (String) -> Void
+  ) async throws {
+    let (bytes, response) = try await URLSession.shared.bytes(for: request)
+    let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+    guard status == 200 else {
+      var data = Data()
+      for try await byte in bytes {
+        data.append(byte)
+        if data.count > 4000 { break }
+      }
+      let message =
+        (try? JSONDecoder().decode(APIErrorResponse.self, from: data))?.error.message
+        ?? String(decoding: data.prefix(300), as: UTF8.self)
+      throw ClaudeError.http(status: status, message: message)
+    }
+    for try await line in bytes.lines {
+      let piece = stream.read(line: line)
+      if !piece.isEmpty { await onText(piece) }
+    }
   }
 
   private static func isTransient(_ error: URLError) -> Bool {
@@ -307,18 +341,43 @@ struct ClaudeClient: Sendable {
   }
 }
 
-private struct MessageResponse: Decodable {
-  struct Block: Decodable {
-    let type: String
-    let text: String?
-  }
+/// Builds an answer from the Messages API's server-sent events, one line at a time. Only
+/// text is kept: thinking blocks are skipped, and separate text blocks are joined with a
+/// line break. A server-side fallback continues on the same stream, keeping the text that
+/// already came (its marker is a block of its own, which is skipped too).
+struct AnswerStream {
+  private(set) var text = ""
+  private(set) var stopReason: String?
+  /// An error event from the server, such as an overload.
+  private(set) var failure: ClaudeError?
+  private var startsNewBlock = false
 
-  let content: [Block]
-  let stopReason: String?
-
-  enum CodingKeys: String, CodingKey {
-    case content
-    case stopReason = "stop_reason"
+  /// Reads one line of the stream and returns the text it adds ("" for most lines).
+  mutating func read(line: String) -> String {
+    guard line.hasPrefix("data:"),
+      let json = try? JSONSerialization.jsonObject(with: Data(line.dropFirst(5).utf8)) as? [String: Any]
+    else { return "" }
+    switch json["type"] as? String {
+    case "content_block_start":
+      startsNewBlock = (json["content_block"] as? [String: Any])?["type"] as? String == "text"
+    case "content_block_delta":
+      guard let delta = json["delta"] as? [String: Any], delta["type"] as? String == "text_delta",
+        let piece = delta["text"] as? String, !piece.isEmpty
+      else { return "" }
+      let added = (startsNewBlock && !text.isEmpty ? "\n" : "") + piece
+      startsNewBlock = false
+      text += added
+      return added
+    case "message_delta":
+      if let reason = (json["delta"] as? [String: Any])?["stop_reason"] as? String { stopReason = reason }
+    case "error":
+      let error = json["error"] as? [String: Any]
+      let status = error?["type"] as? String == "overloaded_error" ? 529 : 500
+      failure = .http(status: status, message: error?["message"] as? String ?? "stream error")
+    default:
+      break
+    }
+    return ""
   }
 }
 

@@ -61,6 +61,12 @@ final class Speaker: NSObject {
   /// How many times in a row `lastPenLine` has been repeated.
   private var repeatCount = 0
   private var nextLineID = 0
+  /// While an answer arrives in pieces: true until it's finished or stopped, the text of a
+  /// line still arriving, explanation waiting for the next pen line, and the current line.
+  private var answerOpen = false
+  private var unfinishedLine = ""
+  private var pendingProse: [String] = []
+  private var lineNumber = 0
 
   /// An instruction to do something on paper, from a line tagged in the answer.
   struct PenLine: Equatable {
@@ -117,6 +123,10 @@ final class Speaker: NSObject {
   /// True while anything is queued or being said (including a writing pause).
   var isActive: Bool { outstanding > 0 }
 
+  /// What's been queued since the last `speak`, `stop` or repeat, with the pause after
+  /// each, for tests.
+  var queued: [(text: String, pause: TimeInterval)] { script.map { ($0.text, $0.pauseAfter) } }
+
   override init() {
     super.init()
     synthesizer.delegate = self
@@ -132,6 +142,8 @@ final class Speaker: NSObject {
   func speak(_ text: String) {
     reset()
     activateSession()
+    answerOpen = false
+    unfinishedLine = ""
     lastPenLine = nil
     repeatCount = 0
     let voice = resolvedVoice
@@ -172,6 +184,7 @@ final class Speaker: NSObject {
   }
 
   func stop() {
+    answerOpen = false
     reset()
     if stopKeepAliveAfterSpeech { endKeepAlive() }
   }
@@ -203,6 +216,7 @@ final class Speaker: NSObject {
   /// Says the same real line of dictation in each voice, naming the voice first, at the
   /// current speed. The diagnostics log records each voice's measured words per minute.
   func compareVoices(_ voices: [AVSpeechSynthesisVoice]) {
+    answerOpen = false
     reset()
     activateSession()
     lastPenLine = nil
@@ -290,38 +304,103 @@ final class Speaker: NSObject {
     }
   }
 
+  // MARK: - An answer arriving in pieces
+
+  /// Starts speaking an answer that arrives in pieces (`continueAnswer`), so the first
+  /// problem is dictated while the rest is still being written. `finishAnswer` ends it.
+  func beginAnswer() {
+    speak("")
+    answerOpen = true
+  }
+
+  /// Adds the next piece of the answer. Each line is spoken once it's complete.
+  func continueAnswer(_ piece: String) {
+    guard answerOpen else { return }  // stopped meanwhile
+    unfinishedLine += piece
+    guard let lastBreak = unfinishedLine.lastIndex(of: "\n") else { return }
+    let complete = String(unfinishedLine[..<lastBreak])
+    unfinishedLine = String(unfinishedLine[unfinishedLine.index(after: lastBreak)...])
+    enqueue(complete.components(separatedBy: "\n").flatMap { segments(forParagraph: $0) }, voice: resolvedVoice)
+  }
+
+  /// Speaks the rest of the answer, then `notice` (such as `cutOffNotice`) if there is one.
+  func finishAnswer(notice: String? = nil) {
+    guard answerOpen else { return }
+    answerOpen = false
+    var rest = segments(forParagraph: unfinishedLine)
+    unfinishedLine = ""
+    if let notice {
+      rest += flushProse(beforeWrite: true)
+      rest.append(Segment(text: notice, rate: rate * Self.dictationRateFactor, pauseAfter: 0, penLine: nil))
+    } else {
+      rest += flushProse(beforeWrite: false)
+    }
+    enqueue(rest, voice: resolvedVoice)
+  }
+
+  /// Why an answer ended early.
+  enum CutOff {
+    /// It ran out of room (the answer length limit).
+    case ranOut
+    /// The connection dropped.
+    case dropped
+    /// Claude stopped answering partway.
+    case stopped
+  }
+
+  /// What to say after an answer that ended early: that it did, where (the last problem
+  /// started), and what to retake. The last line said may be unfinished.
+  static func cutOffNotice(_ reason: CutOff, answer: String) -> String {
+    let what =
+      switch reason {
+      case .ranOut: "The answer ran out of room"
+      case .dropped: "The connection dropped"
+      case .stopped: "The answer stopped"
+      }
+    let lastProblem = answer.components(separatedBy: "\n").compactMap(problemLabel(in:)).last
+    guard let lastProblem else {
+      return "Stop. \(what) before the first problem. Take the photo again."
+    }
+    return "Stop. \(what) partway through problem \(lastProblem), so its last line may be unfinished. "
+      + "Take a new photo of problem \(lastProblem) and any after it."
+  }
+
+  // MARK: - Turning an answer into speech
+
   /// Other paragraphs between pen lines become one utterance each run; each pen line is
   /// dictated as below. A "Problem:" line is announced and starts the line count over.
   private func segments(for text: String) -> [Segment] {
-    var result: [Segment] = []
-    var prose: [String] = []
-    func flushProse(beforeWrite: Bool) {
-      guard !prose.isEmpty else { return }
-      let joined = prose.map { line in
-        line.last.map { ".!?:;".contains($0) } == true ? line : line + "."
-      }.joined(separator: " ")
-      result.append(
-        Segment(text: joined, rate: rate, pauseAfter: beforeWrite ? Self.beforeWritePause : 0, penLine: nil))
-      prose.removeAll()
+    pendingProse.removeAll()
+    lineNumber = 0
+    return text.components(separatedBy: "\n").flatMap { segments(forParagraph: $0) }
+      + flushProse(beforeWrite: false)
+  }
+
+  /// The speech for one paragraph of an answer. Explanation paragraphs wait in
+  /// `pendingProse` until a pen line or problem comes, so a run of them is one utterance.
+  private func segments(forParagraph raw: String) -> [Segment] {
+    let paragraph = Self.speakable(raw)
+    if let label = Self.problemLabel(in: paragraph) {
+      lineNumber = 0
+      return flushProse(beforeWrite: true)
+        + [Segment(text: "Problem \(label).", rate: rate, pauseAfter: Self.problemPause, penLine: nil)]
     }
-    var lineNumber = 0
-    for paragraph in Self.speakable(text).components(separatedBy: "\n") {
-      if let label = Self.problemLabel(in: paragraph) {
-        flushProse(beforeWrite: true)
-        lineNumber = 0
-        result.append(Segment(text: "Problem \(label).", rate: rate, pauseAfter: Self.problemPause, penLine: nil))
-      } else if let pen = Self.penLine(in: paragraph) {
-        flushProse(beforeWrite: true)
-        if pen.0 == .write || pen.0 == .sentence { lineNumber += 1 }
-        let line = PenLine(kind: pen.0, text: pen.1, number: max(lineNumber, 1))
-        result += dictation(line, cue: Self.cue(for: line), inParts: dictateInParts)
-      } else {
-        let trimmed = paragraph.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmed.isEmpty { prose.append(trimmed) }
-      }
+    if let pen = Self.penLine(in: paragraph) {
+      if pen.0 == .write || pen.0 == .sentence { lineNumber += 1 }
+      let line = PenLine(kind: pen.0, text: pen.1, number: max(lineNumber, 1))
+      return flushProse(beforeWrite: true) + dictation(line, cue: Self.cue(for: line), inParts: dictateInParts)
     }
-    flushProse(beforeWrite: false)
-    return result
+    if !paragraph.isEmpty { pendingProse.append(paragraph) }
+    return []
+  }
+
+  private func flushProse(beforeWrite: Bool) -> [Segment] {
+    guard !pendingProse.isEmpty else { return [] }
+    let joined = pendingProse.map { line in
+      line.last.map { ".!?:;".contains($0) } == true ? line : line + "."
+    }.joined(separator: " ")
+    pendingProse.removeAll()
+    return [Segment(text: joined, rate: rate, pauseAfter: beforeWrite ? Self.beforeWritePause : 0, penLine: nil)]
   }
 
   /// What's said before a pen line: where on the paper it goes. A Mark line says it itself.
