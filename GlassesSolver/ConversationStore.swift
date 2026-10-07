@@ -52,7 +52,7 @@ final class ConversationStore {
   init(folder: URL? = nil) {
     let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
     self.folder = folder ?? documents.appending(path: "Conversation", directoryHint: .isDirectory)
-    try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    try? FileManager.default.createDirectory(at: self.folder, withIntermediateDirectories: true)
     load()
   }
 
