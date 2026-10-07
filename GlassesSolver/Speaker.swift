@@ -67,6 +67,8 @@ final class Speaker: NSObject {
     enum Kind {
       /// "Write:" starts a new line on paper.
       case write
+      /// "Sentence:" starts a new line and is words, not math symbols.
+      case sentence
       /// "Continue:" keeps writing on the same line.
       case continueLine
       /// "Mark:" crosses out, draws a box, and so on.
@@ -254,7 +256,7 @@ final class Speaker: NSObject {
         result.append(Segment(text: "Problem \(label).", rate: rate, pauseAfter: Self.problemPause, penLine: nil))
       } else if let pen = Self.penLine(in: paragraph) {
         flushProse(beforeWrite: true)
-        if pen.0 == .write { lineNumber += 1 }
+        if pen.0 == .write || pen.0 == .sentence { lineNumber += 1 }
         let line = PenLine(kind: pen.0, text: pen.1, number: max(lineNumber, 1))
         result += dictation(line, cue: Self.cue(for: line), inParts: dictateInParts)
       } else {
@@ -269,7 +271,7 @@ final class Speaker: NSObject {
   /// What's said before a pen line: where on the paper it goes. A Mark line says it itself.
   static func cue(for line: PenLine) -> String {
     switch line.kind {
-    case .write: "Start line \(line.number)."
+    case .write, .sentence: "Start line \(line.number)."
     case .continueLine: "Same line, keep going."
     case .mark: ""
     }
@@ -293,8 +295,9 @@ final class Speaker: NSObject {
       ]
     }
     let groups = Self.dictationGroups(line.text)
+    let writingTime = line.kind == .sentence ? Self.sentenceWritingTime : Self.writingTime
     guard inParts, !groups.isEmpty else {
-      let pause = min(groups.map(Self.writingTime).reduce(0, +), Self.maxLinePause)
+      let pause = min(groups.map(writingTime).reduce(0, +), Self.maxLinePause)
       return [
         Segment(
           text: lead + line.text, rate: speed, pauseAfter: pause * writingTimeScale + Self.afterLinePause,
@@ -305,7 +308,7 @@ final class Speaker: NSObject {
       let isLast = index == groups.count - 1
       return Segment(
         text: (index == 0 ? lead : "") + group + (isLast ? "." : ","), rate: speed,
-        pauseAfter: Self.writingTime(group) * writingTimeScale + (isLast ? Self.afterLinePause : 0),
+        pauseAfter: writingTime(group) * writingTimeScale + (isLast ? Self.afterLinePause : 0),
         penLine: line, lineID: lineID)
     }
   }
@@ -323,6 +326,10 @@ final class Speaker: NSObject {
     guard trimmed.lowercased().hasPrefix("problem:") else { return nil }
     var label = trimmed.dropFirst("problem:".count).trimmingCharacters(in: .whitespacesAndNewlines)
     while label.hasSuffix(".") { label.removeLast() }
+    // "part a" is read as the letter, not "uh".
+    if let range = label.range(of: #"(?<=[Pp]art )[a-z]\b"#, options: .regularExpression) {
+      label.replaceSubrange(range, with: label[range].uppercased())
+    }
     return label.isEmpty ? nil : label
   }
 
@@ -362,19 +369,42 @@ final class Speaker: NSObject {
     max(minGroupPause, secondsPerCharacter * Double(writtenCharacters(group)))
   }
 
+  /// Seconds to write a part of a sentence: every letter and digit counts, "period" or "comma"
+  /// counts one, and "capital" (the next word starts with a capital) counts none.
+  static func sentenceWritingTime(_ group: String) -> TimeInterval {
+    let characters = group.lowercased()
+      .components(separatedBy: CharacterSet(charactersIn: ",.;:").union(.whitespacesAndNewlines))
+      .filter { !$0.isEmpty }
+      .reduce(0) { total, word in
+        if word == "capital" { return total }  // says the next word starts with a capital
+        return ["period", "comma"].contains(word) ? total + 1 : total + word.filter(\.isLetter || \.isWholeNumber).count
+      }
+    return max(minGroupPause, secondsPerCharacter * Double(characters))
+  }
+
   /// About how many characters a spoken part puts on paper: "the letters c o s" is 3,
   /// "open parenthesis" is 1, "small raised 2" is 1, "start fraction, on top" is 0. A number
   /// counts its digits; any other word counts 1, except words that only say where or how
   /// to write, which count 0.
   static func writtenCharacters(_ text: String) -> Int {
-    text.lowercased()
+    let words = text.lowercased()
       .components(separatedBy: CharacterSet(charactersIn: ",.;:").union(.whitespacesAndNewlines))
       .filter { !$0.isEmpty }
-      .reduce(0) { total, word in
-        if let known = writtenWords[word] { return total + known }
-        let digits = word.filter(\.isWholeNumber).count
-        return total + (digits > 0 ? digits : 1)
+    var total = 0
+    for (index, word) in words.enumerated() {
+      // "a" starts a shape description ("a small tick"); only "letter a" is a mark.
+      if word == "a" {
+        if index > 0, words[index - 1] == "letter" { total += 1 }
+        continue
       }
+      if let known = writtenWords[word] {
+        total += known
+        continue
+      }
+      let digits = word.filter(\.isWholeNumber).count
+      total += digits > 0 ? digits : 1
+    }
+    return total
   }
 
   private static let writtenWords: [String: Int] = [
@@ -384,13 +414,14 @@ final class Speaker: NSObject {
     "them": 0, "letters": 0, "letter": 0, "sign": 0, "mark": 0, "marks": 0, "bar": 0,
     "line": 0, "right": 0, "left": 0, "pointing": 0, "middle": 0, "height": 0, "check": 0,
     "short": 0, "across": 0, "sideways": 0, "tick": 0, "dot": 0, "back": 0, "down": 0,
+    "tiny": 0, "lowered": 0, "up": 0, "root": 0, "notch": 0, "tucked": 0, "in": 0, "its": 0,
     "bottom": 1, "draw": 1,
     "sine": 3, "cosine": 3, "tangent": 3, "secant": 3, "cosecant": 3, "cotangent": 3,
     "log": 2, "limit": 3, "inverse": 2,
   ]
 
   private static let penTags: [(tag: String, kind: PenLine.Kind)] = [
-    ("write:", .write), ("continue:", .continueLine), ("mark:", .mark),
+    ("write:", .write), ("sentence:", .sentence), ("continue:", .continueLine), ("mark:", .mark),
   ]
 
   /// The kind and text of a pen line ("Write:", "Continue:" or "Mark:"), if this paragraph is

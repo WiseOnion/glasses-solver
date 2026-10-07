@@ -17,6 +17,28 @@ final class DictationTests: XCTestCase {
     XCTAssertEqual(Speaker.penLine(in: "Write: letter a, small raised 2")?.1, "letter A, small raised 2")
   }
 
+  func testSentenceLinesAndPartLabels() {
+    XCTAssertEqual(Speaker.penLine(in: "Sentence: capital the radius, period")?.0, .sentence)
+    XCTAssertEqual(Speaker.cue(for: .init(kind: .sentence, text: "x", number: 2)), "Start line 2.")
+    // A part letter is read as the letter, not "uh".
+    XCTAssertEqual(Speaker.problemLabel(in: "Problem: 5, part a"), "5, part A")
+    XCTAssertEqual(Speaker.problemLabel(in: "Problem: 15, part b."), "15, part B")
+    // Words take longer to write than symbols: every letter counts, "capital" counts none.
+    XCTAssertEqual(
+      Speaker.sentenceWritingTime("capital the radius is increasing at,"), 0.7 * 23, accuracy: 0.001)
+    XCTAssertEqual(Speaker.sentenceWritingTime("f t, slash, s, period."), 0.7 * 9, accuracy: 0.001)
+  }
+
+  func testNewNotationCounts() {
+    // Only "letter a" is a mark; the "a" starting a shape description isn't.
+    XCTAssertEqual(Speaker.writtenCharacters("theta, a 0 with a line across the middle"), 2)
+    XCTAssertEqual(Speaker.writtenCharacters("letter a, small raised 2"), 2)
+    XCTAssertEqual(Speaker.writtenCharacters("y, prime mark, a small tick at the top right"), 2)
+    XCTAssertEqual(Speaker.writtenCharacters("tiny raised 2"), 1)
+    XCTAssertEqual(Speaker.writtenCharacters("small lowered b, back up"), 1)
+    XCTAssertEqual(Speaker.writtenCharacters("root sign, a check mark with a small 3 tucked in its notch"), 1)
+  }
+
   func testProblemLabels() {
     XCTAssertEqual(Speaker.problemLabel(in: "Problem: 4"), "4")
     XCTAssertEqual(Speaker.problemLabel(in: "problem: number 7."), "number 7")
@@ -71,6 +93,10 @@ final class DictationTests: XCTestCase {
       "Write: the letters s i n, start small raised, minus sign, 1, end small raised, x.",
       "Write: the letters l i m, then under them, small, x, arrow pointing right, 0, end under.",
       "Write: x, small raised 2, back down, plus sign, 1.",
+      "Write: letter e, start small raised, theta, tiny raised 2, end small raised.",
+      "Write: the letters l o g, small lowered b, back up, open parenthesis, x, close parenthesis.",
+      "Write: root sign, a check mark with a small 3 tucked in its notch and a line over the top, under the line, x, end root.",
+      "Write: 4, point, 9, f t, small raised 3, back down, slash, m i n.",
       "Write: letter e, start small raised, 2 x, plus sign, 1, end small raised.",
       "Problem: 4",
     ] {

@@ -57,8 +57,10 @@ struct ClaudeClient: Sendable {
     the photo for that one." Never guess at a problem you can't fully read. If no problem is \
     complete, say what you can't make out, ask them to retake the photo, and stop there.
     2. For each complete problem, top to bottom (left column first):
-      a. A line starting "Problem:" with its number, for example "Problem: 4". The app \
-    announces it and starts the line count over at line 1.
+      a. A line starting "Problem:" with its number, for example "Problem: 4". For a lettered \
+    part, include it: "Problem: 5, part a". Treat each lettered part as its own problem, with \
+    its own sentence and line count. The app announces it and starts the line count over at \
+    line 1.
       b. One short sentence naming it, so they can tell if it was misread, for example: \
     "This is the limit of x squared minus 4, over x minus 2, as x goes to 2."
       c. "You'll write N lines." with the right number.
@@ -68,11 +70,18 @@ struct ClaudeClient: Sendable {
         "Continue:" keeps writing on the same line. Use it when a line would take more than \
     about 25 spoken words, splitting at a natural point such as before an equals sign or a \
     fraction. The app says "Same line, keep going."
+        "Sentence:" is for words they must write out, such as a final answer that has to be a \
+    sentence with units. It starts a new line like "Write:". Say the words in short phrases \
+    separated by commas, say "capital" before a word that starts with a capital letter, say \
+    punctuation by name inside a phrase ("period", "comma"), and spell any unusual word \
+    letter by letter the first time. Use "Sentence:" only when the \
+    problem asks for words.
         "Mark:" is a pen action that isn't a new line: crossing out, drawing a box. Say it as \
     one full instruction that finds the spot by position and by the marks as you dictated \
     them, not by what they mean, for example "Mark: On line 1, cross out the first pair of \
     parentheses on top, the ones with x, minus sign, 2 inside, and the x, minus sign, 2 under \
-    the fraction bar."
+    the fraction bar." When a problem asks for a picture, give one Mark line per shape, such \
+    as "Mark: Draw a square. Label each side x." Keep to what they need to draw.
       The app reads these lines slowly, a few words at a time, and waits while they write, so \
     put nothing else on them.
       e. "Mark: Draw a box around line N." for that problem's answer line.
@@ -107,11 +116,20 @@ struct ClaudeClient: Sendable {
     For a raised part of more than one symbol: "letter e, start small raised, 2 x, plus sign, \
     1, end small raised". A trig power goes right after the letters: "the letters s i n, small \
     raised 2, back down, x". An inverse: "the letters s i n, start small raised, minus sign, 1, \
-    end small raised".
+    end small raised". For a raised symbol inside a raised part, say "tiny raised": it is a \
+    little higher and smaller still. "back down" then returns to the raised part, and "end \
+    small raised" returns to the line, so e to the theta squared is "letter e, start small \
+    raised, theta, tiny raised 2, end small raised".
+    - Subscripts: "small lowered b" means write a small b a little below the line, right after \
+    what came before, and "back up" returns to the line. For log base b: "the letters l o g, \
+    small lowered b, back up, open parenthesis, ...". For more than one symbol: "start small \
+    lowered ... end small lowered".
     - Fractions, in writing order: "start fraction, on top, 3 x, draw the fraction bar, under \
     the bar, 2, end fraction".
     - Square roots: "square root sign, a check mark with a line over the top, under the line, \
-    x, plus sign, 1, end square root".
+    x, plus sign, 1, end square root". For other roots, name the index and where it goes: \
+    "root sign, a check mark with a small 3 tucked in its notch and a line over the top, \
+    under the line, x, plus sign, 1, end root". A cube root uses 3, a fifth root uses 5.
     - Prime: the first time in the answer say "prime mark, a small tick at the top right", \
     after that "prime mark": "y, prime mark, equals sign". Two of them: "two prime marks".
     - Derivative notation: "start fraction, on top, d y, draw the fraction bar, under the bar, \
@@ -122,6 +140,9 @@ struct ClaudeClient: Sendable {
     the middle". Pi is "pi, a pair of short legs with a bar on top". Describe any other symbol \
     by its shape the first time in the answer, starting the description with "a", as in "a \
     sideways 8"; after that, just its name.
+    - Decimals: say "point": "4, point, 9" is 4.9. Units are letters with the same raised \
+    wording: feet cubed per minute is "f t, small raised 3, back down, slash, m i n". Say \
+    "slash" for a slash.
     - Example Write line: "Write: y, prime mark, a small tick at the top right, equals sign, 6 \
     x, the letters c o s, open parenthesis, 3 x, small raised 2, close parenthesis."
 
