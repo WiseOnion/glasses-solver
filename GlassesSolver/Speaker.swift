@@ -372,13 +372,18 @@ final class Speaker: NSObject {
   /// Seconds to write a part of a sentence: every letter and digit counts, "period" or "comma"
   /// counts one, and "capital" (the next word starts with a capital) counts none.
   static func sentenceWritingTime(_ group: String) -> TimeInterval {
-    let characters = group.lowercased()
+    let words = group.lowercased()
       .components(separatedBy: CharacterSet(charactersIn: ",.;:").union(.whitespacesAndNewlines))
       .filter { !$0.isEmpty }
-      .reduce(0) { total, word in
-        if word == "capital" { return total }  // says the next word starts with a capital
-        return ["period", "comma"].contains(word) ? total + 1 : total + word.filter(\.isLetter || \.isWholeNumber).count
+    var characters = 0
+    for word in words {
+      if word == "capital" { continue }  // says the next word starts with a capital
+      if word == "period" || word == "comma" {
+        characters += 1
+      } else {
+        characters += word.filter { $0.isLetter || $0.isWholeNumber }.count
       }
+    }
     return max(minGroupPause, secondsPerCharacter * Double(characters))
   }
 
