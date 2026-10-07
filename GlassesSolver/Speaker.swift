@@ -306,7 +306,7 @@ final class Speaker: NSObject {
   /// skips "=" entirely. The rules are tested against sample answers (see README).
   static func speakable(_ text: String) -> String {
     var result = text
-    for token in ["**", "__", "`", "#", "\(", "\)", "\[", "\]"] {
+    for token in ["**", "__", "`", "#", #"\("#, #"\)"#, #"\["#, #"\]"#] {
       result = result.replacingOccurrences(of: token, with: "")
     }
     result = applying(calculusRules, to: result)
