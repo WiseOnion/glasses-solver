@@ -405,7 +405,26 @@ final class AppModel {
 
   /// Says one sentence in the current voice and speed.
   func previewVoice() {
-    speaker.speak("Hi. This is how your answers will sound. The derivative of x squared is 2 x.")
+    // A real piece of dictation, with its pauses, rather than a sentence of ordinary speech.
+    speaker.speak("Write: the letters c o s, open parenthesis, 3 x, small raised 2, back down, close parenthesis")
+  }
+
+  /// The same real line of dictation in each of the best voices, one after another.
+  func compareVoices() {
+    speaker.compareVoices(Speaker.comparisonVoices())
+  }
+
+  /// Sets the speaking speed so the current voice speaks about 150 words a minute: speaks a
+  /// sentence, measures it, and scales the speed once. Tap it again to fine-tune.
+  func matchSpeed() {
+    speaker.speak(Speaker.calibrationText)
+    speaker.measurementHandler = { [weak self] wpm in
+      guard let self, (60...400).contains(wpm) else { return }
+      let scaled = Float(Double(self.speechRate) * 150 / Double(wpm))
+      let matched = min(max(scaled, Speaker.rateRange.lowerBound), Speaker.rateRange.upperBound)
+      diag("audio", "matching speed: \(wpm) words per minute at \(self.speechRate), trying \(matched)")
+      self.speechRate = matched
+    }
   }
 
   /// Speaks a past answer again from the Conversation screen.

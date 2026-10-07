@@ -255,6 +255,8 @@ struct SettingsView: View {
             }
           }
           Button("Preview voice", systemImage: "play.circle") { model.previewVoice() }
+          Button("Compare voices", systemImage: "person.2.wave.2") { model.compareVoices() }
+          Button("Match speed to 150 words a minute", systemImage: "gauge.with.needle") { model.matchSpeed() }
           VStack(alignment: .leading) {
             Text("Speaking speed")
             Slider(value: $model.speechRate, in: Speaker.rateRange) {
@@ -289,7 +291,9 @@ struct SettingsView: View {
           Text(
             "Using \(model.voiceDescription). Enhanced and Premium voices sound far more natural than Default "
               + "ones. Download them in iOS Settings → Accessibility → Spoken Content → Voices → English (for "
-              + "example Ava, Zoe or Evan, Premium), then come back here and pick one. Answers dictate each "
+              + "example Ava, Zoe or Evan, Premium), then come back here and pick one. Compare voices reads "
+              + "one real line of dictation in each voice, so you can choose by ear; Match speed sets the "
+              + "current voice to about 150 words a minute. Answers dictate each "
               + "line to write a few words at a time and pause while you write each part (turn off \"Pause after "
               + "each part\" to hear the whole line first, then one pause). Double-tap the glasses' touchpad to "
               + "hear the last line again; double-tap again for slower."

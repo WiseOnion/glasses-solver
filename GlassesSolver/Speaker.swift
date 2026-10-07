@@ -89,7 +89,13 @@ final class Speaker: NSObject {
     let penLine: PenLine?
     /// Shared by the parts of one dictated line.
     var lineID: Int?
+    /// A voice for just this segment (voice comparison); nil uses the chosen voice.
+    var voice: AVSpeechSynthesisVoice?
   }
+
+  /// Called with the measured speaking speed (words a minute) of the next sentence spoken
+  /// after `speak` or `compareVoices`, once; used to match a voice to a target speed.
+  var measurementHandler: (@MainActor (Int) -> Void)?
 
   private let synthesizer = AVSpeechSynthesizer()
   /// What's queued now, in order, and which utterance is which segment.
@@ -170,6 +176,47 @@ final class Speaker: NSObject {
     if stopKeepAliveAfterSpeech { endKeepAlive() }
   }
 
+  // MARK: - Choosing a voice
+
+  /// A real line of dictation (letters, a raised power, a fraction) for hearing a voice.
+  static let comparisonLine =
+    "the letters c o s, open parenthesis, 3 x, small raised 2, back down, close parenthesis, "
+    + "times dot, start fraction, on top, the letters s i n, x, draw the fraction bar, "
+    + "under the bar, 2, end fraction"
+
+  /// A sentence of about 30 words, spoken to measure a voice's speed.
+  static let calibrationText =
+    "This is how fast the summary of the problem will sound. Next the voice dictates each line "
+    + "to write, a few words at a time, and waits while you write each part."
+
+  /// Voices iOS doesn't flag as novelty but that sound like it.
+  private static let skippedInComparison: Set<String> = ["Grandma", "Grandpa", "Rocko"]
+
+  /// The voices worth hearing side by side: the phone's exact language (such as en-US), best
+  /// quality first, at most 12.
+  static func comparisonVoices() -> [AVSpeechSynthesisVoice] {
+    let code = AVSpeechSynthesisVoice.currentLanguageCode()
+    let matching = availableVoices().filter { $0.language == code && !skippedInComparison.contains($0.name) }
+    return Array((matching.isEmpty ? availableVoices() : matching).prefix(12))
+  }
+
+  /// Says the same real line of dictation in each voice, naming the voice first, at the
+  /// current speed. The diagnostics log records each voice's measured words per minute.
+  func compareVoices(_ voices: [AVSpeechSynthesisVoice]) {
+    reset()
+    activateSession()
+    lastPenLine = nil
+    repeatCount = 0
+    let line = PenLine(kind: .write, text: Self.comparisonLine, number: 1)
+    let segments = voices.map { voice in
+      Segment(
+        text: "\(voice.name). \(Self.comparisonLine).", rate: rate * Self.dictationRateFactor,
+        pauseAfter: 1.5, penLine: line, lineID: nil, voice: voice)
+    }
+    diag("audio", "comparing \(voices.count) voices: \(voices.map(\.name).joined(separator: ", "))")
+    enqueue(segments, voice: nil)
+  }
+
   // MARK: - Queue
 
   private func reset() {
@@ -181,6 +228,7 @@ final class Speaker: NSObject {
     currentFinished = false
     outstanding = 0
     wordTimes.removeAll()
+    measurementHandler = nil
     synthesizer.stopSpeaking(at: .immediate)
   }
 
@@ -188,7 +236,7 @@ final class Speaker: NSObject {
     for segment in segments {
       let utterance = AVSpeechUtterance(string: segment.text)
       utterance.rate = segment.rate
-      utterance.voice = voice
+      utterance.voice = segment.voice ?? voice
       utterance.postUtteranceDelay = segment.pauseAfter
       script.append(segment)
       utterances.append(utterance)
@@ -234,7 +282,12 @@ final class Speaker: NSObject {
     guard seconds > 1 else { return }
     let wpm = Int((Double(words - 1) / seconds * 60).rounded())
     let kind = segment.penLine == nil ? "explanation" : "dictation"
-    diag("audio", "measured \(wpm) words per minute (\(kind), rate \(String(format: "%.2f", segment.rate)))")
+    let name = (segment.voice ?? resolvedVoice)?.name ?? "default voice"
+    diag("audio", "measured \(wpm) words per minute (\(kind), \(name), rate \(String(format: "%.2f", segment.rate)))")
+    if segment.penLine == nil, let handler = measurementHandler {
+      measurementHandler = nil
+      handler(wpm)
+    }
   }
 
   /// Other paragraphs between pen lines become one utterance each run; each pen line is
