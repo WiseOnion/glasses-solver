@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 import MWDATCore
 import Observation
@@ -342,7 +343,21 @@ final class AppModel {
   var availableVoices: [(id: String, label: String)] {
     Speaker.availableVoices().map { voice in
       let region = Locale.current.localizedString(forIdentifier: voice.language) ?? voice.language
-      return (voice.identifier, "\(voice.name) · \(Speaker.qualityName(voice.quality)) · \(region)")
+      let source = Speaker.isFromOtherApp(voice) ? " · other app" : ""
+      return (voice.identifier, "\(voice.name) · \(Speaker.qualityName(voice.quality)) · \(region)\(source)")
+    }
+  }
+
+  /// Writes every voice iOS reports to the diagnostics log, so a voice that doesn't show
+  /// up in the picker can be traced (is iOS giving it to apps at all, and how is it labeled).
+  func logInstalledVoices() {
+    let all = AVSpeechSynthesisVoice.speechVoices()
+    let others = all.filter(Speaker.isFromOtherApp)
+    diag("voices", "iOS reports \(all.count) voices, \(others.count) from other apps")
+    for voice in others + all.filter({ !Speaker.isFromOtherApp($0) && Speaker.isPhoneLanguage($0.language) }) {
+      diag(
+        "voices",
+        "\(voice.name) | \(voice.language) | \(Speaker.qualityName(voice.quality)) | \(voice.identifier)")
     }
   }
 

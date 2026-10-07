@@ -444,25 +444,40 @@ final class Speaker: NSObject {
 
   /// Installed voices in the phone's language, best quality first. Novelty and Personal
   /// Voice voices are left out.
+  /// Every installed voice except novelty and Personal Voice ones, with the phone's
+  /// language first, then best quality, then by name. Voices from other apps (such as
+  /// Piper) are included: they can report languages like "en" or "en_US", so nothing is
+  /// filtered out by language.
   static func availableVoices() -> [AVSpeechSynthesisVoice] {
-    let language = String(AVSpeechSynthesisVoice.currentLanguageCode().prefix(2))
-    return AVSpeechSynthesisVoice.speechVoices()
-      .filter {
-        $0.language.hasPrefix(language) && !$0.voiceTraits.contains(.isNoveltyVoice)
-          && !$0.voiceTraits.contains(.isPersonalVoice)
+    AVSpeechSynthesisVoice.speechVoices()
+      .filter { !$0.voiceTraits.contains(.isNoveltyVoice) && !$0.voiceTraits.contains(.isPersonalVoice) }
+      .sorted { a, b in
+        let aLocal = isPhoneLanguage(a.language)
+        let bLocal = isPhoneLanguage(b.language)
+        if aLocal != bLocal { return aLocal }
+        if a.quality.rawValue != b.quality.rawValue { return a.quality.rawValue > b.quality.rawValue }
+        return a.name < b.name
       }
-      .sorted {
-        $0.quality.rawValue != $1.quality.rawValue
-          ? $0.quality.rawValue > $1.quality.rawValue
-          : $0.name < $1.name
-      }
+  }
+
+  /// "en", "en-US", "en_GB" all count as English on an English phone.
+  static func isPhoneLanguage(_ language: String) -> Bool {
+    let phone = String(AVSpeechSynthesisVoice.currentLanguageCode().prefix(2)).lowercased()
+    return language.lowercased().hasPrefix(phone)
+  }
+
+  /// True for voices installed by another app rather than by iOS.
+  static func isFromOtherApp(_ voice: AVSpeechSynthesisVoice) -> Bool {
+    !voice.identifier.hasPrefix("com.apple.")
   }
 
   /// The best installed voice for the phone's exact language (e.g. en-US), then any variant.
   static var bestVoice: AVSpeechSynthesisVoice? {
     let code = AVSpeechSynthesisVoice.currentLanguageCode()
     let voices = availableVoices()
-    return voices.first { $0.language == code } ?? voices.first ?? AVSpeechSynthesisVoice(language: code)
+    return voices.first { $0.language == code }
+      ?? voices.first { isPhoneLanguage($0.language) }
+      ?? AVSpeechSynthesisVoice(language: code)
   }
 
   /// The chosen voice if it's still installed, otherwise the best one.

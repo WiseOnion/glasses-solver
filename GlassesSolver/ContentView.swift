@@ -1,3 +1,4 @@
+import AVFoundation
 import SwiftUI
 import UIKit
 
@@ -310,9 +311,17 @@ struct SettingsView: View {
         }
       }
       .navigationTitle("Settings")
-      .onAppear { voices = model.availableVoices }
+      .onAppear {
+        voices = model.availableVoices
+        model.logInstalledVoices()
+      }
       .onChange(of: scenePhase) { _, phase in
         if phase == .active { voices = model.availableVoices }
+      }
+      // Apple's recommended signal: voices downloaded (in Settings or apps like Piper) or deleted.
+      .onReceive(NotificationCenter.default.publisher(for: AVSpeechSynthesizer.availableVoicesDidChangeNotification)) { _ in
+        voices = model.availableVoices
+        model.logInstalledVoices()
       }
       .toolbar {
         Button("Done") { dismiss() }
