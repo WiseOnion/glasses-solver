@@ -39,13 +39,16 @@ final class Speaker: NSObject {
   private static let maxGroupWords = 5
   /// Writing time per character on paper (careful handwriting of math runs about one and a
   /// half characters a second), the least pause after a part, the most after a whole line,
-  /// and a beat after the last part before the explanation goes on.
+  /// and a beat after a line to finish it and move the pen down.
   private static let secondsPerCharacter: TimeInterval = 0.7
   private static let minGroupPause: TimeInterval = 1.2
   private static let maxLinePause: TimeInterval = 20
-  private static let afterLinePause: TimeInterval = 0.5
-  /// Time for each part of a Mark line (crossing out, drawing a box).
-  private static let markPartPause: TimeInterval = 2
+  private static let afterLinePause: TimeInterval = 1
+  /// Time for each thing a Mark line crosses out or draws, and the most for one Mark line.
+  private static let markItemPause: TimeInterval = 2
+  private static let maxMarkPause: TimeInterval = 8
+  /// After "Problem 4.": time to find the spot on the paper and write the number.
+  private static let problemPause: TimeInterval = 2
 
   var rate: Float = Speaker.defaultRate
   var writingTimeScale: Double = 1
@@ -229,8 +232,8 @@ final class Speaker: NSObject {
     diag("audio", "measured \(wpm) words per minute (\(kind), rate \(String(format: "%.2f", segment.rate)))")
   }
 
-  /// Explanation paragraphs between Write lines become one utterance each run; each Write
-  /// line is dictated as below.
+  /// Other paragraphs between pen lines become one utterance each run; each pen line is
+  /// dictated as below. A "Problem:" line is announced and starts the line count over.
   private func segments(for text: String) -> [Segment] {
     var result: [Segment] = []
     var prose: [String] = []
@@ -245,7 +248,11 @@ final class Speaker: NSObject {
     }
     var lineNumber = 0
     for paragraph in Self.speakable(text).components(separatedBy: "\n") {
-      if let pen = Self.penLine(in: paragraph) {
+      if let label = Self.problemLabel(in: paragraph) {
+        flushProse(beforeWrite: true)
+        lineNumber = 0
+        result.append(Segment(text: "Problem \(label).", rate: rate, pauseAfter: Self.problemPause, penLine: nil))
+      } else if let pen = Self.penLine(in: paragraph) {
         flushProse(beforeWrite: true)
         if pen.0 == .write { lineNumber += 1 }
         let line = PenLine(kind: pen.0, text: pen.1, number: max(lineNumber, 1))
@@ -269,20 +276,25 @@ final class Speaker: NSObject {
   }
 
   /// The cue and the line, a little slower than explanations. In parts: one utterance per
-  /// part (the cue leads the first), each followed by time to do that part. Otherwise: one
-  /// utterance, then time for the whole line.
+  /// part (the cue leads the first), each followed by time to write that part. Otherwise: one
+  /// utterance, then time for the whole line. A Mark line is always one utterance, since the
+  /// whole location has to be heard before crossing anything out.
   private func dictation(_ line: PenLine, cue: String, slowdown: Float = 1, inParts: Bool) -> [Segment] {
     let speed = rate * Self.dictationRateFactor * slowdown
-    let groups = Self.dictationGroups(line.text)
     let lead = cue.isEmpty ? "" : cue + " "
-    let isMark = line.kind == .mark
-    func time(_ group: String) -> TimeInterval {
-      isMark ? Self.markPartPause : Self.writingTime(group)
-    }
     nextLineID += 1
     let lineID = nextLineID
+    if line.kind == .mark {
+      return [
+        Segment(
+          text: lead + line.text, rate: speed,
+          pauseAfter: Self.markPause(line.text) * writingTimeScale + Self.afterLinePause,
+          penLine: line, lineID: lineID)
+      ]
+    }
+    let groups = Self.dictationGroups(line.text)
     guard inParts, !groups.isEmpty else {
-      let pause = min(groups.map(time).reduce(0, +), Self.maxLinePause)
+      let pause = min(groups.map(Self.writingTime).reduce(0, +), Self.maxLinePause)
       return [
         Segment(
           text: lead + line.text, rate: speed, pauseAfter: pause * writingTimeScale + Self.afterLinePause,
@@ -293,9 +305,25 @@ final class Speaker: NSObject {
       let isLast = index == groups.count - 1
       return Segment(
         text: (index == 0 ? lead : "") + group + (isLast ? "." : ","), rate: speed,
-        pauseAfter: time(group) * writingTimeScale + (isLast ? Self.afterLinePause : 0),
+        pauseAfter: Self.writingTime(group) * writingTimeScale + (isLast ? Self.afterLinePause : 0),
         penLine: line, lineID: lineID)
     }
+  }
+
+  /// Seconds for a Mark line, before the writing-time setting: 2 for each thing to cross out
+  /// or draw (one, plus one per "and"), at most 8.
+  static func markPause(_ text: String) -> TimeInterval {
+    let items = text.lowercased().components(separatedBy: " and ").count
+    return min(markItemPause * Double(items), maxMarkPause)
+  }
+
+  /// The label after "Problem:" ("4", "number 7") if this paragraph starts a problem.
+  static func problemLabel(in paragraph: String) -> String? {
+    let trimmed = paragraph.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard trimmed.lowercased().hasPrefix("problem:") else { return nil }
+    var label = trimmed.dropFirst("problem:".count).trimmingCharacters(in: .whitespacesAndNewlines)
+    while label.hasSuffix(".") { label.removeLast() }
+    return label.isEmpty ? nil : label
   }
 
   /// The comma-separated chunks of a Write line, joined into parts of at most
@@ -314,7 +342,11 @@ final class Speaker: NSObject {
     var words = 0
     for chunk in chunks {
       let count = chunk.split(whereSeparator: \.isWhitespace).count
-      if let last = groups.last, words + count <= maxGroupWords || writtenCharacters(last) == 0 {
+      // A shape description ("a small tick at the top right") stays with its mark.
+      let isDescription = chunk.lowercased().hasPrefix("a ")
+      if let last = groups.last,
+        words + count <= maxGroupWords || writtenCharacters(last) == 0 || isDescription
+      {
         groups[groups.count - 1] = last + ", " + chunk
         words += count
       } else {

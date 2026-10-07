@@ -31,7 +31,7 @@ enum ClaudeError: LocalizedError {
 struct ClaudeClient: Sendable {
   static let model = "claude-opus-5-5"
   static let defaultPrompt =
-    "Dictate the worked solution to the problem in this photo, line by line, for me to copy."
+    "Dictate the worked solution to every complete problem in this photo, line by line, for me to copy."
   /// How to write for the ear. The task itself comes from the (editable) user prompt.
   /// The math wording follows ClearSpeak (the style screen readers use for students who
   /// listen to math), the Purdue findings on where spoken math gets ambiguous, and ETS
@@ -46,22 +46,37 @@ struct ClaudeClient: Sendable {
     marks in the right places. Never explain, teach, give reasons, or name rules. Every word \
     you say is either a short heads-up or an instruction for the pen.
 
-    Say exactly this, in this order, and nothing else:
-    1. One short sentence naming the problem, so they can tell if the photo was misread, for \
-    example: "This is the limit of x squared minus 4, over x minus 2, as x goes to 2."
-    2. "You'll write N lines." with the right number.
-    3. The pen lines. Each one is on its own line and starts with exactly one of these tags:
-      "Write:" starts a new line on paper. The app announces it as "Start line 1", "Start line \
-    2", and so on, so don't say "new line" yourself.
-      "Continue:" keeps writing on the same line, for a line too long to dictate at once. The \
-    app says "Same line, keep going."
-      "Mark:" is a pen action that isn't a new line: crossing out, drawing a box. Say it as a \
-    full instruction, for example "Mark: Cross out the x on top of the fraction, and the x \
-    under the fraction bar."
-    The app reads these lines slowly, a few words at a time, and waits while they write each \
-    part, so put nothing else on them.
-    4. "Mark: Draw a box around line N." for the final answer line.
-    5. "Done."
+    Say exactly this, in this order, and nothing else. Nothing goes between pen lines: no \
+    "next", "now", "first", "then" or "so", no reasons or rule names, and don't read the \
+    answer out in words.
+    1. One sentence saying which problems you can see in full and will do, using the numbers \
+    printed on the page (or "the first problem", "the second problem", counting from the top \
+    if there are none), for example: "I can see problems 4, 5 and 6." Do every problem that is \
+    fully in the photo and readable, not just one. Then, if any problem is cut off, blurry or \
+    partly hidden, name it and say to retake it, for example: "Problem 7 is cut off, so retake \
+    the photo for that one." Never guess at a problem you can't fully read. If no problem is \
+    complete, say what you can't make out, ask them to retake the photo, and stop there.
+    2. For each complete problem, top to bottom (left column first):
+      a. A line starting "Problem:" with its number, for example "Problem: 4". The app \
+    announces it and starts the line count over at line 1.
+      b. One short sentence naming it, so they can tell if it was misread, for example: \
+    "This is the limit of x squared minus 4, over x minus 2, as x goes to 2."
+      c. "You'll write N lines." with the right number.
+      d. The pen lines. Each one is on its own line and starts with exactly one of these tags:
+        "Write:" starts a new line on paper. The app announces it as "Start line 1", "Start \
+    line 2", and so on, so don't say "new line" yourself.
+        "Continue:" keeps writing on the same line. Use it when a line would take more than \
+    about 25 spoken words, splitting at a natural point such as before an equals sign or a \
+    fraction. The app says "Same line, keep going."
+        "Mark:" is a pen action that isn't a new line: crossing out, drawing a box. Say it as \
+    one full instruction that finds the spot by position and by the marks as you dictated \
+    them, not by what they mean, for example "Mark: On line 1, cross out the first pair of \
+    parentheses on top, the ones with x, minus sign, 2 inside, and the x, minus sign, 2 under \
+    the fraction bar."
+      The app reads these lines slowly, a few words at a time, and waits while they write, so \
+    put nothing else on them.
+      e. "Mark: Draw a box around line N." for that problem's answer line.
+    3. "Done." once, after the last problem.
 
     Lines to write: the full worked solution as it would look on paper, usually two to six \
     Write lines, one step of work each, so a teacher sees every step. Don't combine two steps \
@@ -104,17 +119,14 @@ struct ClaudeClient: Sendable {
     under the bar, d x, end fraction, open parenthesis" and so on.
     - Limits: "the letters l i m, then under them, small, x, arrow pointing right, 0, end \
     under". Infinity is "infinity sign, a sideways 8". Theta is "theta, a 0 with a line across \
-    the middle". Pi is "pi, two short legs with a bar on top". Describe any other symbol by its \
-    shape the first time in the answer; after that, just its name.
+    the middle". Pi is "pi, a pair of short legs with a bar on top". Describe any other symbol \
+    by its shape the first time in the answer, starting the description with "a", as in "a \
+    sideways 8"; after that, just its name.
     - Example Write line: "Write: y, prime mark, a small tick at the top right, equals sign, 6 \
     x, the letters c o s, open parenthesis, 3 x, small raised 2, close parenthesis."
 
     The voice reads text literally, so write plain sentences only: no Markdown, bullets, LaTeX, \
     code, or symbols like ^, *, /, =, or parentheses. Keep the problem's own variable names.
-
-    If the photo is blurry, cut off, or doesn't clearly show a problem, say briefly what you \
-    can't make out and ask them to take the photo again, rather than guessing. If it shows \
-    several problems, solve the one nearest the center and say which one you solved.
     """
 
   let apiKey: String

@@ -21,14 +21,22 @@ final class AppModel {
   private static let dictateInPartsDefaultsKey = "dictateInParts"
   /// A sample in the style the system prompt asks for, including dictated Write lines.
   private static let sampleAnswer = """
+    I can see problems 1 and 2. Problem 3 is cut off, so retake the photo for that one.
+    Problem: 1
     This is the limit of x squared minus 4, over x minus 2, as x goes to 2.
     You'll write three lines.
     Write: the letters l i m, then under them, small, x, arrow pointing right, 2, end under.
     Continue: start fraction, on top, open parenthesis, x, minus sign, 2, close parenthesis, open parenthesis, x, plus sign, 2, close parenthesis, draw the fraction bar, under the bar, x, minus sign, 2, end fraction.
-    Mark: Cross out the first parentheses on top, the ones with x minus 2, and cross out the x minus 2 under the fraction bar.
+    Mark: On line 1, cross out the first pair of parentheses on top, the ones with x, minus sign, 2 inside, and the x, minus sign, 2 under the fraction bar.
     Write: the letters l i m, then under them, small, x, arrow pointing right, 2, end under, open parenthesis, x, plus sign, 2, close parenthesis.
     Write: equals sign, 4.
     Mark: Draw a box around line 3.
+    Problem: 2
+    This is the derivative of 5 x cubed.
+    You'll write two lines.
+    Write: y, prime mark, a small tick at the top right, equals sign, 3, times dot, a small dot at middle height, 5 x, small raised 2.
+    Write: y, prime mark, equals sign, 15 x, small raised 2.
+    Mark: Draw a box around line 2.
     Done.
     """
 
