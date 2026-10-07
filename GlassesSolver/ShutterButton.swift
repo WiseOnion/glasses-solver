@@ -115,6 +115,27 @@ final class ShutterButton {
       diag("inputs", "event stream ended")
       self?.streamEnded()
     }
+
+    // Activation starts inside addInputs and the publishers don't replay, so a quick
+    // `active` can come and go before the listeners above exist. `state` is always current:
+    // catch up from it now, and keep checking while this still looks like it's activating.
+    catchUp(with: added, generation: current)
+    Task { [weak self] in
+      for _ in 0..<10 {
+        try? await Task.sleep(for: .seconds(1))
+        guard let self, self.generation == current, self.status == .activating else { return }
+        self.catchUp(with: added, generation: current)
+      }
+    }
+  }
+
+  private func catchUp(with inputs: Inputs, generation: Int) {
+    guard self.generation == generation else { return }
+    let state = inputs.state
+    if state == .active, status == .activating {
+      diag("inputs", "state is already active (no event was heard)")
+      stateChanged(.active)
+    }
   }
 
   /// Stops listening and removes Inputs from the session (pass nil if it already ended).
