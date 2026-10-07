@@ -38,4 +38,33 @@ targets:
       # Experimental in SDK 1.0: fine for Developer Mode, not yet publishable.
       - package: MetaWearablesDAT
         product: MWDATInputs
-    scheme: {}
+    scheme:
+      testTargets:
+        - GlassesSolverTests
+
+  # Unit and integration tests, run on the iOS Simulator in CI (.github/workflows/tests.yml).
+  # MWDATMockDevice simulates the glasses: sessions, camera, capture button, touchpad.
+  GlassesSolverTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - Tests
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_VERSION: "6.0"
+        TARGETED_DEVICE_FAMILY: "1"
+    dependencies:
+      - target: GlassesSolver
+      - package: MetaWearablesDAT
+        product: MWDATCore
+        embed: false
+      - package: MetaWearablesDAT
+        product: MWDATCamera
+        embed: false
+      - package: MetaWearablesDAT
+        product: MWDATInputs
+        embed: false
+      - package: MetaWearablesDAT
+        product: MWDATMockDevice
+        embed: true

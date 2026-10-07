@@ -1,0 +1,63 @@
+name: Tests
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: macos-26
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v6
+
+      # Meta's SDK 1.0.0 requires Xcode 26.4+.
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_26.6.app
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Pick an iPhone simulator
+        run: |
+          UDID=$(xcrun simctl list devices available -j | python3 -c '
+          import json, sys
+          devices = json.load(sys.stdin)["devices"]
+          runtimes = sorted((k for k in devices if "iOS" in k), reverse=True)
+          phones = [d for k in runtimes for d in devices[k] if d["name"].startswith("iPhone")]
+          print(phones[0]["udid"])')
+          echo "SIMULATOR_UDID=$UDID" >> "$GITHUB_ENV"
+          xcrun simctl list devices | grep "$UDID"
+
+      # Ad-hoc signing ("-"): the SDK fails to start in an unsigned simulator app (SDK issue
+      # #197). Tests run one at a time because the simulated glasses are shared.
+      - name: Run tests
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project GlassesSolver.xcodeproj \
+            -scheme GlassesSolver \
+            -destination "id=$SIMULATOR_UDID" \
+            -derivedDataPath build \
+            -resultBundlePath TestResults.xcresult \
+            -parallel-testing-enabled NO \
+            CODE_SIGN_IDENTITY=- \
+            CODE_SIGNING_REQUIRED=NO \
+            2>&1 | tee test.log | grep -E "Test Case|error:|failed|passed|TEST (SUCCEEDED|FAILED)|Diagnostics log|\] \[" || true
+          grep -q "TEST SUCCEEDED" test.log
+
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: test-results
+          path: |
+            TestResults.xcresult
+            test.log
+          retention-days: 3

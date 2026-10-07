@@ -411,6 +411,7 @@ final class AppModel {
 
   /// How much later this press arrived than the fastest press so far, in milliseconds.
   private func pressLateness(_ timestampMs: Int64) -> Int64 {
+    guard timestampMs > 0 else { return 0 }  // no timestamp: can't tell, so don't drop it
     if let last = lastSeenPressTimestampMs, timestampMs < last {
       pressOffsetBaselineMs = nil  // the glasses' clock restarted
     }
@@ -727,7 +728,9 @@ final class AppModel {
       }
       return
     }
-    if let last = lastPressTimestampMs, timestampMs >= last, timestampMs - last < Self.pressDebounceMs {
+    if timestampMs > 0, let last = lastPressTimestampMs, timestampMs >= last,
+      timestampMs - last < Self.pressDebounceMs
+    {
       diag("inputs", "press ignored: \(timestampMs - last) ms after the previous one")
       return
     }
