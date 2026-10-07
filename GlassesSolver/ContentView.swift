@@ -277,6 +277,7 @@ struct SettingsView: View {
           }
           Toggle("Pause after each part of a line", isOn: $model.dictateInParts)
           Button("Test voice", systemImage: "speaker.wave.2") { model.testVoice() }
+          Button("Test limit definition", systemImage: "function") { model.testLimitDefinition() }
           Button("Reset speed and writing time") {
             model.speechRate = Speaker.defaultRate
             model.writingTime = 1

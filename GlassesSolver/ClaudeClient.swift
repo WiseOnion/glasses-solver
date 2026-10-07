@@ -114,6 +114,46 @@ struct ClaudeClient: Sendable {
     composite, write exactly what is asked, such as "yes, product, u equals ..., v equals \
     ...", and name an inner function as a function of the variable, not just "ln".
 
+    What this course tests. Get all of it exactly right:
+    - The limit definition. f prime of x equals the limit as h approaches 0 of f of x plus h, \
+    minus f of x, all over h. When a problem says to use it, use only it: any derivative rule \
+    earns no credit. Lines, in order: the definition; f of x plus h and f of x put in with \
+    the problem's own function and variable; expand every power (x plus h, squared, is x \
+    squared plus 2 x h plus h squared); subtract, distributing the minus over the whole of f \
+    of x; for fractions, a common denominator; factor h out of the top; a Mark line crossing \
+    out the h on top and the h under the bar; only then replace h with 0. Keep the limit \
+    symbol on every line until h is replaced, then drop it. The same applies when the \
+    problem only asks to write the definition: write it exactly, with the limit symbol and \
+    h arrow 0 underneath.
+    - The chain rule. Differentiate the outside function, keep the inside the same, then \
+    multiply by the derivative of the inside, working outward from the innermost layer when \
+    layers are nested. Never stop after the outside. Watch where a power sits: cosine of \
+    the quantity, raised to 5, is not cosine to the 5, of the quantity. For "complete the \
+    rule" or "true or false" problems, give both forms: d dx of sine x is cosine x, and d dx \
+    of sine u is cosine u times u prime.
+    - Derivatives to use: sine is cosine; cosine is negative sine; tangent is secant \
+    squared; cotangent is negative cosecant squared; secant is secant tangent; cosecant is \
+    negative cosecant cotangent. e to the u is e to the u times u prime. b to the u is b to \
+    the u, times natural log of b, times u prime, and this is not the power rule. Natural \
+    log of u is u prime over u. Log base b of u is u prime over, u times natural log of b. \
+    A number such as natural log of 7 or natural log of b is a constant, so its derivative is \
+    0.
+    - All the log rules. Product: log of m n is log m plus log n. Quotient: log of m over n \
+    is log m minus log n. Power: log of m to the r is r log m. Change of base: log base b of \
+    x is natural log of x over natural log of b. Also log base b of b is 1, log of 1 is 0, \
+    natural log of e to the x is x, e to the natural log of x is x. When a log holds a \
+    product, quotient or power, or the problem says to use log properties, expand it with \
+    these first, one rule per Write line, before differentiating. For example natural log \
+    of 4 e to the 2 theta becomes natural log of 4 plus 2 theta.
+    - A slope at a point is the derivative evaluated there: f prime of negative 1, not f \
+    prime of x. The derivative of a number such as f of 3 is 0, which is not f prime of 3.
+    - Implicit differentiation: differentiate both sides with respect to the variable, write \
+    y prime (or d y d x) after every y term, move the y prime terms together, factor y \
+    prime out, then divide.
+    - Related rates: a Mark line for the picture, name the variable, write the formula, \
+    differentiate both sides with respect to time, then put in the numbers, then solve, then \
+    a Sentence line with the answer and its units.
+
     How to dictate a Write or Continue line so someone who doesn't know the notation copies it \
     exactly:
     - Say the marks left to right, in short chunks separated by commas. Each chunk is one to \

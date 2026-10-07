@@ -42,6 +42,39 @@ final class AppModel {
     Done.
     """
 
+  /// The limit definition, worked the way the course wants it: problem 4 of the practice test.
+  private static let limitSampleAnswer = """
+    I can see problem 4.
+    Problem: 4
+    This is the derivative of f of x, equals, negative 3 x squared plus 8 x minus 2, using the limit definition.
+    You'll write seven lines.
+    Write: f, prime mark, a small tick at the top right, open parenthesis, x, close parenthesis, equals sign
+    Continue: the letters l i m, then under them, small, h, arrow pointing right, 0, end under
+    Continue: start fraction, on top, f, open parenthesis, x, plus sign, h, close parenthesis
+    Continue: minus sign, f, open parenthesis, x, close parenthesis, draw the fraction bar, under the bar, h, end fraction
+    Write: equals sign, the letters l i m, then under them, small, h, arrow pointing right, 0, end under
+    Continue: start fraction, on top, open parenthesis, minus sign, 3, open parenthesis, x, plus sign, h, close parenthesis, small raised 2, back down
+    Continue: plus sign, 8, open parenthesis, x, plus sign, h, close parenthesis, minus sign, 2, close parenthesis
+    Continue: minus sign, open parenthesis, minus sign, 3, x, small raised 2, back down, plus sign, 8, x, minus sign, 2, close parenthesis
+    Continue: draw the fraction bar, under the bar, h, end fraction
+    Write: equals sign, the letters l i m, then under them, small, h, arrow pointing right, 0, end under
+    Continue: start fraction, on top, minus sign, 3, x, small raised 2, back down, minus sign, 6, x, h
+    Continue: minus sign, 3, h, small raised 2, back down, plus sign, 8, x, plus sign, 8, h, minus sign, 2
+    Continue: plus sign, 3, x, small raised 2, back down, minus sign, 8, x, plus sign, 2, draw the fraction bar, under the bar, h, end fraction
+    Write: equals sign, the letters l i m, then under them, small, h, arrow pointing right, 0, end under
+    Continue: start fraction, on top, minus sign, 6, x, h, minus sign, 3, h, small raised 2, back down, plus sign, 8, h
+    Continue: draw the fraction bar, under the bar, h, end fraction
+    Write: equals sign, the letters l i m, then under them, small, h, arrow pointing right, 0, end under
+    Continue: start fraction, on top, h, open parenthesis, minus sign, 6, x, minus sign, 3, h, plus sign, 8, close parenthesis
+    Continue: draw the fraction bar, under the bar, h, end fraction
+    Mark: On line 5, cross out the h on top, in front of the parentheses, and the h under the fraction bar.
+    Write: equals sign, the letters l i m, then under them, small, h, arrow pointing right, 0, end under
+    Continue: open parenthesis, minus sign, 6, x, minus sign, 3, h, plus sign, 8, close parenthesis
+    Write: equals sign, minus sign, 6, x, plus sign, 8
+    Mark: Draw a box around line 7.
+    Done.
+    """
+
   private(set) var registrationState: RegistrationState
   private(set) var hasActiveDevice = false
   private(set) var phase: Phase = .idle
@@ -332,6 +365,11 @@ final class AppModel {
   /// A sample in the style the system prompt asks for, to judge speed and voice.
   func testVoice() {
     speaker.speak(Self.sampleAnswer)
+  }
+
+  /// The limit definition worked in full, to practice copying a long answer.
+  func testLimitDefinition() {
+    speaker.speak(Self.limitSampleAnswer)
   }
 
   var voiceDescription: String {
