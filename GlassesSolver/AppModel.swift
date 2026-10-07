@@ -18,12 +18,13 @@ final class AppModel {
   private static let testModeDefaultsKey = "testMode"
   private static let writingTimeDefaultsKey = "writingTime"
   private static let voiceDefaultsKey = "voiceIdentifier"
+  private static let dictateInPartsDefaultsKey = "dictateInParts"
   /// A sample in the style the system prompt asks for, including dictated Write lines.
   private static let sampleAnswer = """
-    The derivative of sine of the quantity 3 x squared is 6 x cosine of the quantity 3 x squared, using the chain rule. You'll write two lines.
-    First, the derivative of the outside function, sine, is cosine. Keep the inside the same, and multiply by the derivative of the inside, which is 6 x.
+    The derivative of sine of the quantity 3 x squared is 6 x cosine of the quantity 3 x squared, by the chain rule. You'll write two lines.
+    First, use the chain rule. The derivative of sine is cosine, so keep the inside, and multiply by the derivative of the inside, 6 x.
     Write: y prime, equals, cosine, open paren, 3 x squared, close paren, times, 6 x.
-    Next, tidy up by moving the 6 x to the front.
+    Next, move the 6 x to the front.
     Write: y prime, equals, 6 x, cosine, open paren, 3 x squared, close paren.
     So the answer is 6 x cosine of the quantity 3 x squared.
     """
@@ -61,6 +62,15 @@ final class AppModel {
     didSet {
       speaker.writingTimeScale = writingTime
       UserDefaults.standard.set(writingTime, forKey: Self.writingTimeDefaultsKey)
+    }
+  }
+
+  /// Dictate Write lines a few words at a time with a writing pause after each part (true),
+  /// or the whole line and then one pause.
+  var dictateInParts: Bool {
+    didSet {
+      speaker.dictateInParts = dictateInParts
+      UserDefaults.standard.set(dictateInParts, forKey: Self.dictateInPartsDefaultsKey)
     }
   }
 
@@ -153,10 +163,12 @@ final class AppModel {
       min(max($0, Speaker.writingTimeRange.lowerBound), Speaker.writingTimeRange.upperBound)
     } ?? 1
     self.voiceIdentifier = UserDefaults.standard.string(forKey: Self.voiceDefaultsKey)
+    self.dictateInParts = UserDefaults.standard.object(forKey: Self.dictateInPartsDefaultsKey) as? Bool ?? true
     // All stored properties are set from here on, so `self` can be used.
     speaker.rate = speechRate
     speaker.writingTimeScale = writingTime
     speaker.voiceIdentifier = voiceIdentifier
+    speaker.dictateInParts = dictateInParts
     if let sdkSetupError {
       errorMessage =
         "The Meta glasses SDK failed to start, so glasses features may not work.\n\nDetails: \(sdkSetupError)"

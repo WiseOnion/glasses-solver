@@ -7,9 +7,11 @@ import AVFoundation
 /// whole utterances (its own sentence pauses sound natural; splitting sentences into separate
 /// utterances made audible stop-start gaps), and everything is queued at once, with the
 /// synthesizer's own `postUtteranceDelay` for pauses rather than app timers. Lines starting
-/// "Write:" are dictated as one slightly slower utterance (commas give the chunk pauses),
-/// followed by a pause long enough to write the line by hand. `repeatLastWriteLine()` says
-/// the latest one again, then carries on from where it was.
+/// "Write:" are dictated a little slower, a few words at a time, with a pause after each part
+/// long enough to write it by hand (or, with `dictateInParts` off, the whole line and then one
+/// pause). A line runs past the roughly two seconds of speech that working memory holds, so
+/// writing it part by part is how dictation is normally given. `repeatLastWriteLine()` says
+/// the latest one again, slower each time it's asked for in a row, then carries on.
 ///
 /// Also keeps the app running while an answer is pending with the phone locked: with the
 /// `audio` background mode, iOS doesn't suspend an app that is playing audio, so a silent
@@ -17,28 +19,50 @@ import AVFoundation
 @MainActor
 final class Speaker: NSObject {
   /// Slider range for the speaking speed (AVSpeechUtterance rates run 0...1; 0.5 is iOS's default).
-  static let rateRange: ClosedRange<Float> = 0.35...0.6
-  /// A little slower than iOS's default: steps of math are dense to follow by ear.
-  static let defaultRate: Float = 0.46
+  static let rateRange: ClosedRange<Float> = 0.3...0.6
+  /// Aims for about 150 words a minute, the middle of what studies of synthetic speech find
+  /// listeners follow best (slower helps comprehension; adults pick about 157, children 127).
+  /// Apple doesn't publish a rate-to-words mapping and it varies by voice, so the log reports
+  /// the measured words per minute (see `logMeasuredRate`). See README, "How the voice dictates".
+  static let defaultRate: Float = 0.42
   /// Slider range for the writing pause, as a multiple of the estimated writing time.
   static let writingTimeRange: ClosedRange<Double> = 0.5...2.5
   /// Dictation speed relative to `rate`, and the short beat before a Write line.
   private static let dictationRateFactor: Float = 0.88
-  private static let beforeWritePause: TimeInterval = 0.3
+  private static let beforeWritePause: TimeInterval = 0.4
+  /// Each repeat of the same line in a row is this much slower, at most twice.
+  private static let repeatRateFactor: Float = 0.9
+  /// A dictated part is at most this many spoken words (about two seconds of speech, what
+  /// the phonological loop holds), unless it writes nothing yet ("fraction, top").
+  private static let maxGroupWords = 5
+  /// Writing time per character on paper (careful handwriting of math runs about one and a
+  /// half characters a second), the least pause after a part, the most after a whole line,
+  /// and a beat after the last part before the explanation goes on.
+  private static let secondsPerCharacter: TimeInterval = 0.7
+  private static let minGroupPause: TimeInterval = 1.2
+  private static let maxLinePause: TimeInterval = 20
+  private static let afterLinePause: TimeInterval = 0.5
 
   var rate: Float = Speaker.defaultRate
   var writingTimeScale: Double = 1
+  /// Pause to write after each part of a Write line (true), or after the whole line.
+  var dictateInParts = true
   /// The chosen voice; nil means the best installed voice for the phone's language.
   var voiceIdentifier: String?
   /// The Write line most recently dictated, for `repeatLastWriteLine()`.
   private(set) var lastWriteLine: String?
+  /// How many times in a row `lastWriteLine` has been repeated.
+  private var repeatCount = 0
+  private var nextLineID = 0
 
   private struct Segment {
     let text: String
     let rate: Float
     let pauseAfter: TimeInterval
-    /// Set on a dictated line.
+    /// Set on every part of a dictated line.
     let writeLine: String?
+    /// Shared by the parts of one dictated line.
+    var lineID: Int?
   }
 
   private let synthesizer = AVSpeechSynthesizer()
@@ -52,6 +76,8 @@ final class Speaker: NSObject {
   private var currentIndex: Int?
   private var currentFinished = false
   private var outstanding = 0
+  /// When each utterance's first and latest words began, for `logMeasuredRate`.
+  private var wordTimes: [ObjectIdentifier: (first: Date, last: Date)] = [:]
   private var keepAlivePlayer: AVAudioPlayer?
   private var stopKeepAliveAfterSpeech = false
   private var interruptionObserver: NSObjectProtocol?
@@ -75,13 +101,18 @@ final class Speaker: NSObject {
     reset()
     activateSession()
     lastWriteLine = nil
+    repeatCount = 0
     let voice = resolvedVoice
     let voiceName = voice.map { $0.name + " (" + Self.qualityName($0.quality) + ")" } ?? "default"
-    diag("audio", "speaking \(text.count) characters at rate \(rate), voice \(voiceName), via \(Self.routeDescription)")
+    diag(
+      "audio",
+      "speaking \(text.count) characters at rate \(rate), \(dictateInParts ? "dictating in parts" : "whole lines"), "
+        + "voice \(voiceName), via \(Self.routeDescription)")
     enqueue(segments(for: text), voice: voice)
   }
 
-  /// Says the latest Write line again, then continues with whatever was left to say.
+  /// Says the latest Write line again, part by part and a little slower (slower again if
+  /// asked twice in a row), then continues with whatever was left to say.
   @discardableResult
   func repeatLastWriteLine() -> Bool {
     guard let line = lastWriteLine else { return false }
@@ -89,13 +120,18 @@ final class Speaker: NSObject {
     if let index = currentIndex {
       let start = currentFinished ? index + 1 : index
       if start < script.count { remaining = Array(script[start...]) }
-      // A line being dictated (or in its writing pause) is covered by the repeat itself.
-      if !currentFinished, remaining.first?.writeLine != nil { remaining.removeFirst() }
+      // The rest of a line being dictated (or in a writing pause) is covered by the repeat.
+      if let lineID = script[index].lineID {
+        remaining = Array(remaining.drop { $0.lineID == lineID })
+      }
     }
+    repeatCount += 1
+    let slowdown = pow(Self.repeatRateFactor, Float(min(repeatCount, 2)))
     reset()
     activateSession()
-    diag("audio", "repeating the last Write line")
-    enqueue([dictation(line, cue: "Again.")] + remaining, voice: resolvedVoice)
+    diag("audio", "repeating the last Write line (\(repeatCount) in a row)")
+    let cue = repeatCount > 1 ? "Again, slower." : "Again."
+    enqueue(dictation(line, cue: cue, slowdown: slowdown, inParts: true) + remaining, voice: resolvedVoice)
     return true
   }
 
@@ -114,6 +150,7 @@ final class Speaker: NSObject {
     currentIndex = nil
     currentFinished = false
     outstanding = 0
+    wordTimes.removeAll()
     synthesizer.stopSpeaking(at: .immediate)
   }
 
@@ -135,18 +172,43 @@ final class Speaker: NSObject {
     guard let index = utteranceIndex[id] else { return }
     currentIndex = index
     currentFinished = false
-    if let line = script[index].writeLine { lastWriteLine = line }
+    if let line = script[index].writeLine {
+      if line != lastWriteLine { repeatCount = 0 }
+      lastWriteLine = line
+    }
+  }
+
+  private func wordStarted(_ id: ObjectIdentifier, at time: Date) {
+    guard utteranceIndex[id] != nil else { return }
+    let first = min(wordTimes[id]?.first ?? time, time)
+    let last = max(wordTimes[id]?.last ?? time, time)
+    wordTimes[id] = (first, last)
   }
 
   private func utteranceEnded(_ id: ObjectIdentifier) {
     guard let index = utteranceIndex.removeValue(forKey: id) else { return }
+    logMeasuredRate(script[index], times: wordTimes.removeValue(forKey: id))
     if index == currentIndex { currentFinished = true }
     outstanding = max(0, outstanding - 1)
     if outstanding == 0, stopKeepAliveAfterSpeech { endKeepAlive() }
   }
 
+  /// Logs the speaking speed actually heard, in words per minute, from when the first and
+  /// last words began (so pauses after the utterance don't count). Apple publishes no
+  /// mapping from `rate` to words per minute, and it differs by voice, so this is how to
+  /// check a setting. Short utterances are skipped as too noisy to measure.
+  private func logMeasuredRate(_ segment: Segment, times: (first: Date, last: Date)?) {
+    let words = segment.text.split(whereSeparator: \.isWhitespace).count
+    guard let times, words >= 8 else { return }
+    let seconds = times.last.timeIntervalSince(times.first)
+    guard seconds > 1 else { return }
+    let wpm = Int((Double(words - 1) / seconds * 60).rounded())
+    let kind = segment.writeLine == nil ? "explanation" : "dictation"
+    diag("audio", "measured \(wpm) words per minute (\(kind), rate \(String(format: "%.2f", segment.rate)))")
+  }
+
   /// Explanation paragraphs between Write lines become one utterance each run; each Write
-  /// line becomes one dictated utterance.
+  /// line is dictated as below.
   private func segments(for text: String) -> [Segment] {
     var result: [Segment] = []
     var prose: [String] = []
@@ -162,7 +224,7 @@ final class Speaker: NSObject {
     for paragraph in Self.speakable(text).components(separatedBy: "\n") {
       if let line = Self.writeLine(in: paragraph) {
         flushProse(beforeWrite: true)
-        result.append(dictation(line, cue: "Write."))
+        result += dictation(line, cue: "Write.", inParts: dictateInParts)
       } else {
         let trimmed = paragraph.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty { prose.append(trimmed) }
@@ -172,19 +234,82 @@ final class Speaker: NSObject {
     return result
   }
 
-  /// "Write." and the line as one slower utterance, then time to write it.
-  private func dictation(_ line: String, cue: String) -> Segment {
-    Segment(
-      text: cue + " " + line, rate: rate * Self.dictationRateFactor,
-      pauseAfter: writingPause(for: line), writeLine: line)
+  /// The cue ("Write.") and the line, a little slower than explanations. In parts: one
+  /// utterance per part (the cue leads the first), each followed by time to write that part.
+  /// Otherwise: one utterance, then time to write the whole line.
+  private func dictation(_ line: String, cue: String, slowdown: Float = 1, inParts: Bool) -> [Segment] {
+    let speed = rate * Self.dictationRateFactor * slowdown
+    let groups = Self.dictationGroups(line)
+    nextLineID += 1
+    guard inParts, !groups.isEmpty else {
+      let pause = min(groups.map(Self.writingTime).reduce(0, +), Self.maxLinePause)
+      return [
+        Segment(
+          text: cue + " " + line, rate: speed, pauseAfter: pause * writingTimeScale + Self.afterLinePause,
+          writeLine: line, lineID: nextLineID)
+      ]
+    }
+    return groups.enumerated().map { (index, group) -> Segment in
+      let isLast = index == groups.count - 1
+      return Segment(
+        text: (index == 0 ? cue + " " : "") + group + (isLast ? "." : ","), rate: speed,
+        pauseAfter: Self.writingTime(group) * writingTimeScale + (isLast ? Self.afterLinePause : 0),
+        writeLine: line, lineID: nextLineID)
+    }
   }
 
-  /// Roughly 0.5 seconds of writing per spoken word (each is about one symbol on paper),
-  /// clamped to 2.5–12 seconds, then scaled by the writing-time setting.
-  func writingPause(for line: String) -> TimeInterval {
-    let words = line.split(whereSeparator: { $0 == " " || $0 == "," }).count
-    return min(max(1 + 0.5 * Double(words), 2.5), 12) * writingTimeScale
+  /// The comma-separated chunks of a Write line, joined into parts of at most
+  /// `maxGroupWords` spoken words. A part that writes nothing yet ("fraction, top") leads
+  /// into the next chunk. Commas inside numbers ("1,000") don't split.
+  static func dictationGroups(_ line: String) -> [String] {
+    let chunks = line.replacingOccurrences(of: #",(?!\d)"#, with: "\n", options: .regularExpression)
+      .components(separatedBy: "\n")
+      .map { chunk in
+        var chunk = chunk.trimmingCharacters(in: .whitespacesAndNewlines)
+        while chunk.hasSuffix(".") { chunk.removeLast() }
+        return chunk.trimmingCharacters(in: .whitespacesAndNewlines)
+      }
+      .filter { !$0.isEmpty }
+    var groups: [String] = []
+    var words = 0
+    for chunk in chunks {
+      let count = chunk.split(whereSeparator: \.isWhitespace).count
+      if let last = groups.last, words + count <= maxGroupWords || writtenCharacters(last) == 0 {
+        groups[groups.count - 1] = last + ", " + chunk
+        words += count
+      } else {
+        groups.append(chunk)
+        words = count
+      }
+    }
+    return groups
   }
+
+  /// Seconds to write a part by hand, before the writing-time setting.
+  static func writingTime(_ group: String) -> TimeInterval {
+    max(minGroupPause, secondsPerCharacter * Double(writtenCharacters(group)))
+  }
+
+  /// About how many characters a spoken part puts on paper: "cosine" is 3 (cos), "open
+  /// paren" is 1, "fraction, top" is 0. A number counts its digits; any other word counts 1.
+  static func writtenCharacters(_ text: String) -> Int {
+    text.lowercased()
+      .components(separatedBy: CharacterSet(charactersIn: ",.;:").union(.whitespacesAndNewlines))
+      .filter { !$0.isEmpty }
+      .reduce(0) { total, word in
+        if let known = writtenWords[word] { return total + known }
+        let digits = word.filter(\.isWholeNumber).count
+        return total + (digits > 0 ? digits : 1)
+      }
+  }
+
+  private static let writtenWords: [String: Int] = [
+    "open": 0, "close": 0, "end": 0, "with": 0, "exponent": 0, "fraction": 0, "top": 0,
+    "of": 0, "the": 0, "to": 0, "as": 0, "capital": 0, "square": 0, "natural": 0, "and": 0,
+    "bottom": 1,
+    "sine": 3, "cosine": 3, "tangent": 3, "secant": 3, "cosecant": 3, "cotangent": 3,
+    "log": 2, "limit": 3, "inverse": 2,
+  ]
 
   /// The text after "Write:" if this paragraph is a Write line.
   private static func writeLine(in paragraph: String) -> String? {
@@ -388,6 +513,15 @@ extension Speaker: AVSpeechSynthesizerDelegate {
   nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didStart utterance: AVSpeechUtterance) {
     let id = ObjectIdentifier(utterance)
     Task { @MainActor in self.utteranceStarted(id) }
+  }
+
+  nonisolated func speechSynthesizer(
+    _ synthesizer: AVSpeechSynthesizer, willSpeakRangeOfSpeechString characterRange: NSRange,
+    utterance: AVSpeechUtterance
+  ) {
+    let id = ObjectIdentifier(utterance)
+    let time = Date()
+    Task { @MainActor in self.wordStarted(id, at: time) }
   }
 
   nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
