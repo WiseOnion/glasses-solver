@@ -111,6 +111,8 @@ final class AppModel {
   @ObservationIgnored private var sessionStateTask: Task<Void, Never>?
   @ObservationIgnored private var pendingSessionPrompt: String?
   @ObservationIgnored private var shutterReviveTask: Task<Void, Never>?
+  /// A session refresh running in the background after a photo (see `refreshHandsFreeSession`).
+  @ObservationIgnored private var sessionRefreshTask: Task<Void, Never>?
   @ObservationIgnored private var shutterAttempts = 0
   @ObservationIgnored private var shutterProblemReported = false
   /// Attempts to (re)attach button events before telling the wearer they're unavailable.
@@ -345,7 +347,9 @@ final class AppModel {
     let photo: Data
     do {
       phase = .capturing
-      photo = try await camera.capturePhoto(highResolution: useHighResPhoto, keepSession: sessionActive)
+      // A refresh started after the previous photo must finish before this one.
+      await sessionRefreshTask?.value
+      photo = try await captureWithRecovery()
       diag("solve", "photo received, \(photo.count) bytes; calling Claude")
     } catch {
       phase = .idle
@@ -358,9 +362,14 @@ final class AppModel {
     }
     lastPhoto = UIImage(data: photo)
     phase = .thinking
-    // A photo can drop button events, sometimes without saying so; re-add them while
-    // Claude works, since the button can't be used until the answer is spoken anyway.
-    scheduleShutterRevive("after a photo", force: true)
+    // In SDK 1.0.0 a second camera stream in the same session can fail at once (Meta, SDK
+    // issue #260), so each photo gets a fresh session. Refresh now, while Claude works and
+    // the button can't be used anyway; this also re-adds the button events a photo can drop.
+    if sessionActive {
+      startSessionRefresh(reason: "fresh camera for the next photo")
+    } else {
+      camera.endSession()
+    }
 
     // Claude can take longer than iOS's background allowance. Playing (silent) audio keeps
     // the app running until the spoken answer, which keeps it running to the end.
@@ -420,6 +429,65 @@ final class AppModel {
       + Self.sampleAnswer
   }
 
+  /// Takes the photo; if the camera fails in a way a fresh glasses session fixes, starts one
+  /// and tries once more.
+  private func captureWithRecovery() async throws -> Data {
+    do {
+      return try await camera.capturePhoto(highResolution: useHighResPhoto, keepSession: sessionActive)
+    } catch let error as GlassesError where error.isFixedByFreshSession {
+      diag("solve", "photo failed (\(ErrorDetail.describe(error))); retrying once with a fresh glasses session")
+      if sessionActive {
+        try await refreshHandsFreeSession(reason: "photo failed")
+      } else {
+        camera.endSession()
+      }
+      return try await camera.capturePhoto(highResolution: useHighResPhoto, keepSession: sessionActive)
+    }
+  }
+
+  private func startSessionRefresh(reason: String) {
+    sessionRefreshTask = Task { [weak self] in
+      try? await self?.refreshHandsFreeSession(reason: reason)
+      self?.sessionRefreshTask = nil
+    }
+  }
+
+  /// Replaces the hands-free session's glasses connection with a new one, keeping the
+  /// session itself (prompt, chat, indicator) going, and re-attaches the button.
+  private func refreshHandsFreeSession(reason: String) async throws {
+    guard sessionActive else { return }
+    diag("session", "refreshing the glasses session (\(reason))")
+    // Stop watching the old connection first, so its ending isn't taken as the user's.
+    sessionStateTask?.cancel()
+    sessionStateTask = nil
+    shutterReviveTask?.cancel()
+    shutterReviveTask = nil
+    shutter.detach(from: camera.currentSession)
+    shutterStatus = .off
+    do {
+      let session = try await camera.refreshSession()
+      guard sessionActive else {
+        camera.endSession()  // stopped while reconnecting
+        return
+      }
+      sessionPaused = session.state == .paused
+      observeSessionState(session)
+      shutterAttempts = 0
+      attachShutter(to: session)
+      diag("session", "glasses session refreshed")
+    } catch {
+      diag("session", "refresh FAILED: \(ErrorDetail.describe(error))")
+      if sessionActive {
+        sessionActive = false
+        resetSessionState()
+        conversation.endSession()
+        errorMessage = ErrorDetail.alertText(error)
+        speaker.speak("Lost the connection to the glasses. Start the session again.")
+      }
+      throw error
+    }
+  }
+
   private func reportSolveFailure(_ error: Error) {
     diag("solve", "FAILED: \(ErrorDetail.describe(error))")
     errorMessage = ErrorDetail.alertText(error)
@@ -472,6 +540,7 @@ final class AppModel {
     shutter.detach(from: camera.currentSession)
     camera.endSession()
     resetSessionState()
+    conversation.endSession()
   }
 
   private func beginSession(prompt: String) async {
@@ -488,6 +557,7 @@ final class AppModel {
     diag("start", "session started; attaching capture button")
     sessionPrompt = prompt
     sessionActive = true
+    conversation.beginSession(prompt: prompt)
     sessionPaused = session.state == .paused
     observeSessionState(session)
     attachShutter(to: session)
@@ -525,6 +595,7 @@ final class AppModel {
       shutterReviveTask = nil
       shutter.detach(from: nil)
       resetSessionState()
+      conversation.endSession()
       speaker.speak("Glasses session ended.")
     case .idle, .starting, .stopping:
       break

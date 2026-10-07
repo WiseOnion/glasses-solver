@@ -9,6 +9,8 @@ enum GlassesError: LocalizedError {
   case cameraUnavailable
   case captureRejected
   case sessionPaused
+  /// The camera stream reported an error (kept typed for the log).
+  case stream(StreamError)
   case camera(String)
   case timedOut(String)
 
@@ -24,10 +26,22 @@ enum GlassesError: LocalizedError {
       return "The glasses are busy with another capture. Try again in a moment."
     case .sessionPaused:
       return "The glasses session is paused. Tap the touchpad once to resume it."
+    case .stream:
+      return "The glasses camera didn't start."
     case .camera(let message):
       return message
     case .timedOut(let step):
       return "Timed out \(step)."
+    }
+  }
+
+  /// Failures a fresh glasses session can fix. In SDK 1.0.0, restarting a camera stream in a
+  /// session that has already streamed can fail at once with `StreamError.internalError`
+  /// (Meta, SDK issue #260), while the first stream in a new session works.
+  var isFixedByFreshSession: Bool {
+    switch self {
+    case .stream, .camera, .cameraUnavailable, .captureRejected, .sessionEnded, .timedOut: true
+    case .noGlasses, .sessionPaused: false
     }
   }
 }
@@ -120,6 +134,14 @@ final class GlassesCamera {
   }
 
   // MARK: - Session
+
+  /// Ends the current session and starts a new one (waiting out the restart gap). In SDK
+  /// 1.0.0 only the first camera stream in a session is reliable, so a session is used for
+  /// one photo and then refreshed.
+  func refreshSession() async throws -> DeviceSession {
+    endSession()
+    return try await startedSession()
+  }
 
   /// Ends the current session, if any. The next capture starts a new one.
   func endSession() {
@@ -251,7 +273,8 @@ final class GlassesCamera {
           shot.succeed(photo.data)
         }.store(in: tokens)
         stream.errorPublisher.listen { error in
-          shot.fail(GlassesError.camera(error.localizedDescription))
+          diag("camera", "stream error: \(ErrorDetail.describe(error))")
+          shot.fail(GlassesError.stream(error))
         }.store(in: tokens)
         stream.statePublisher.listen { state in
           switch state {

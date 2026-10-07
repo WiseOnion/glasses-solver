@@ -1,4 +1,5 @@
 import Foundation
+import MWDATCamera
 import MWDATCore
 import MWDATInputs
 import Observation
@@ -98,6 +99,12 @@ enum ErrorDetail {
       }
     case let error as GlassesError:
       switch error {
+      case .stream(.thermalHot):
+        return "Let the glasses cool down for a few minutes."
+      case .stream(.batteryLow), .stream(.peakPowerLimit):
+        return "Charge the glasses, then try again."
+      case .stream(.hingesClosed):
+        return "Open the glasses' hinges and put them on."
       case .timedOut, .sessionEnded:
         return "Check the glasses are on, worn, and connected in Meta AI. If it keeps happening, "
           + "turn them off and on with the power switch."
@@ -115,6 +122,7 @@ enum ErrorDetail {
     case let error as PermissionError: return "PermissionError." + name(error)
     case let error as WearablesError: return "WearablesError." + name(error)
     case let error as InputsError: return "InputsError." + name(error)
+    case let error as StreamError: return "StreamError." + name(error)
     default: return nil
     }
   }
@@ -163,6 +171,24 @@ enum ErrorDetail {
     case .missingAppName: "missingAppName"
     case .missingAppVersion: "missingAppVersion"
     case .missingBuildNumber: "missingBuildNumber"
+    @unknown default: "unknown"
+    }
+  }
+
+  private static func name(_ error: StreamError) -> String {
+    switch error {
+    case .internalError: "internalError"
+    case .deviceNotFound: "deviceNotFound"
+    case .deviceNotConnected: "deviceNotConnected"
+    case .timeout: "timeout"
+    case .videoStreamingError: "videoStreamingError"
+    case .audioStreamingError: "audioStreamingError"
+    case .permissionDenied: "permissionDenied"
+    case .hingesClosed: "hingesClosed"
+    case .thermalHot: "thermalHot"
+    case .batteryLow: "batteryLow"
+    case .peakPowerLimit: "peakPowerLimit"
+    case .photoCaptureFailed: "photoCaptureFailed"
     @unknown default: "unknown"
     }
   }

@@ -1,52 +1,173 @@
 import SwiftUI
 import UIKit
 
-/// Chat-style history of every solve: your photo and prompt on the right, the answer on
-/// the left, with "Write:" lines set apart the way you'd copy them.
+/// The list of chats: the session in progress, past sessions (each archived when it ended),
+/// and in-app Solve-button answers by day. Opens straight into the current session's chat
+/// when one is running.
 struct ConversationView: View {
   let model: AppModel
   @Environment(\.dismiss) private var dismiss
+  @State private var path: [ChatRoute] = []
   @State private var confirmClear = false
-  @State private var enlargedPhoto: URL?
+
+  enum ChatRoute: Hashable {
+    case session(UUID)
+    case solveButton(Date)
+  }
 
   private var store: ConversationStore { model.conversation }
 
   var body: some View {
-    NavigationStack {
-      ScrollView {
-        LazyVStack(alignment: .leading, spacing: 20) {
-          if store.entries.isEmpty {
-            ContentUnavailableView(
-              "No answers yet", systemImage: "bubble.left.and.bubble.right",
-              description: Text("Each photo you solve and its answer will appear here."))
-          }
-          ForEach(store.entries) { entry in
-            EntryView(
-              entry: entry, photoURL: store.photoURL(for: entry),
-              onReplay: { model.replay(entry) },
-              onPhotoTap: { enlargedPhoto = store.photoURL(for: entry) })
+    NavigationStack(path: $path) {
+      List {
+        if let current = store.currentSession {
+          Section("Now") {
+            NavigationLink(value: ChatRoute.session(current.id)) {
+              SessionRow(
+                title: "Current session", subtitle: current.prompt,
+                count: store.entries(inSession: current.id).count, isLive: true)
+            }
           }
         }
-        .padding()
+        if !store.pastSessions.isEmpty {
+          Section("Past sessions") {
+            ForEach(store.pastSessions) { session in
+              NavigationLink(value: ChatRoute.session(session.id)) {
+                SessionRow(
+                  title: Self.sessionTitle(session), subtitle: session.prompt,
+                  count: store.entries(inSession: session.id).count, isLive: false)
+              }
+            }
+            .onDelete { offsets in
+              let doomed = offsets.map { store.pastSessions[$0].id }
+              doomed.forEach(store.deleteSession)
+            }
+          }
+        }
+        if !store.solveButtonDays.isEmpty {
+          Section("Solve button") {
+            ForEach(store.solveButtonDays, id: \.self) { day in
+              NavigationLink(value: ChatRoute.solveButton(day)) {
+                SessionRow(
+                  title: day.formatted(date: .complete, time: .omitted), subtitle: nil,
+                  count: store.solveButtonEntries(on: day).count, isLive: false)
+              }
+            }
+            .onDelete { offsets in
+              let doomed = offsets.map { store.solveButtonDays[$0] }
+              doomed.forEach(store.deleteSolveButtonDay)
+            }
+          }
+        }
+        if store.currentSession == nil && store.pastSessions.isEmpty && store.solveButtonDays.isEmpty {
+          ContentUnavailableView(
+            "No answers yet", systemImage: "bubble.left.and.bubble.right",
+            description: Text("Each session gets its own chat here, saved when the session ends."))
+        }
       }
-      .defaultScrollAnchor(.bottom)
-      .navigationTitle("Conversation")
+      .navigationTitle("Conversations")
       .navigationBarTitleDisplayMode(.inline)
+      .navigationDestination(for: ChatRoute.self) { route in
+        switch route {
+        case .session(let id):
+          let session = store.sessions.first { $0.id == id }
+          ChatView(
+            model: model,
+            title: session.map { $0.id == store.currentSessionID ? "Current session" : Self.sessionTitle($0) }
+              ?? "Session",
+            route: route)
+        case .solveButton(let day):
+          ChatView(
+            model: model, title: day.formatted(date: .abbreviated, time: .omitted), route: route)
+        }
+      }
       .toolbar {
         ToolbarItem(placement: .cancellationAction) {
-          Button("Clear", role: .destructive) { confirmClear = true }
+          Button("Clear all", role: .destructive) { confirmClear = true }
             .disabled(store.entries.isEmpty)
         }
         ToolbarItem(placement: .confirmationAction) {
           Button("Done") { dismiss() }
         }
       }
-      .confirmationDialog("Delete all saved answers and photos?", isPresented: $confirmClear) {
+      .confirmationDialog("Delete every saved chat, answer and photo?", isPresented: $confirmClear) {
         Button("Delete all", role: .destructive) { store.clear() }
       }
-      .sheet(item: $enlargedPhoto) { url in
-        PhotoView(url: url)
+      .onAppear {
+        if let current = store.currentSessionID, path.isEmpty { path = [.session(current)] }
       }
+    }
+  }
+
+  static func sessionTitle(_ session: ConversationSession) -> String {
+    let start = session.started.formatted(date: .abbreviated, time: .shortened)
+    guard let ended = session.ended else { return start }
+    return start + " – " + ended.formatted(date: .omitted, time: .shortened)
+  }
+}
+
+private struct SessionRow: View {
+  let title: String
+  let subtitle: String?
+  let count: Int
+  let isLive: Bool
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 4) {
+      HStack {
+        if isLive {
+          Circle().fill(.green).frame(width: 8, height: 8)
+        }
+        Text(title).font(.headline)
+        Spacer()
+        Text(count == 1 ? "1 answer" : "\(count) answers")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      }
+      if let subtitle {
+        Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+      }
+    }
+  }
+}
+
+/// One chat: your photo and prompt on the right, the answer on the left.
+private struct ChatView: View {
+  let model: AppModel
+  let title: String
+  let route: ConversationView.ChatRoute
+  @State private var enlargedPhoto: URL?
+
+  /// Read live, so answers arriving during the current session appear as they come in.
+  private var entries: [ConversationEntry] {
+    switch route {
+    case .session(let id): model.conversation.entries(inSession: id)
+    case .solveButton(let day): model.conversation.solveButtonEntries(on: day)
+    }
+  }
+
+  var body: some View {
+    ScrollView {
+      LazyVStack(alignment: .leading, spacing: 20) {
+        if entries.isEmpty {
+          ContentUnavailableView(
+            "No answers yet", systemImage: "camera.viewfinder",
+            description: Text("Press the capture button on your glasses; answers in this session show up here."))
+        }
+        ForEach(entries) { entry in
+          EntryView(
+            entry: entry, photoURL: model.conversation.photoURL(for: entry),
+            onReplay: { model.replay(entry) },
+            onPhotoTap: { enlargedPhoto = model.conversation.photoURL(for: entry) })
+        }
+      }
+      .padding()
+    }
+    .defaultScrollAnchor(.bottom)
+    .navigationTitle(title)
+    .navigationBarTitleDisplayMode(.inline)
+    .sheet(item: $enlargedPhoto) { url in
+      PhotoView(url: url)
     }
   }
 }
