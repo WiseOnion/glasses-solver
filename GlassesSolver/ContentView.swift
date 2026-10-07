@@ -269,6 +269,7 @@ struct SettingsView: View {
               Text("More").font(.caption)
             }
           }
+          Toggle("Pause after each part of a line", isOn: $model.dictateInParts)
           Button("Test voice", systemImage: "speaker.wave.2") { model.testVoice() }
           Button("Reset speed and writing time") {
             model.speechRate = Speaker.defaultRate
@@ -282,8 +283,9 @@ struct SettingsView: View {
             "Using \(model.voiceDescription). Enhanced and Premium voices sound far more natural than Default "
               + "ones. Download them in iOS Settings → Accessibility → Spoken Content → Voices → English (for "
               + "example Ava, Zoe or Evan, Premium), then come back here and pick one. Answers dictate each "
-              + "line to write, then pause while you write it; double-tap the glasses' touchpad to hear the "
-              + "last line again."
+              + "line to write a few words at a time and pause while you write each part (turn off \"Pause after "
+              + "each part\" to hear the whole line first, then one pause). Double-tap the glasses' touchpad to "
+              + "hear the last line again; double-tap again for slower."
           )
         }
 
