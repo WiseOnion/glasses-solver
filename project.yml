@@ -65,6 +65,8 @@ targets:
       - package: MetaWearablesDAT
         product: MWDATInputs
         embed: false
+      # Not embedded: XcodeGen copies a package binary into a test bundle from the wrong path.
+      # Simulator test runs load it from the build products folder instead.
       - package: MetaWearablesDAT
         product: MWDATMockDevice
-        embed: true
+        embed: false
