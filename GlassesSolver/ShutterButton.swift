@@ -30,17 +30,21 @@ final class ShutterButton {
   private var eventsTask: Task<Void, Never>?
   private let tokens = ListenerTokenBag()
   private var onPress: ((Int64) -> Void)?
+  private var onSelect: (() -> Void)?
   private var onStatus: ((Status) -> Void)?
 
   /// Attaches Inputs to a started session. Presses arrive on `onPress` with the glasses'
-  /// own timestamp in milliseconds; activation progress and failures arrive on `onStatus`.
+  /// own timestamp in milliseconds; a touchpad double-tap (delivered as Select, per Meta in
+  /// SDK issue #312) arrives on `onSelect`; activation progress and failures on `onStatus`.
   func attach(
     to session: DeviceSession,
     onPress: @escaping (Int64) -> Void,
+    onSelect: @escaping () -> Void,
     onStatus: @escaping (Status) -> Void
   ) {
     detach(from: session)
     self.onPress = onPress
+    self.onSelect = onSelect
     self.onStatus = onStatus
 
     // consumeBack keeps a back gesture from ending the session (real glasses don't send
@@ -92,6 +96,12 @@ final class ShutterButton {
       for await event in events {
         // Everything is logged, including ignored events: whether presses arrive at all,
         // and as which type, is only known from real glasses.
+        if case .select(.captouch, _) = event {
+          diag("inputs", "event: touchpad select (double-tap)")
+          guard self?.generation == current else { return }
+          self?.onSelect?()
+          continue
+        }
         guard case .capture(.shortPress, .captureButton, let timestampMs) = event else {
           diag("inputs", "event (ignored): \(event)")
           continue
@@ -126,6 +136,7 @@ final class ShutterButton {
     hasActivated = false
     status = .off
     onPress = nil
+    onSelect = nil
     onStatus = nil
   }
 

@@ -38,7 +38,7 @@ struct ContentView: View {
             .frame(maxWidth: .infinity, minHeight: 64)
           }
           .buttonStyle(.borderedProminent)
-          .disabled(model.isBusy || !model.isRegistered || !model.hasAPIKey)
+          .disabled(model.isBusy || !model.isRegistered || !model.canSolve)
 
           sessionSection
 
@@ -57,6 +57,7 @@ struct ContentView: View {
                 .textSelection(.enabled)
               HStack {
                 Button("Repeat", systemImage: "speaker.wave.2") { model.repeatAnswer() }
+                Button("Repeat line", systemImage: "pencil.line") { model.repeatWriteLine() }
                 Spacer()
                 Button("Stop", systemImage: "stop.fill") { model.stopSpeaking() }
               }
@@ -155,7 +156,7 @@ struct ContentView: View {
       }
       .buttonStyle(.bordered)
       .controlSize(.large)
-      .disabled(model.isStartingSession || !model.isRegistered || !model.hasAPIKey)
+      .disabled(model.isStartingSession || !model.isRegistered || !model.canSolve)
     }
   }
 
@@ -184,6 +185,11 @@ struct ContentView: View {
       Text(model.hasActiveDevice ? "Glasses: connected" : "Glasses: not detected")
         .font(.subheadline)
         .foregroundStyle(.secondary)
+      if model.testMode {
+        Label("Test mode: Claude isn't called (Settings)", systemImage: "testtube.2")
+          .font(.subheadline.bold())
+          .foregroundStyle(.orange)
+      }
     }
     .frame(maxWidth: .infinity, alignment: .leading)
     .padding()
@@ -215,6 +221,53 @@ struct SettingsView: View {
           Text("Anthropic API key")
         } footer: {
           Text(model.hasAPIKey ? "A key is saved in the Keychain on this phone." : "No key saved yet.")
+        }
+
+        Section {
+          Toggle("Test mode (no Claude)", isOn: $model.testMode)
+        } footer: {
+          Text(
+            "Runs everything (glasses, photo, speech) but skips Claude, so it's free. You'll hear a sample answer. "
+              + "With the phone locked it waits 35 seconds first, longer than iOS normally lets a background app run, "
+              + "so hearing the answer means the app stays running."
+          )
+        }
+
+        Section {
+          VStack(alignment: .leading) {
+            Text("Speaking speed")
+            Slider(value: $model.speechRate, in: Speaker.rateRange) {
+              Text("Speaking speed")
+            } minimumValueLabel: {
+              Image(systemName: "tortoise")
+            } maximumValueLabel: {
+              Image(systemName: "hare")
+            }
+          }
+          VStack(alignment: .leading) {
+            Text("Time to write each line")
+            Slider(value: $model.writingTime, in: Speaker.writingTimeRange) {
+              Text("Time to write each line")
+            } minimumValueLabel: {
+              Text("Less").font(.caption)
+            } maximumValueLabel: {
+              Text("More").font(.caption)
+            }
+          }
+          Button("Test voice", systemImage: "speaker.wave.2") { model.testVoice() }
+          Button("Reset speed and writing time") {
+            model.speechRate = Speaker.defaultRate
+            model.writingTime = 1
+          }
+          .disabled(model.speechRate == Speaker.defaultRate && model.writingTime == 1)
+        } header: {
+          Text("Voice")
+        } footer: {
+          Text(
+            "Answers dictate each line to write, then pause while you write it. Double-tap the glasses' touchpad "
+              + "to hear the last line again. Using \(model.voiceDescription). For a clearer voice, download an "
+              + "Enhanced or Premium one in iOS Settings → Accessibility → Spoken Content → Voices."
+          )
         }
 
         Section {

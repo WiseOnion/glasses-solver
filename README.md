@@ -76,6 +76,9 @@ There is no entitlements file. Everything here works with a free Apple ID:
 5. You'll hear "Got it. Working on it.", then the answer. The photo and answer text also appear on the phone, with **Repeat** and **Stop** buttons.
 6. If the text in your photos is too blurry, turn on **Settings → High-resolution photo (experimental)**.
 
+**Test mode (free, no Claude)**
+Turn on **Settings → Test mode (no Claude)** to test everything except Claude without an API key or credits. Presses and the Solve button run the real flow (glasses session, capture button, photo, speech), but instead of calling Claude the app waits and then speaks a sample answer that includes the photo's size. With the phone locked the wait is 35 seconds, longer than iOS's usual background allowance, so hearing "the app stayed running with the phone locked" confirms that locked-phone use works. An orange "Test mode" line on the main screen shows it's on.
+
 **Hands-free session (capture button)**
 1. Tap **Start Session**, edit the prompt if you like, and tap **Start**. You'll hear "Session started." A green **Session** badge and a session card appear in the app.
 2. Look at a problem and press the **capture button** on the glasses frame (short press). It runs the same flow as Solve with the session's prompt.
@@ -112,6 +115,13 @@ Caveats:
 ## Notes on the Claude call
 
 - Model `claude-opus-5-5` with `output_config.effort: "medium"`. Setting `"low"` makes answers faster but less careful.
-- A short system prompt asks for plain spoken sentences (no Markdown/LaTeX) because the answer is read aloud.
+- The system prompt (`ClaudeClient.system`) writes for listening while looking at the paper, tuned for derivatives, limits and trig. It opens with what's being found, the answer and the rule (so a misread photo is caught at once), then numbered steps naming each rule, then the answer again. The math wording is based on:
+  - **ClearSpeak**, the style screen readers use for students who listen to math, taken from the open-source [MathCAT](https://github.com/NSoiffer/MathCAT) rules: "sine squared of x", "the limit as x approaches 0 of", "the fraction with numerator … and denominator …, end fraction", "e raised to the exponent … end exponent".
+  - **[Isaacson et al.](https://files.eric.ed.gov/fulltext/EJ1169645.pdf) (Purdue):** 75% of textbook expressions can be heard more than one way, mostly because nothing marks where a fraction, root or exponent ends, and inconsistent wording adds load. So the prompt marks starts and ends and uses one wording per notation.
+  - **Mayer's multimedia principles:** name the structure up front, cut filler, talk to "you".
+  - Pauses come from commas, not SSML, which is unreliable on iOS.
+- **Dictation: what to write.** Each step is one short reason followed by a line starting "Write:", which says the symbols to put on paper left to right ("y prime, equals, 6 x, cosine, open paren, 3 x squared, close paren"). The wording follows the [ETS test-reader guidelines](https://www.ets.org/disabilities/resources/test-reader-guidelines.html): "open paren / close paren", "negative" for a sign, "capital" before capitals, fractions as top and bottom. The app reads Write lines a little slower, in comma-separated chunks with short gaps (chunking aids working memory), then **waits while you write**. Handwriting runs at roughly one character a second, many times slower than speech, so the wait is about half a second per spoken word, 2.5 to 12 seconds, adjustable with **Settings → Voice → Time to write each line**.
+- **Repeat a line:** double-tap the glasses' touchpad (it reaches the app as a "select" event without pausing the session, per Meta in [#312](https://github.com/facebook/meta-wearables-dat-ios/issues/312)), or tap **Repeat line** in the app. It says "Again." plus the latest Write line, then continues where it left off.
+- Speech: **Settings → Voice** sets the speaking speed (default slightly slower than iOS's normal rate) and has a **Test voice** button. The answer is read sentence by sentence with short pauses. The app uses the best voice installed for the phone's language; download an Enhanced or Premium voice in iOS Settings → Accessibility → Spoken Content → Voices for clearer speech. As a safety net, notation that slips into an answer is read in the same forms ("sin²x" as "sine squared of x", "dy/dx" as "d y d x", "lim x→0" as "the limit as x approaches 0, of"); these rules are tested on sample answers.
 - Server-side refusal fallback is on (`fallbacks: "default"`, beta header `server-side-fallback-2026-07-01`). If a safety classifier declines, Anthropic retries on its recommended fallback model instead of returning nothing. The app also handles `stop_reason: "refusal"`.
 - Each Solve is one paid API request with one image. Typical cost is a few cents, depending on answer length.

@@ -14,6 +14,18 @@ final class AppModel {
 
   private static let apiKeyAccount = "anthropic-api-key"
   private static let highResDefaultsKey = "useHighResPhoto"
+  private static let speechRateDefaultsKey = "speechRate"
+  private static let testModeDefaultsKey = "testMode"
+  private static let writingTimeDefaultsKey = "writingTime"
+  /// A sample in the style the system prompt asks for, including dictated Write lines.
+  private static let sampleAnswer = """
+    The derivative of sine of the quantity 3 x squared is 6 x cosine of the quantity 3 x squared, using the chain rule. You'll write two lines.
+    First, the derivative of the outside function, sine, is cosine. Keep the inside the same, and multiply by the derivative of the inside, which is 6 x.
+    Write: y prime, equals, cosine, open paren, 3 x squared, close paren, times, 6 x.
+    Next, tidy up by moving the 6 x to the front.
+    Write: y prime, equals, 6 x, cosine, open paren, 3 x squared, close paren.
+    So the answer is 6 x cosine of the quantity 3 x squared.
+    """
 
   private(set) var registrationState: RegistrationState
   private(set) var hasActiveDevice = false
@@ -34,6 +46,30 @@ final class AppModel {
   var useHighResPhoto: Bool {
     didSet { UserDefaults.standard.set(useHighResPhoto, forKey: Self.highResDefaultsKey) }
   }
+  /// Runs the full glasses flow but skips Claude: waits, then speaks a sample answer.
+  /// Free to use, and the wait outlasts iOS's background allowance when the phone is
+  /// locked, so it also tests that the app stays running.
+  var testMode: Bool {
+    didSet { UserDefaults.standard.set(testMode, forKey: Self.testModeDefaultsKey) }
+  }
+  var canSolve: Bool { hasAPIKey || testMode }
+
+  /// How long to wait after each dictated Write line, as a multiple of the estimated
+  /// writing time (see `Speaker.writingTimeRange`).
+  var writingTime: Double {
+    didSet {
+      speaker.writingTimeScale = writingTime
+      UserDefaults.standard.set(writingTime, forKey: Self.writingTimeDefaultsKey)
+    }
+  }
+
+  /// Speaking speed for answers (see `Speaker.rateRange`).
+  var speechRate: Float {
+    didSet {
+      speaker.rate = speechRate
+      UserDefaults.standard.set(speechRate, forKey: Self.speechRateDefaultsKey)
+    }
+  }
 
   var isBusy: Bool { phase != .idle }
   var isRegistered: Bool { registrationState == .registered }
@@ -48,7 +84,7 @@ final class AppModel {
           ? "Session paused. Tap the glasses' touchpad once to resume."
           : "Session active. Look at the problem and press the capture button."
       }
-      if !hasAPIKey { return "Add your Anthropic API key in Settings." }
+      if !canSolve { return "Add your Anthropic API key in Settings, or turn on Test mode." }
       if !isRegistered { return "Connect your glasses to get started." }
       if !hasActiveDevice { return "Put on your glasses (hinges open)." }
       return "Ready. Look at the problem and tap Solve."
@@ -91,6 +127,17 @@ final class AppModel {
     self.registrationState = wearables.registrationState
     self.hasAPIKey = Keychain.read(Self.apiKeyAccount) != nil
     self.useHighResPhoto = UserDefaults.standard.bool(forKey: Self.highResDefaultsKey)
+    self.testMode = UserDefaults.standard.bool(forKey: Self.testModeDefaultsKey)
+    let savedRate = UserDefaults.standard.object(forKey: Self.speechRateDefaultsKey) as? Float
+    self.speechRate = savedRate.map { min(max($0, Speaker.rateRange.lowerBound), Speaker.rateRange.upperBound) }
+      ?? Speaker.defaultRate
+    let savedWritingTime = UserDefaults.standard.object(forKey: Self.writingTimeDefaultsKey) as? Double
+    self.writingTime = savedWritingTime.map {
+      min(max($0, Speaker.writingTimeRange.lowerBound), Speaker.writingTimeRange.upperBound)
+    } ?? 1
+    // All stored properties are set from here on, so `self` can be used.
+    speaker.rate = speechRate
+    speaker.writingTimeScale = writingTime
     if let sdkSetupError {
       errorMessage =
         "The Meta glasses SDK failed to start, so glasses features may not work.\n\nDetails: \(sdkSetupError)"
@@ -164,8 +211,8 @@ final class AppModel {
 
   func solve() async {
     guard !isBusy else { return }
-    guard hasAPIKey else {
-      errorMessage = "Add your Anthropic API key in Settings first."
+    guard canSolve else {
+      errorMessage = "Add your Anthropic API key in Settings first, or turn on Test mode."
       return
     }
     guard isRegistered else {
@@ -224,8 +271,26 @@ final class AppModel {
     speaker.stop()
   }
 
+  /// Says the latest "Write:" line again (touchpad double-tap or the on-screen button).
+  func repeatWriteLine() {
+    if !speaker.repeatLastWriteLine() {
+      diag("audio", "repeat requested, but there's no Write line yet")
+    }
+  }
+
+  /// A sample in the style the system prompt asks for, to judge speed and voice.
+  func testVoice() {
+    speaker.speak(Self.sampleAnswer)
+  }
+
+  var voiceDescription: String {
+    guard let voice = Speaker.voice else { return "System default voice" }
+    return "\(voice.name), \(Speaker.qualityName(voice.quality)) quality"
+  }
+
   private func run() async {
-    guard let apiKey = Keychain.read(Self.apiKeyAccount) else {
+    let apiKey = Keychain.read(Self.apiKeyAccount)
+    guard apiKey != nil || testMode else {
       hasAPIKey = false
       return
     }
@@ -242,7 +307,7 @@ final class AppModel {
       backgroundActivity.end()
     }
     let prompt = sessionActive ? sessionPrompt : ClaudeClient.defaultPrompt
-    diag("solve", "start (app \(Self.appStateDescription), hands-free \(sessionActive))")
+    diag("solve", "start (app \(Self.appStateDescription), hands-free \(sessionActive), test mode \(testMode))")
 
     let photo: Data
     do {
@@ -267,7 +332,12 @@ final class AppModel {
     speaker.beginKeepAlive()
     do {
       speaker.speak("Got it. Working on it.")
-      let answer = try await ClaudeClient(apiKey: apiKey).solve(photo: photo, prompt: prompt)
+      let answer: String
+      if let apiKey, !testMode {
+        answer = try await ClaudeClient(apiKey: apiKey).solve(photo: photo, prompt: prompt)
+      } else {
+        answer = try await simulatedAnswer(photo: photo)
+      }
       lastAnswer = answer
       diag("solve", "answer received, \(answer.count) characters (app \(Self.appStateDescription))")
       speaker.speak(answer)
@@ -298,6 +368,20 @@ final class AppModel {
     }
   }
 
+  /// Test mode's stand-in for Claude. Locked, it waits longer than iOS's ~30-second
+  /// background allowance, so hearing the answer means the keep-alive worked.
+  private func simulatedAnswer(photo: Data) async throws -> String {
+    let inBackground = UIApplication.shared.applicationState != .active
+    let wait: Duration = inBackground ? .seconds(35) : .seconds(2)
+    diag("solve", "test mode: waiting \(wait) instead of calling Claude (app \(Self.appStateDescription))")
+    try await Task.sleep(for: wait)
+    diag("solve", "test mode: wait finished (app \(Self.appStateDescription))")
+    let kilobytes = photo.count / 1024
+    return "Test mode. The photo arrived, \(kilobytes) kilobytes"
+      + (inBackground ? ", and the app stayed running with the phone locked. " : ". ")
+      + Self.sampleAnswer
+  }
+
   private func reportSolveFailure(_ error: Error) {
     diag("solve", "FAILED: \(ErrorDetail.describe(error))")
     errorMessage = ErrorDetail.alertText(error)
@@ -315,8 +399,8 @@ final class AppModel {
       "start", "Start Session tapped: registration \(registrationState), glasses detected \(hasActiveDevice), "
         + "API key \(hasAPIKey), already active \(sessionActive), starting \(isStartingSession)")
     guard !trimmed.isEmpty, !sessionActive, !isStartingSession else { return }
-    guard hasAPIKey else {
-      errorMessage = "Add your Anthropic API key in Settings first."
+    guard canSolve else {
+      errorMessage = "Add your Anthropic API key in Settings first, or turn on Test mode."
       return
     }
     guard isRegistered else {
@@ -414,6 +498,7 @@ final class AppModel {
     shutter.attach(
       to: session,
       onPress: { [weak self] timestampMs in self?.shutterPressed(at: timestampMs) },
+      onSelect: { [weak self] in self?.repeatWriteLine() },
       onStatus: { [weak self] status in self?.shutterStatusChanged(status) }
     )
     shutterStatus = shutter.status
