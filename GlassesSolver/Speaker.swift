@@ -130,6 +130,9 @@ final class Speaker: NSObject {
     repeatCount = 0
     let voice = resolvedVoice
     let voiceName = voice.map { $0.name + " (" + Self.qualityName($0.quality) + ")" } ?? "default"
+    if chosenVoiceIsMissing, let id = voiceIdentifier {
+      diag("audio", "the chosen voice \(id) isn't available to the app, so \(voiceName) is used instead")
+    }
     diag(
       "audio",
       "speaking \(text.count) characters at rate \(rate), \(dictateInParts ? "dictating in parts" : "whole lines"), "
@@ -482,7 +485,20 @@ final class Speaker: NSObject {
 
   /// The chosen voice if it's still installed, otherwise the best one.
   var resolvedVoice: AVSpeechSynthesisVoice? {
-    voiceIdentifier.flatMap(AVSpeechSynthesisVoice.init(identifier:)) ?? Self.bestVoice
+    chosenVoice ?? Self.bestVoice
+  }
+
+  /// The voice picked in Settings, looked up by identifier directly and then in the list of
+  /// installed voices (a voice from another app may only turn up there).
+  private var chosenVoice: AVSpeechSynthesisVoice? {
+    guard let id = voiceIdentifier else { return nil }
+    return AVSpeechSynthesisVoice(identifier: id)
+      ?? AVSpeechSynthesisVoice.speechVoices().first { $0.identifier == id }
+  }
+
+  /// True when a voice was picked but iOS can't find it, so the automatic voice is used.
+  var chosenVoiceIsMissing: Bool {
+    voiceIdentifier != nil && chosenVoice == nil
   }
 
   static func qualityName(_ quality: AVSpeechSynthesisVoiceQuality) -> String {

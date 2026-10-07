@@ -336,7 +336,11 @@ final class AppModel {
 
   var voiceDescription: String {
     guard let voice = speaker.resolvedVoice else { return "System default voice" }
-    return "\(voice.name), \(Speaker.qualityName(voice.quality)) quality"
+    let description = "\(voice.name), \(Speaker.qualityName(voice.quality)) quality"
+    // Say so when the picked voice can't be found, instead of quietly switching.
+    return speaker.chosenVoiceIsMissing
+      ? "\(description). The voice you picked isn't available to this app right now, so this one is used instead"
+      : description
   }
 
   /// Installed voices for the Settings picker: (identifier, label), best quality first.

@@ -245,6 +245,11 @@ struct SettingsView: View {
         Section {
           Picker("Voice", selection: $model.voiceIdentifier) {
             Text("Automatic (best installed)").tag(String?.none)
+            // Keep a saved voice in the list even when iOS isn't offering it right now, so
+            // the choice isn't lost and you can see it's still selected.
+            if let saved = model.voiceIdentifier, !voices.contains(where: { $0.id == saved }) {
+              Text("Your saved voice (not available right now)").tag(String?.some(saved))
+            }
             ForEach(voices, id: \.id) { voice in
               Text(voice.label).tag(String?.some(voice.id))
             }
