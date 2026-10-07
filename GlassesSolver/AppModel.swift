@@ -21,12 +21,19 @@ final class AppModel {
   private static let dictateInPartsDefaultsKey = "dictateInParts"
   /// A sample in the style the system prompt asks for, including dictated Write lines.
   private static let sampleAnswer = """
-    The derivative of sine of the quantity 3 x squared is 6 x cosine of the quantity 3 x squared, by the chain rule. You'll write two lines.
-    First, use the chain rule. The derivative of sine is cosine, so keep the inside, and multiply by the derivative of the inside, 6 x.
-    Write: y prime, equals, cosine, open paren, 3 x squared, close paren, times, 6 x.
-    Next, move the 6 x to the front.
-    Write: y prime, equals, 6 x, cosine, open paren, 3 x squared, close paren.
-    So the answer is 6 x cosine of the quantity 3 x squared.
+    You're finding the limit of x squared minus 4, over x minus 2, as x gets close to 2. The answer is 4. You'll write three lines, each one under the last.
+    A limit asks what number the expression gets close to as x gets close to 2. Putting in 2 right away gives 0 over 0, so first you factor the top.
+    x squared minus 4 factors into x minus 2, times x plus 2.
+    Write: the letters l i m, then under them, small, x, arrow pointing right, 2, end under.
+    Continue: start fraction, on top, open parenthesis, x, minus sign, 2, close parenthesis, open parenthesis, x, plus sign, 2, close parenthesis, draw the fraction bar, under the bar, x, minus sign, 2, end fraction.
+    The x minus 2 on top and the x minus 2 on the bottom are the same, so they cancel.
+    Mark: Cross out the first parentheses on top, the ones with x minus 2, and cross out the x minus 2 under the fraction bar.
+    Now copy what's left.
+    Write: the letters l i m, under them, small, x, arrow pointing right, 2, end under, open parenthesis, x, plus sign, 2, close parenthesis.
+    Now put in 2 for x. 2 plus 2 is 4.
+    Write: equals sign, 4.
+    Mark: Draw a box around line 3.
+    So the limit is 4.
     """
 
   private(set) var registrationState: RegistrationState

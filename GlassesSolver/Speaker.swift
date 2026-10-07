@@ -6,11 +6,13 @@ import AVFoundation
 /// Speech flows the way iOS reads text normally: explanation text goes to the synthesizer as
 /// whole utterances (its own sentence pauses sound natural; splitting sentences into separate
 /// utterances made audible stop-start gaps), and everything is queued at once, with the
-/// synthesizer's own `postUtteranceDelay` for pauses rather than app timers. Lines starting
-/// "Write:" are dictated a little slower, a few words at a time, with a pause after each part
-/// long enough to write it by hand (or, with `dictateInParts` off, the whole line and then one
-/// pause). A line runs past the roughly two seconds of speech that working memory holds, so
-/// writing it part by part is how dictation is normally given. `repeatLastWriteLine()` says
+/// synthesizer's own `postUtteranceDelay` for pauses rather than app timers. Pen lines
+/// ("Write:" starts a new line on paper and is announced "Start line N."; "Continue:" stays
+/// on the same line; "Mark:" is crossing out or drawing a box) are dictated a little slower,
+/// a few words at a time, with a pause after each part long enough to do it by hand (or, with
+/// `dictateInParts` off, the whole line and then one pause). A line runs past the roughly two
+/// seconds of speech that working memory holds, so writing it part by part is how dictation
+/// is normally given. `repeatLastWriteLine()` says
 /// the latest one again, slower each time it's asked for in a row, then carries on.
 ///
 /// Also keeps the app running while an answer is pending with the phone locked: with the
@@ -42,25 +44,44 @@ final class Speaker: NSObject {
   private static let minGroupPause: TimeInterval = 1.2
   private static let maxLinePause: TimeInterval = 20
   private static let afterLinePause: TimeInterval = 0.5
+  /// Time for each part of a Mark line (crossing out, drawing a box).
+  private static let markPartPause: TimeInterval = 2
 
   var rate: Float = Speaker.defaultRate
   var writingTimeScale: Double = 1
-  /// Pause to write after each part of a Write line (true), or after the whole line.
+  /// Pause to write after each part of a pen line (true), or after the whole line.
   var dictateInParts = true
   /// The chosen voice; nil means the best installed voice for the phone's language.
   var voiceIdentifier: String?
-  /// The Write line most recently dictated, for `repeatLastWriteLine()`.
-  private(set) var lastWriteLine: String?
-  /// How many times in a row `lastWriteLine` has been repeated.
+  /// The pen line most recently dictated, for `repeatLastWriteLine()`.
+  private(set) var lastPenLine: PenLine?
+  /// How many times in a row `lastPenLine` has been repeated.
   private var repeatCount = 0
   private var nextLineID = 0
+
+  /// An instruction to do something on paper, from a line tagged in the answer.
+  struct PenLine: Equatable {
+    enum Kind {
+      /// "Write:" starts a new line on paper.
+      case write
+      /// "Continue:" keeps writing on the same line.
+      case continueLine
+      /// "Mark:" crosses out, draws a box, and so on.
+      case mark
+    }
+
+    let kind: Kind
+    let text: String
+    /// The line on paper: Write lines count up from 1; the others keep the current number.
+    let number: Int
+  }
 
   private struct Segment {
     let text: String
     let rate: Float
     let pauseAfter: TimeInterval
-    /// Set on every part of a dictated line.
-    let writeLine: String?
+    /// Set on every part of a dictated pen line.
+    let penLine: PenLine?
     /// Shared by the parts of one dictated line.
     var lineID: Int?
   }
@@ -100,7 +121,7 @@ final class Speaker: NSObject {
   func speak(_ text: String) {
     reset()
     activateSession()
-    lastWriteLine = nil
+    lastPenLine = nil
     repeatCount = 0
     let voice = resolvedVoice
     let voiceName = voice.map { $0.name + " (" + Self.qualityName($0.quality) + ")" } ?? "default"
@@ -111,11 +132,11 @@ final class Speaker: NSObject {
     enqueue(segments(for: text), voice: voice)
   }
 
-  /// Says the latest Write line again, part by part and a little slower (slower again if
+  /// Says the latest pen line again, part by part and a little slower (slower again if
   /// asked twice in a row), then continues with whatever was left to say.
   @discardableResult
   func repeatLastWriteLine() -> Bool {
-    guard let line = lastWriteLine else { return false }
+    guard let line = lastPenLine else { return false }
     var remaining: [Segment] = []
     if let index = currentIndex {
       let start = currentFinished ? index + 1 : index
@@ -129,8 +150,9 @@ final class Speaker: NSObject {
     let slowdown = pow(Self.repeatRateFactor, Float(min(repeatCount, 2)))
     reset()
     activateSession()
-    diag("audio", "repeating the last Write line (\(repeatCount) in a row)")
-    let cue = repeatCount > 1 ? "Again, slower." : "Again."
+    diag("audio", "repeating the last pen line (\(repeatCount) in a row)")
+    let again = repeatCount > 1 ? "Again, slower" : "Again"
+    let cue = line.kind == .mark ? again + "." : again + ", line \(line.number)."
     enqueue(dictation(line, cue: cue, slowdown: slowdown, inParts: true) + remaining, voice: resolvedVoice)
     return true
   }
@@ -172,9 +194,9 @@ final class Speaker: NSObject {
     guard let index = utteranceIndex[id] else { return }
     currentIndex = index
     currentFinished = false
-    if let line = script[index].writeLine {
-      if line != lastWriteLine { repeatCount = 0 }
-      lastWriteLine = line
+    if let line = script[index].penLine {
+      if line != lastPenLine { repeatCount = 0 }
+      lastPenLine = line
     }
   }
 
@@ -203,7 +225,7 @@ final class Speaker: NSObject {
     let seconds = times.last.timeIntervalSince(times.first)
     guard seconds > 1 else { return }
     let wpm = Int((Double(words - 1) / seconds * 60).rounded())
-    let kind = segment.writeLine == nil ? "explanation" : "dictation"
+    let kind = segment.penLine == nil ? "explanation" : "dictation"
     diag("audio", "measured \(wpm) words per minute (\(kind), rate \(String(format: "%.2f", segment.rate)))")
   }
 
@@ -218,13 +240,16 @@ final class Speaker: NSObject {
         line.last.map { ".!?:;".contains($0) } == true ? line : line + "."
       }.joined(separator: " ")
       result.append(
-        Segment(text: joined, rate: rate, pauseAfter: beforeWrite ? Self.beforeWritePause : 0, writeLine: nil))
+        Segment(text: joined, rate: rate, pauseAfter: beforeWrite ? Self.beforeWritePause : 0, penLine: nil))
       prose.removeAll()
     }
+    var lineNumber = 0
     for paragraph in Self.speakable(text).components(separatedBy: "\n") {
-      if let line = Self.writeLine(in: paragraph) {
+      if let pen = Self.penLine(in: paragraph) {
         flushProse(beforeWrite: true)
-        result += dictation(line, cue: "Write.", inParts: dictateInParts)
+        if pen.0 == .write { lineNumber += 1 }
+        let line = PenLine(kind: pen.0, text: pen.1, number: max(lineNumber, 1))
+        result += dictation(line, cue: Self.cue(for: line), inParts: dictateInParts)
       } else {
         let trimmed = paragraph.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty { prose.append(trimmed) }
@@ -234,27 +259,42 @@ final class Speaker: NSObject {
     return result
   }
 
-  /// The cue ("Write.") and the line, a little slower than explanations. In parts: one
-  /// utterance per part (the cue leads the first), each followed by time to write that part.
-  /// Otherwise: one utterance, then time to write the whole line.
-  private func dictation(_ line: String, cue: String, slowdown: Float = 1, inParts: Bool) -> [Segment] {
+  /// What's said before a pen line: where on the paper it goes. A Mark line says it itself.
+  static func cue(for line: PenLine) -> String {
+    switch line.kind {
+    case .write: "Start line \(line.number)."
+    case .continueLine: "Same line, keep going."
+    case .mark: ""
+    }
+  }
+
+  /// The cue and the line, a little slower than explanations. In parts: one utterance per
+  /// part (the cue leads the first), each followed by time to do that part. Otherwise: one
+  /// utterance, then time for the whole line.
+  private func dictation(_ line: PenLine, cue: String, slowdown: Float = 1, inParts: Bool) -> [Segment] {
     let speed = rate * Self.dictationRateFactor * slowdown
-    let groups = Self.dictationGroups(line)
+    let groups = Self.dictationGroups(line.text)
+    let lead = cue.isEmpty ? "" : cue + " "
+    let isMark = line.kind == .mark
+    func time(_ group: String) -> TimeInterval {
+      isMark ? Self.markPartPause : Self.writingTime(group)
+    }
     nextLineID += 1
+    let lineID = nextLineID
     guard inParts, !groups.isEmpty else {
-      let pause = min(groups.map(Self.writingTime).reduce(0, +), Self.maxLinePause)
+      let pause = min(groups.map(time).reduce(0, +), Self.maxLinePause)
       return [
         Segment(
-          text: cue + " " + line, rate: speed, pauseAfter: pause * writingTimeScale + Self.afterLinePause,
-          writeLine: line, lineID: nextLineID)
+          text: lead + line.text, rate: speed, pauseAfter: pause * writingTimeScale + Self.afterLinePause,
+          penLine: line, lineID: lineID)
       ]
     }
     return groups.enumerated().map { (index, group) -> Segment in
       let isLast = index == groups.count - 1
       return Segment(
-        text: (index == 0 ? cue + " " : "") + group + (isLast ? "." : ","), rate: speed,
-        pauseAfter: Self.writingTime(group) * writingTimeScale + (isLast ? Self.afterLinePause : 0),
-        writeLine: line, lineID: nextLineID)
+        text: (index == 0 ? lead : "") + group + (isLast ? "." : ","), rate: speed,
+        pauseAfter: time(group) * writingTimeScale + (isLast ? Self.afterLinePause : 0),
+        penLine: line, lineID: lineID)
     }
   }
 
@@ -290,8 +330,10 @@ final class Speaker: NSObject {
     max(minGroupPause, secondsPerCharacter * Double(writtenCharacters(group)))
   }
 
-  /// About how many characters a spoken part puts on paper: "cosine" is 3 (cos), "open
-  /// paren" is 1, "fraction, top" is 0. A number counts its digits; any other word counts 1.
+  /// About how many characters a spoken part puts on paper: "the letters c o s" is 3,
+  /// "open parenthesis" is 1, "small raised 2" is 1, "start fraction, on top" is 0. A number
+  /// counts its digits; any other word counts 1, except words that only say where or how
+  /// to write, which count 0.
   static func writtenCharacters(_ text: String) -> Int {
     text.lowercased()
       .components(separatedBy: CharacterSet(charactersIn: ",.;:").union(.whitespacesAndNewlines))
@@ -306,17 +348,28 @@ final class Speaker: NSObject {
   private static let writtenWords: [String: Int] = [
     "open": 0, "close": 0, "end": 0, "with": 0, "exponent": 0, "fraction": 0, "top": 0,
     "of": 0, "the": 0, "to": 0, "as": 0, "capital": 0, "square": 0, "natural": 0, "and": 0,
-    "bottom": 1,
+    "start": 0, "small": 0, "raised": 0, "under": 0, "over": 0, "on": 0, "at": 0, "then": 0,
+    "them": 0, "letters": 0, "letter": 0, "sign": 0, "mark": 0, "marks": 0, "bar": 0,
+    "line": 0, "right": 0, "left": 0, "pointing": 0, "middle": 0, "height": 0, "check": 0,
+    "short": 0, "across": 0, "sideways": 0, "tick": 0, "dot": 0,
+    "bottom": 1, "draw": 1,
     "sine": 3, "cosine": 3, "tangent": 3, "secant": 3, "cosecant": 3, "cotangent": 3,
     "log": 2, "limit": 3, "inverse": 2,
   ]
 
-  /// The text after "Write:" if this paragraph is a Write line.
-  private static func writeLine(in paragraph: String) -> String? {
+  private static let penTags: [(tag: String, kind: PenLine.Kind)] = [
+    ("write:", .write), ("continue:", .continueLine), ("mark:", .mark),
+  ]
+
+  /// The kind and text of a pen line ("Write:", "Continue:" or "Mark:"), if this paragraph is
+  /// one. "letter a" becomes "letter A", which voices say as the letter rather than "uh".
+  static func penLine(in paragraph: String) -> (PenLine.Kind, String)? {
     let trimmed = paragraph.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard trimmed.lowercased().hasPrefix("write:") else { return nil }
-    let line = trimmed.dropFirst("write:".count).trimmingCharacters(in: .whitespacesAndNewlines)
-    return line.isEmpty ? nil : line
+    let lowered = trimmed.lowercased()
+    guard let match = penTags.first(where: { lowered.hasPrefix($0.tag) }) else { return nil }
+    let text = trimmed.dropFirst(match.tag.count).trimmingCharacters(in: .whitespacesAndNewlines)
+      .replacingOccurrences(of: #"\b([Ll]etter) a\b"#, with: "$1 A", options: .regularExpression)
+    return text.isEmpty ? nil : (match.kind, text)
   }
 
   // MARK: - Voices
