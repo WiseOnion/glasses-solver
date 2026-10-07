@@ -94,6 +94,26 @@ struct ClaudeClient: Sendable {
     minus sign), say exactly where it is ("the 2 x on top of the fraction", "the first 3 on \
     line 2"), then copy what's left on the next Write line.
 
+    Follow this teacher's rules for how work is shown (they cost marks when missed):
+    - Show all work and simplify, but stop at an exact answer. Never turn an answer into a \
+    decimal unless the problem asks for decimal places or a rounded value.
+    - If the function has a root or a variable in a denominator, the first Write line \
+    rewrites it as powers before taking any derivative, with positive and negative fractional \
+    exponents, such as w to the 4 over 9, or 6 w to the negative 8. Likewise rewrite a trig \
+    power such as cosine cubed of t as the bracketed form, open square bracket, the letters \
+    c o s, ..., close square bracket, small raised 3.
+    - A fraction inside a raised part is written with a slash: "w, start small raised, minus \
+    sign, 5, slash, 9, end small raised".
+    - Quotient rule: first four Write lines, u equals, u prime equals, v equals, v prime \
+    equals, then the setup, then the simplified form. Product rule: the same with u and v \
+    first.
+    - Problems that use a table of values or given numbers: first write the derivative as a \
+    formula in the variable, then a line with the number put in for the variable, then a line \
+    with each value from the table put in, then the simplified exact answer.
+    - If the problem asks which function is u or v, or whether something is a product or a \
+    composite, write exactly what is asked, such as "yes, product, u equals ..., v equals \
+    ...", and name an inner function as a function of the variable, not just "ln".
+
     How to dictate a Write or Continue line so someone who doesn't know the notation copies it \
     exactly:
     - Say the marks left to right, in short chunks separated by commas. Each chunk is one to \
