@@ -1,13 +1,15 @@
 import AVFoundation
-import NaturalLanguage
 
 /// Speaks text through the current audio route. When the glasses are connected to the
 /// phone as Bluetooth audio (their normal state), that route is the glasses' speakers.
 ///
-/// Answers are spoken from a queue, one sentence at a time. Lines starting "Write:" are
-/// dictated: read a little slower in comma-separated chunks, then followed by a pause long
-/// enough to write the line by hand (handwriting runs around one character a second, far
-/// slower than speech). `repeatLastWriteLine()` says the latest one again and then carries on.
+/// Speech flows the way iOS reads text normally: explanation text goes to the synthesizer as
+/// whole utterances (its own sentence pauses sound natural; splitting sentences into separate
+/// utterances made audible stop-start gaps), and everything is queued at once, with the
+/// synthesizer's own `postUtteranceDelay` for pauses rather than app timers. Lines starting
+/// "Write:" are dictated as one slightly slower utterance (commas give the chunk pauses),
+/// followed by a pause long enough to write the line by hand. `repeatLastWriteLine()` says
+/// the latest one again, then carries on from where it was.
 ///
 /// Also keeps the app running while an answer is pending with the phone locked: with the
 /// `audio` background mode, iOS doesn't suspend an app that is playing audio, so a silent
@@ -20,15 +22,14 @@ final class Speaker: NSObject {
   static let defaultRate: Float = 0.46
   /// Slider range for the writing pause, as a multiple of the estimated writing time.
   static let writingTimeRange: ClosedRange<Double> = 0.5...2.5
-  /// Pause after each sentence, and a longer one between paragraphs.
-  private static let sentencePause: TimeInterval = 0.25
-  private static let paragraphPause: TimeInterval = 0.6
-  /// Pause between chunks of a Write line, and the dictation speed relative to `rate`.
-  private static let chunkPause: TimeInterval = 0.45
-  private static let dictationRateFactor: Float = 0.9
+  /// Dictation speed relative to `rate`, and the short beat before a Write line.
+  private static let dictationRateFactor: Float = 0.88
+  private static let beforeWritePause: TimeInterval = 0.3
 
   var rate: Float = Speaker.defaultRate
   var writingTimeScale: Double = 1
+  /// The chosen voice; nil means the best installed voice for the phone's language.
+  var voiceIdentifier: String?
   /// The Write line most recently dictated, for `repeatLastWriteLine()`.
   private(set) var lastWriteLine: String?
 
@@ -36,25 +37,27 @@ final class Speaker: NSObject {
     let text: String
     let rate: Float
     let pauseAfter: TimeInterval
-    /// Set on the first segment of a dictated line.
+    /// Set on a dictated line.
     let writeLine: String?
-    /// Part of a dictated line (the cue or a chunk).
-    let isDictation: Bool
   }
 
   private let synthesizer = AVSpeechSynthesizer()
-  private var queue: [Segment] = []
-  private var current: (id: ObjectIdentifier, segment: Segment)?
-  private var pauseTask: Task<Void, Never>?
-  /// Bumped whenever the queue is replaced, so a stale pause can't start the next segment.
-  private var generation = 0
-  private var voice: AVSpeechSynthesisVoice?
+  /// What's queued now, in order, and which utterance is which segment.
+  private var script: [Segment] = []
+  private var utteranceIndex: [ObjectIdentifier: Int] = [:]
+  /// Utterances handed to the synthesizer, kept alive so a late delegate callback can't be
+  /// mistaken for a new utterance at a reused address.
+  private var utterances: [AVSpeechUtterance] = []
+  private var retiredUtterances: [AVSpeechUtterance] = []
+  private var currentIndex: Int?
+  private var currentFinished = false
+  private var outstanding = 0
   private var keepAlivePlayer: AVAudioPlayer?
   private var stopKeepAliveAfterSpeech = false
   private var interruptionObserver: NSObjectProtocol?
 
-  /// True while anything is queued, being said, or in a pause between segments.
-  var isActive: Bool { current != nil || pauseTask != nil || !queue.isEmpty }
+  /// True while anything is queued or being said (including a writing pause).
+  var isActive: Bool { outstanding > 0 }
 
   override init() {
     super.init()
@@ -69,113 +72,111 @@ final class Speaker: NSObject {
   }
 
   func speak(_ text: String) {
-    resetQueue()
+    reset()
     activateSession()
-    voice = Self.voice
+    lastWriteLine = nil
+    let voice = resolvedVoice
     let voiceName = voice.map { $0.name + " (" + Self.qualityName($0.quality) + ")" } ?? "default"
     diag("audio", "speaking \(text.count) characters at rate \(rate), voice \(voiceName), via \(Self.routeDescription)")
-    lastWriteLine = nil
-    queue = segments(for: text)
-    playNext()
+    enqueue(segments(for: text), voice: voice)
   }
 
   /// Says the latest Write line again, then continues with whatever was left to say.
   @discardableResult
   func repeatLastWriteLine() -> Bool {
     guard let line = lastWriteLine else { return false }
-    let interrupted = current?.segment
-    let remaining = queue
-    resetQueue()
+    var remaining: [Segment] = []
+    if let index = currentIndex {
+      let start = currentFinished ? index + 1 : index
+      if start < script.count { remaining = Array(script[start...]) }
+      // A line being dictated (or in its writing pause) is covered by the repeat itself.
+      if !currentFinished, remaining.first?.writeLine != nil { remaining.removeFirst() }
+    }
+    reset()
     activateSession()
     diag("audio", "repeating the last Write line")
-    // Re-say an interrupted explanation sentence afterwards; a half-said chunk of the same
-    // line is covered by the repeat itself.
-    var resume: [Segment] = []
-    if let interrupted, !interrupted.isDictation {
-      resume = [interrupted]
-    }
-    queue = writeSegments(line, cue: "Again.") + resume + remaining
-    playNext()
+    enqueue([dictation(line, cue: "Again.")] + remaining, voice: resolvedVoice)
     return true
   }
 
   func stop() {
-    resetQueue()
+    reset()
     if stopKeepAliveAfterSpeech { endKeepAlive() }
   }
 
   // MARK: - Queue
 
-  private func resetQueue() {
-    generation += 1
-    queue.removeAll()
-    pauseTask?.cancel()
-    pauseTask = nil
-    current = nil
+  private func reset() {
+    retiredUtterances = utterances
+    utterances.removeAll()
+    utteranceIndex.removeAll()
+    script.removeAll()
+    currentIndex = nil
+    currentFinished = false
+    outstanding = 0
     synthesizer.stopSpeaking(at: .immediate)
   }
 
-  private func playNext() {
-    guard !queue.isEmpty else {
-      speechEnded()
-      return
-    }
-    let segment = queue.removeFirst()
-    if let line = segment.writeLine { lastWriteLine = line }
-    let utterance = AVSpeechUtterance(string: segment.text)
-    utterance.rate = segment.rate
-    utterance.voice = voice
-    current = (ObjectIdentifier(utterance), segment)
-    synthesizer.speak(utterance)
-  }
-
-  private func utteranceFinished(_ id: ObjectIdentifier, cancelled: Bool) {
-    // Cancellations come from resetQueue(), which has already moved on.
-    guard let finished = current, finished.id == id, !cancelled else { return }
-    current = nil
-    let generation = self.generation
-    pauseTask = Task { [weak self] in
-      try? await Task.sleep(for: .seconds(finished.segment.pauseAfter))
-      guard let self, !Task.isCancelled, self.generation == generation else { return }
-      self.pauseTask = nil
-      self.playNext()
+  private func enqueue(_ segments: [Segment], voice: AVSpeechSynthesisVoice?) {
+    for segment in segments {
+      let utterance = AVSpeechUtterance(string: segment.text)
+      utterance.rate = segment.rate
+      utterance.voice = voice
+      utterance.postUtteranceDelay = segment.pauseAfter
+      script.append(segment)
+      utterances.append(utterance)
+      utteranceIndex[ObjectIdentifier(utterance)] = script.count - 1
+      outstanding += 1
+      synthesizer.speak(utterance)
     }
   }
 
-  private func speechEnded() {
-    if stopKeepAliveAfterSpeech { endKeepAlive() }
+  private func utteranceStarted(_ id: ObjectIdentifier) {
+    guard let index = utteranceIndex[id] else { return }
+    currentIndex = index
+    currentFinished = false
+    if let line = script[index].writeLine { lastWriteLine = line }
   }
 
+  private func utteranceEnded(_ id: ObjectIdentifier) {
+    guard let index = utteranceIndex.removeValue(forKey: id) else { return }
+    if index == currentIndex { currentFinished = true }
+    outstanding = max(0, outstanding - 1)
+    if outstanding == 0, stopKeepAliveAfterSpeech { endKeepAlive() }
+  }
+
+  /// Explanation paragraphs between Write lines become one utterance each run; each Write
+  /// line becomes one dictated utterance.
   private func segments(for text: String) -> [Segment] {
     var result: [Segment] = []
+    var prose: [String] = []
+    func flushProse(beforeWrite: Bool) {
+      guard !prose.isEmpty else { return }
+      let joined = prose.map { line in
+        line.last.map { ".!?:;".contains($0) } == true ? line : line + "."
+      }.joined(separator: " ")
+      result.append(
+        Segment(text: joined, rate: rate, pauseAfter: beforeWrite ? Self.beforeWritePause : 0, writeLine: nil))
+      prose.removeAll()
+    }
     for paragraph in Self.speakable(text).components(separatedBy: "\n") {
       if let line = Self.writeLine(in: paragraph) {
-        result += writeSegments(line, cue: "Write.")
-        continue
-      }
-      let sentences = Self.sentences(in: paragraph)
-      for (index, sentence) in sentences.enumerated() {
-        let pause = index == sentences.count - 1 ? Self.paragraphPause : Self.sentencePause
-        result.append(Segment(text: sentence, rate: rate, pauseAfter: pause, writeLine: nil, isDictation: false))
+        flushProse(beforeWrite: true)
+        result.append(dictation(line, cue: "Write."))
+      } else {
+        let trimmed = paragraph.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty { prose.append(trimmed) }
       }
     }
+    flushProse(beforeWrite: false)
     return result
   }
 
-  /// "Write." then the line in comma-separated chunks, then time to write it.
-  private func writeSegments(_ line: String, cue: String) -> [Segment] {
-    let chunks = line.split(separator: ",")
-      .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-      .filter { !$0.isEmpty }
-    var result = [Segment(text: cue, rate: rate, pauseAfter: 0.35, writeLine: line, isDictation: true)]
-    for (index, chunk) in chunks.enumerated() {
-      let isLast = index == chunks.count - 1
-      result.append(
-        Segment(
-          text: chunk, rate: rate * Self.dictationRateFactor,
-          pauseAfter: isLast ? writingPause(for: line) : Self.chunkPause, writeLine: nil, isDictation: true))
-    }
-    return result
+  /// "Write." and the line as one slower utterance, then time to write it.
+  private func dictation(_ line: String, cue: String) -> Segment {
+    Segment(
+      text: cue + " " + line, rate: rate * Self.dictationRateFactor,
+      pauseAfter: writingPause(for: line), writeLine: line)
   }
 
   /// Roughly 0.5 seconds of writing per spoken word (each is about one symbol on paper),
@@ -191,6 +192,44 @@ final class Speaker: NSObject {
     guard trimmed.lowercased().hasPrefix("write:") else { return nil }
     let line = trimmed.dropFirst("write:".count).trimmingCharacters(in: .whitespacesAndNewlines)
     return line.isEmpty ? nil : line
+  }
+
+  // MARK: - Voices
+
+  /// Installed voices in the phone's language, best quality first. Novelty and Personal
+  /// Voice voices are left out.
+  static func availableVoices() -> [AVSpeechSynthesisVoice] {
+    let language = String(AVSpeechSynthesisVoice.currentLanguageCode().prefix(2))
+    return AVSpeechSynthesisVoice.speechVoices()
+      .filter {
+        $0.language.hasPrefix(language) && !$0.voiceTraits.contains(.isNoveltyVoice)
+          && !$0.voiceTraits.contains(.isPersonalVoice)
+      }
+      .sorted {
+        $0.quality.rawValue != $1.quality.rawValue
+          ? $0.quality.rawValue > $1.quality.rawValue
+          : $0.name < $1.name
+      }
+  }
+
+  /// The best installed voice for the phone's exact language (e.g. en-US), then any variant.
+  static var bestVoice: AVSpeechSynthesisVoice? {
+    let code = AVSpeechSynthesisVoice.currentLanguageCode()
+    let voices = availableVoices()
+    return voices.first { $0.language == code } ?? voices.first ?? AVSpeechSynthesisVoice(language: code)
+  }
+
+  /// The chosen voice if it's still installed, otherwise the best one.
+  var resolvedVoice: AVSpeechSynthesisVoice? {
+    voiceIdentifier.flatMap(AVSpeechSynthesisVoice.init(identifier:)) ?? Self.bestVoice
+  }
+
+  static func qualityName(_ quality: AVSpeechSynthesisVoiceQuality) -> String {
+    switch quality {
+    case .premium: "Premium"
+    case .enhanced: "Enhanced"
+    default: "Default"
+    }
   }
 
   // MARK: - Keep-alive
@@ -243,31 +282,6 @@ final class Speaker: NSObject {
     } catch {
       diag("audio", "audio session error: \(ErrorDetail.describe(error))")
     }
-  }
-
-  /// The best installed voice for the phone's language. Enhanced and Premium voices
-  /// (downloaded in iOS Settings → Accessibility → Spoken Content → Voices) sound much clearer.
-  static var voice: AVSpeechSynthesisVoice? {
-    let language = AVSpeechSynthesisVoice.currentLanguageCode()
-    let candidates = AVSpeechSynthesisVoice.speechVoices().filter { $0.language == language }
-    return candidates.max { $0.quality.rawValue < $1.quality.rawValue }
-      ?? AVSpeechSynthesisVoice(language: language)
-  }
-
-  static func qualityName(_ quality: AVSpeechSynthesisVoiceQuality) -> String {
-    switch quality {
-    case .premium: "Premium"
-    case .enhanced: "Enhanced"
-    default: "standard"
-    }
-  }
-
-  private static func sentences(in paragraph: String) -> [String] {
-    let tokenizer = NLTokenizer(unit: .sentence)
-    tokenizer.string = paragraph
-    return tokenizer.tokens(for: paragraph.startIndex..<paragraph.endIndex)
-      .map { paragraph[$0].trimmingCharacters(in: .whitespacesAndNewlines) }
-      .filter { !$0.isEmpty }
   }
 
   private static var routeDescription: String {
@@ -371,13 +385,18 @@ final class Speaker: NSObject {
 }
 
 extension Speaker: AVSpeechSynthesizerDelegate {
+  nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didStart utterance: AVSpeechUtterance) {
+    let id = ObjectIdentifier(utterance)
+    Task { @MainActor in self.utteranceStarted(id) }
+  }
+
   nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
     let id = ObjectIdentifier(utterance)
-    Task { @MainActor in self.utteranceFinished(id, cancelled: false) }
+    Task { @MainActor in self.utteranceEnded(id) }
   }
 
   nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
     let id = ObjectIdentifier(utterance)
-    Task { @MainActor in self.utteranceFinished(id, cancelled: true) }
+    Task { @MainActor in self.utteranceEnded(id) }
   }
 }

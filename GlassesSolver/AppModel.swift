@@ -17,6 +17,7 @@ final class AppModel {
   private static let speechRateDefaultsKey = "speechRate"
   private static let testModeDefaultsKey = "testMode"
   private static let writingTimeDefaultsKey = "writingTime"
+  private static let voiceDefaultsKey = "voiceIdentifier"
   /// A sample in the style the system prompt asks for, including dictated Write lines.
   private static let sampleAnswer = """
     The derivative of sine of the quantity 3 x squared is 6 x cosine of the quantity 3 x squared, using the chain rule. You'll write two lines.
@@ -62,6 +63,17 @@ final class AppModel {
       UserDefaults.standard.set(writingTime, forKey: Self.writingTimeDefaultsKey)
     }
   }
+
+  /// The chosen voice's identifier; nil picks the best installed voice automatically.
+  var voiceIdentifier: String? {
+    didSet {
+      speaker.voiceIdentifier = voiceIdentifier
+      UserDefaults.standard.set(voiceIdentifier, forKey: Self.voiceDefaultsKey)
+    }
+  }
+
+  /// Every solve, for the Conversation screen.
+  @ObservationIgnored let conversation = ConversationStore()
 
   /// Speaking speed for answers (see `Speaker.rateRange`).
   var speechRate: Float {
@@ -135,9 +147,11 @@ final class AppModel {
     self.writingTime = savedWritingTime.map {
       min(max($0, Speaker.writingTimeRange.lowerBound), Speaker.writingTimeRange.upperBound)
     } ?? 1
+    self.voiceIdentifier = UserDefaults.standard.string(forKey: Self.voiceDefaultsKey)
     // All stored properties are set from here on, so `self` can be used.
     speaker.rate = speechRate
     speaker.writingTimeScale = writingTime
+    speaker.voiceIdentifier = voiceIdentifier
     if let sdkSetupError {
       errorMessage =
         "The Meta glasses SDK failed to start, so glasses features may not work.\n\nDetails: \(sdkSetupError)"
@@ -284,8 +298,27 @@ final class AppModel {
   }
 
   var voiceDescription: String {
-    guard let voice = Speaker.voice else { return "System default voice" }
+    guard let voice = speaker.resolvedVoice else { return "System default voice" }
     return "\(voice.name), \(Speaker.qualityName(voice.quality)) quality"
+  }
+
+  /// Installed voices for the Settings picker: (identifier, label), best quality first.
+  var availableVoices: [(id: String, label: String)] {
+    Speaker.availableVoices().map { voice in
+      let region = Locale.current.localizedString(forIdentifier: voice.language) ?? voice.language
+      return (voice.identifier, "\(voice.name) · \(Speaker.qualityName(voice.quality)) · \(region)")
+    }
+  }
+
+  /// Says one sentence in the current voice and speed.
+  func previewVoice() {
+    speaker.speak("Hi. This is how your answers will sound. The derivative of x squared is 2 x.")
+  }
+
+  /// Speaks a past answer again from the Conversation screen.
+  func replay(_ entry: ConversationEntry) {
+    guard let answer = entry.answer else { return }
+    speaker.speak(answer)
   }
 
   private func run() async {
@@ -318,6 +351,8 @@ final class AppModel {
       phase = .idle
       scheduleShutterRevive("after a failed photo", force: true)
       reportSolveFailure(error)
+      conversation.add(
+        prompt: prompt, photo: nil, answer: nil, error: error.localizedDescription, isTest: testMode)
       speaker.endKeepAliveAfterSpeech()
       return
     }
@@ -341,8 +376,11 @@ final class AppModel {
       lastAnswer = answer
       diag("solve", "answer received, \(answer.count) characters (app \(Self.appStateDescription))")
       speaker.speak(answer)
+      conversation.add(prompt: prompt, photo: photo, answer: answer, error: nil, isTest: testMode)
     } catch {
       reportSolveFailure(error)
+      conversation.add(
+        prompt: prompt, photo: photo, answer: nil, error: error.localizedDescription, isTest: testMode)
     }
     speaker.endKeepAliveAfterSpeech()
   }

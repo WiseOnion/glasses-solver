@@ -5,6 +5,7 @@ struct ContentView: View {
   @Bindable var model: AppModel
   @State private var showSettings = false
   @State private var showStartSession = false
+  @State private var showConversation = false
 
   var body: some View {
     NavigationStack {
@@ -79,12 +80,16 @@ struct ContentView: View {
               .foregroundStyle(model.sessionPaused ? .orange : .green)
           }
         }
-        ToolbarItem(placement: .topBarTrailing) {
+        ToolbarItemGroup(placement: .topBarTrailing) {
+          Button("Conversation", systemImage: "bubble.left.and.bubble.right") { showConversation = true }
           Button("Settings", systemImage: "gearshape") { showSettings = true }
         }
       }
       .sheet(isPresented: $showSettings) {
         SettingsView(model: model)
+      }
+      .sheet(isPresented: $showConversation) {
+        ConversationView(model: model)
       }
       .sheet(isPresented: $showStartSession) {
         StartSessionView(model: model)
@@ -201,6 +206,9 @@ struct SettingsView: View {
   @Bindable var model: AppModel
   @Environment(\.dismiss) private var dismiss
   @State private var keyDraft = ""
+  /// Re-read when Settings opens, so newly downloaded voices show up.
+  @State private var voices: [(id: String, label: String)] = []
+  @Environment(\.scenePhase) private var scenePhase
 
   var body: some View {
     NavigationStack {
@@ -234,6 +242,13 @@ struct SettingsView: View {
         }
 
         Section {
+          Picker("Voice", selection: $model.voiceIdentifier) {
+            Text("Automatic (best installed)").tag(String?.none)
+            ForEach(voices, id: \.id) { voice in
+              Text(voice.label).tag(String?.some(voice.id))
+            }
+          }
+          Button("Preview voice", systemImage: "play.circle") { model.previewVoice() }
           VStack(alignment: .leading) {
             Text("Speaking speed")
             Slider(value: $model.speechRate, in: Speaker.rateRange) {
@@ -264,9 +279,11 @@ struct SettingsView: View {
           Text("Voice")
         } footer: {
           Text(
-            "Answers dictate each line to write, then pause while you write it. Double-tap the glasses' touchpad "
-              + "to hear the last line again. Using \(model.voiceDescription). For a clearer voice, download an "
-              + "Enhanced or Premium one in iOS Settings → Accessibility → Spoken Content → Voices."
+            "Using \(model.voiceDescription). Enhanced and Premium voices sound far more natural than Default "
+              + "ones. Download them in iOS Settings → Accessibility → Spoken Content → Voices → English (for "
+              + "example Ava, Zoe or Evan, Premium), then come back here and pick one. Answers dictate each "
+              + "line to write, then pause while you write it; double-tap the glasses' touchpad to hear the "
+              + "last line again."
           )
         }
 
@@ -291,6 +308,10 @@ struct SettingsView: View {
         }
       }
       .navigationTitle("Settings")
+      .onAppear { voices = model.availableVoices }
+      .onChange(of: scenePhase) { _, phase in
+        if phase == .active { voices = model.availableVoices }
+      }
       .toolbar {
         Button("Done") { dismiss() }
       }
