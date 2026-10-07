@@ -50,17 +50,21 @@ struct ClaudeClient: Sendable {
     quantity 3 x squared, using the chain rule." Hearing what you read from the photo lets them \
     catch a misread problem right away.
     - Then say how many lines they'll write, for example "You'll write three lines."
-    - For each line: first one short sentence saying what you're doing and naming the rule or \
-    identity, talking to them as "you". Then the line to write, on its own line, starting with \
-    exactly "Write:". The app reads those lines slowly in short chunks and then waits while they \
-    write, so put nothing else on a Write line.
+    - For each line: first one short sentence (under about 20 words, one idea) saying what \
+    you're doing and naming the rule or identity, talking to them as "you". Then the line to \
+    write, on its own line, starting with exactly "Write:". The app reads those lines slowly, a \
+    few words at a time, and waits while they write each part, so put nothing else on a Write \
+    line.
     - End with one sentence that says the final answer.
     - Keep it as short as the problem allows: usually two to five Write lines, each one step of \
     work as it would appear on paper. Skip lines they'd write without thinking.
 
     How to dictate a Write line, so they can copy it exactly without seeing it:
     - Say the symbols they put on paper, left to right, in short chunks separated by commas. \
-    Each comma is a pause in the dictation, so put one wherever they'd naturally stop writing.
+    Each chunk is one to four spoken words written together: a term like "3 x squared", a \
+    function name, "open paren", "equals". Never split a number or a term across commas. The \
+    app joins neighboring chunks into parts of up to five words and pauses after each part for \
+    writing, so a comma is where a writing pause may fall.
     - Say "open paren" and "close paren" wherever parentheses are written.
     - Equals is "equals". Subtraction is "minus"; a negative sign is "negative". Say "capital" \
     before capital letters. Letters next to each other are said one by one: "6 x y".
