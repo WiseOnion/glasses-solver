@@ -15,6 +15,18 @@ final class DictationTests: XCTestCase {
     XCTAssertNil(Speaker.penLine(in: "Write:   "))
     // A lone "a" is read as "uh"; the capital is read as the letter.
     XCTAssertEqual(Speaker.penLine(in: "Write: letter a, small raised 2")?.1, "letter A, small raised 2")
+    // The same inside spelled letters, but not a shape description after them.
+    XCTAssertEqual(
+      Speaker.penLine(in: "Write: 1, plus sign, the letters t a n, w")?.1, "1, plus sign, the letters t A n, w")
+    XCTAssertEqual(Speaker.penLine(in: "Write: the letters a r c")?.1, "the letters A r c")
+    XCTAssertEqual(
+      Speaker.penLine(in: "Write: the letters c o s, a small tick")?.1, "the letters c o s, a small tick")
+  }
+
+  func testSpelledLettersAreCounted() {
+    XCTAssertEqual(Speaker.writtenCharacters("the letters t a n, w"), 4)
+    XCTAssertEqual(Speaker.writtenCharacters("the letters t A n"), 3)
+    XCTAssertEqual(Speaker.writtenCharacters("the letters c o s, a small tick"), 3)
   }
 
   func testSentenceLinesAndPartLabels() {

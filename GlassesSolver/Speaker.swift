@@ -448,14 +448,20 @@ final class Speaker: NSObject {
   /// counts its digits; any other word counts 1, except words that only say where or how
   /// to write, which count 0.
   static func writtenCharacters(_ text: String) -> Int {
-    let words = text.lowercased()
-      .components(separatedBy: CharacterSet(charactersIn: ",.;:").union(.whitespacesAndNewlines))
+    // Commas are kept as words of their own, since a spelling ends at one.
+    let words = text.lowercased().replacingOccurrences(of: ",", with: " , ")
+      .components(separatedBy: CharacterSet(charactersIn: ".;:").union(.whitespacesAndNewlines))
       .filter { !$0.isEmpty }
     var total = 0
+    // True while spelling: after "letters", until a comma or a word that isn't one letter.
+    var spelling = false
     for (index, word) in words.enumerated() {
-      // "a" starts a shape description ("a small tick"); only "letter a" is a mark.
+      spelling = word == "letters" || (spelling && word.count == 1 && word.first!.isLetter)
+      if word == "," { continue }
+      // "a" starts a shape description ("a small tick"); only "letter a" and an a being
+      // spelled ("the letters t a n") are marks.
       if word == "a" {
-        if index > 0, words[index - 1] == "letter" { total += 1 }
+        if spelling || (index > 0 && words[index - 1] == "letter") { total += 1 }
         continue
       }
       if let known = writtenWords[word] {
@@ -486,13 +492,16 @@ final class Speaker: NSObject {
   ]
 
   /// The kind and text of a pen line ("Write:", "Continue:" or "Mark:"), if this paragraph is
-  /// one. "letter a" becomes "letter A", which voices say as the letter rather than "uh".
+  /// one. "letter a" becomes "letter A", and the a in "the letters t a n" becomes A, which
+  /// voices say as the letter rather than "uh".
   static func penLine(in paragraph: String) -> (PenLine.Kind, String)? {
     let trimmed = paragraph.trimmingCharacters(in: .whitespacesAndNewlines)
     let lowered = trimmed.lowercased()
     guard let match = penTags.first(where: { lowered.hasPrefix($0.tag) }) else { return nil }
     let text = trimmed.dropFirst(match.tag.count).trimmingCharacters(in: .whitespacesAndNewlines)
       .replacingOccurrences(of: #"\b([Ll]etter) a\b"#, with: "$1 A", options: .regularExpression)
+      .replacingOccurrences(
+        of: #"(?<=\b[Ll]etters(?: [a-zA-Z]){0,8}) a\b"#, with: " A", options: .regularExpression)
     return text.isEmpty ? nil : (match.kind, text)
   }
 
