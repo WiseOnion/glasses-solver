@@ -243,7 +243,10 @@ struct SettingsView: View {
         }
 
         Section {
-          Picker("Voice", selection: $model.voiceIdentifier) {
+          if model.hasNeuralVoice {
+            Toggle("Natural voice (Heart, built in)", isOn: $model.useNeuralVoice)
+          }
+          Picker(model.hasNeuralVoice ? "Apple voice (when natural voice is off)" : "Voice", selection: $model.voiceIdentifier) {
             Text("Automatic (best installed)").tag(String?.none)
             // Keep a saved voice in the list even when iOS isn't offering it right now, so
             // the choice isn't lost and you can see it's still selected.
@@ -289,7 +292,9 @@ struct SettingsView: View {
           Text("Voice")
         } footer: {
           Text(
-            "Using \(model.voiceDescription). Enhanced and Premium voices sound far more natural than Default "
+            "Using \(model.voiceDescription). The natural voice runs inside the app, works offline and with the "
+              + "phone locked. Turn it off to use an Apple voice instead. "
+              + "Enhanced and Premium voices sound far more natural than Default "
               + "ones. Download them in iOS Settings → Accessibility → Read & Speak → Voices → English (for "
               + "example Ava, Zoe or Evan, Premium), then come back here and pick one. Compare voices reads "
               + "one real line of dictation in each voice, so you can choose by ear; Match speed sets the "

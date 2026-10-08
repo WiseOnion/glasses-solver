@@ -165,6 +165,29 @@ final class DictationTests: XCTestCase {
     }
   }
 
+  // MARK: - The built-in voice
+
+  func testNeuralVoiceSpeedMatchesAppleRates() {
+    // 0.5 is a voice's normal speed on Apple's scale; the built-in voice is kept in a range
+    // where it still sounds natural.
+    XCTAssertEqual(NeuralVoice.speed(forRate: 0.5), 1, accuracy: 0.001)
+    XCTAssertEqual(NeuralVoice.speed(forRate: 0.4), 0.8, accuracy: 0.001)
+    XCTAssertEqual(NeuralVoice.speed(forRate: 0.1), 0.6, accuracy: 0.001)
+    XCTAssertEqual(NeuralVoice.speed(forRate: 0.9), 1.4, accuracy: 0.001)
+  }
+
+  func testWithoutTheVoiceFilesAppleVoiceIsUsed() throws {
+    // Test builds don't include the voice files, so the setting falls back to Apple's voice.
+    try XCTSkipIf(NeuralVoice.isBundled, "this build includes the voice files")
+    let speaker = Speaker()
+    defer { speaker.stop() }
+    speaker.useNeuralVoice = true
+    XCTAssertFalse(speaker.neuralVoiceActive)
+    speaker.speak("Problem: 3")
+    XCTAssertEqual(speaker.queued.map(\.text), ["Problem 3."])
+    XCTAssertTrue(speaker.isActive)
+  }
+
   // MARK: - An answer arriving in pieces
 
   private static let answer = """

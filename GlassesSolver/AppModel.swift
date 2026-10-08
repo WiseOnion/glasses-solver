@@ -22,6 +22,7 @@ final class AppModel {
   private static let writingTimeDefaultsKey = "writingTime"
   private static let voiceDefaultsKey = "voiceIdentifier"
   private static let dictateInPartsDefaultsKey = "dictateInParts"
+  private static let neuralVoiceDefaultsKey = "useNeuralVoice"
   /// A sample in the style the system prompt asks for, including dictated Write lines.
   private static let sampleAnswer = """
     I can see problem 3.
@@ -119,6 +120,19 @@ final class AppModel {
     }
   }
 
+  /// Speak with the built-in neural voice (Kokoro Heart) instead of an Apple voice. On by
+  /// default when the build includes it; off falls back to the voice picked below.
+  var useNeuralVoice: Bool {
+    didSet {
+      speaker.useNeuralVoice = useNeuralVoice
+      UserDefaults.standard.set(useNeuralVoice, forKey: Self.neuralVoiceDefaultsKey)
+      speaker.preloadNeuralVoice()
+    }
+  }
+
+  /// True when this build includes the built-in voice.
+  var hasNeuralVoice: Bool { NeuralVoice.isBundled }
+
   /// The chosen voice's identifier; nil picks the best installed voice automatically.
   var voiceIdentifier: String? {
     didSet {
@@ -211,11 +225,14 @@ final class AppModel {
     } ?? 1
     self.voiceIdentifier = UserDefaults.standard.string(forKey: Self.voiceDefaultsKey)
     self.dictateInParts = UserDefaults.standard.object(forKey: Self.dictateInPartsDefaultsKey) as? Bool ?? true
+    self.useNeuralVoice = UserDefaults.standard.object(forKey: Self.neuralVoiceDefaultsKey) as? Bool ?? true
     // All stored properties are set from here on, so `self` can be used.
     speaker.rate = speechRate
     speaker.writingTimeScale = writingTime
     speaker.voiceIdentifier = voiceIdentifier
     speaker.dictateInParts = dictateInParts
+    speaker.useNeuralVoice = useNeuralVoice
+    speaker.preloadNeuralVoice()
     if let sdkSetupError {
       errorMessage =
         "The Meta glasses SDK failed to start, so glasses features may not work.\n\nDetails: \(sdkSetupError)"
@@ -374,6 +391,7 @@ final class AppModel {
   }
 
   var voiceDescription: String {
+    if speaker.neuralVoiceActive { return "Kokoro " + NeuralVoice.voiceName + ", the built-in natural voice" }
     guard let voice = speaker.resolvedVoice else { return "System default voice" }
     let description = "\(voice.name), \(Speaker.qualityName(voice.quality)) quality"
     // Say so when the picked voice can't be found, instead of quietly switching.

@@ -15,6 +15,10 @@ packages:
   MetaWearablesDAT:
     url: https://github.com/facebook/meta-wearables-dat-ios
     exactVersion: 1.0.0
+  # Runs the built-in natural voice (Kokoro "Heart") inside the app. See GlassesSolver/NeuralVoice.swift.
+  SherpaOnnx:
+    url: https://github.com/k2-fsa/sherpa-onnx
+    exactVersion: 1.13.8
 
 targets:
   GlassesSolver:
@@ -22,6 +26,10 @@ targets:
     platform: iOS
     sources:
       - GlassesSolver
+      # The neural voice files, downloaded by the build (build-ipa.yml), never committed.
+      - path: Voices
+        type: folder
+        optional: true
     settings:
       base:
         INFOPLIST_FILE: Support/Info.plist
@@ -38,6 +46,8 @@ targets:
       # Experimental in SDK 1.0: fine for Developer Mode, not yet publishable.
       - package: MetaWearablesDAT
         product: MWDATInputs
+      - package: SherpaOnnx
+        product: sherpa-onnx
     scheme:
       testTargets:
         - GlassesSolverTests

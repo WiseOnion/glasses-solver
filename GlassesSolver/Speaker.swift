@@ -61,6 +61,14 @@ final class Speaker: NSObject {
   var dictateInParts = true
   /// The chosen voice; nil means the best installed voice for the phone's language.
   var voiceIdentifier: String?
+  /// Speak with the built-in neural voice (Kokoro Heart) when this build has it.
+  var useNeuralVoice = false
+  /// True once the neural voice failed to run, so Apple's voice is used until relaunch.
+  private var neuralFailed = false
+  private let neural = NeuralVoice()
+
+  /// True when speech goes to the built-in neural voice.
+  var neuralVoiceActive: Bool { useNeuralVoice && !neuralFailed && NeuralVoice.isBundled }
   /// The pen line most recently dictated, for `repeatLastWriteLine()`.
   private(set) var lastPenLine: PenLine?
   /// How many times in a row `lastPenLine` has been repeated.
@@ -102,6 +110,8 @@ final class Speaker: NSObject {
     var lineID: Int?
     /// A voice for just this segment (voice comparison); nil uses the chosen voice.
     var voice: AVSpeechSynthesisVoice?
+    /// Say this segment in the neural voice whatever the setting (voice comparison).
+    var neural = false
   }
 
   /// Called with the measured speaking speed (words a minute) of the next sentence spoken
@@ -135,6 +145,9 @@ final class Speaker: NSObject {
   override init() {
     super.init()
     synthesizer.delegate = self
+    neural.onStart = { [weak self] index in self?.segmentStarted(index) }
+    neural.onEnd = { [weak self] index in self?.segmentEnded(index, times: nil) }
+    neural.onFailure = { [weak self] indexes in self?.neuralVoiceFailed(indexes) }
     interruptionObserver = NotificationCenter.default.addObserver(
       forName: AVAudioSession.interruptionNotification, object: nil, queue: .main
     ) { note in
@@ -152,7 +165,10 @@ final class Speaker: NSObject {
     lastPenLine = nil
     repeatCount = 0
     let voice = resolvedVoice
-    let voiceName = voice.map { $0.name + " (" + Self.qualityName($0.quality) + ")" } ?? "default"
+    let voiceName =
+      neuralVoiceActive
+      ? "Kokoro \(NeuralVoice.voiceName) (built in)"
+      : voice.map { $0.name + " (" + Self.qualityName($0.quality) + ")" } ?? "default"
     if chosenVoiceIsMissing, let id = voiceIdentifier {
       diag("audio", "the chosen voice \(id) isn't available to the app, so \(voiceName) is used instead")
     }
@@ -226,12 +242,19 @@ final class Speaker: NSObject {
     lastPenLine = nil
     repeatCount = 0
     let line = PenLine(kind: .write, text: Self.comparisonLine, number: 1)
-    let segments = voices.map { voice in
+    var segments = voices.map { voice in
       Segment(
         text: "\(voice.name). \(Self.comparisonLine).", rate: rate * Self.dictationRateFactor,
         pauseAfter: 1.5, penLine: line, lineID: nil, voice: voice)
     }
-    diag("audio", "comparing \(voices.count) voices: \(voices.map(\.name).joined(separator: ", "))")
+    // The built-in voice first, when this build has it.
+    if NeuralVoice.isBundled, !neuralFailed {
+      segments.insert(
+        Segment(
+          text: "\(NeuralVoice.voiceName), built in. \(Self.comparisonLine).", rate: rate * Self.dictationRateFactor,
+          pauseAfter: 1.5, penLine: line, lineID: nil, neural: true), at: 0)
+    }
+    diag("audio", "comparing \(segments.count) voices: \(voices.map(\.name).joined(separator: ", "))")
     enqueue(segments, voice: nil)
   }
 
@@ -248,24 +271,63 @@ final class Speaker: NSObject {
     wordTimes.removeAll()
     measurementHandler = nil
     synthesizer.stopSpeaking(at: .immediate)
+    neural.stop()
   }
 
+  /// Loads the neural voice ahead of time, so the first answer doesn't wait for it.
+  func preloadNeuralVoice() {
+    guard neuralVoiceActive else { return }
+    neural.preload()
+  }
+
+  /// Queues segments in the neural voice when it's on (or the segment asks for it), and in
+  /// Apple's voice otherwise. Either way each segment is tracked by its place in `script`.
   private func enqueue(_ segments: [Segment], voice: AVSpeechSynthesisVoice?) {
+    var neuralItems: [NeuralVoice.Item] = []
     for segment in segments {
-      let utterance = AVSpeechUtterance(string: segment.text)
-      utterance.rate = segment.rate
-      utterance.voice = segment.voice ?? voice
-      utterance.postUtteranceDelay = segment.pauseAfter
       script.append(segment)
-      utterances.append(utterance)
-      utteranceIndex[ObjectIdentifier(utterance)] = script.count - 1
+      let index = script.count - 1
       outstanding += 1
-      synthesizer.speak(utterance)
+      if segment.neural || (neuralVoiceActive && segment.voice == nil), NeuralVoice.isBundled, !neuralFailed {
+        neuralItems.append(
+          NeuralVoice.Item(
+            text: segment.text, speed: NeuralVoice.speed(forRate: segment.rate), pauseAfter: segment.pauseAfter,
+            token: index))
+      } else {
+        speakWithApple(index, voice: segment.voice ?? voice)
+      }
+    }
+    if !neuralItems.isEmpty { neural.speak(neuralItems) }
+  }
+
+  private func speakWithApple(_ index: Int, voice: AVSpeechSynthesisVoice?) {
+    let segment = script[index]
+    let utterance = AVSpeechUtterance(string: segment.text)
+    utterance.rate = segment.rate
+    utterance.voice = voice
+    utterance.postUtteranceDelay = segment.pauseAfter
+    utterances.append(utterance)
+    utteranceIndex[ObjectIdentifier(utterance)] = index
+    synthesizer.speak(utterance)
+  }
+
+  /// The neural voice couldn't run: say what it had left in Apple's voice, and keep using
+  /// Apple's voice until the app is relaunched.
+  private func neuralVoiceFailed(_ indexes: [Int]) {
+    neuralFailed = true
+    diag("audio", "the built-in voice couldn't run, so Apple's voice is used instead")
+    for index in indexes where index < script.count {
+      speakWithApple(index, voice: script[index].voice ?? resolvedVoice)
     }
   }
 
   private func utteranceStarted(_ id: ObjectIdentifier) {
     guard let index = utteranceIndex[id] else { return }
+    segmentStarted(index)
+  }
+
+  private func segmentStarted(_ index: Int) {
+    guard index < script.count else { return }
     currentIndex = index
     currentFinished = false
     if let line = script[index].penLine {
@@ -283,7 +345,12 @@ final class Speaker: NSObject {
 
   private func utteranceEnded(_ id: ObjectIdentifier) {
     guard let index = utteranceIndex.removeValue(forKey: id) else { return }
-    logMeasuredRate(script[index], times: wordTimes.removeValue(forKey: id))
+    segmentEnded(index, times: wordTimes.removeValue(forKey: id))
+  }
+
+  private func segmentEnded(_ index: Int, times: (first: Date, last: Date)?) {
+    guard index < script.count else { return }
+    logMeasuredRate(script[index], times: times)
     if index == currentIndex { currentFinished = true }
     outstanding = max(0, outstanding - 1)
     if outstanding == 0, stopKeepAliveAfterSpeech { endKeepAlive() }

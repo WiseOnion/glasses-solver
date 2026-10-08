@@ -22,6 +22,26 @@ jobs:
       - name: Install XcodeGen
         run: brew install xcodegen
 
+      # The built-in natural voice (Kokoro, voice "Heart"): about 160 MB of model files, put in
+      # the app here rather than kept in the repo. See GlassesSolver/NeuralVoice.swift.
+      - name: Cache the voice files
+        uses: actions/cache@v4
+        with:
+          path: Voices/kokoro
+          key: kokoro-int8-multi-lang-v1_0
+
+      - name: Download the voice files
+        run: |
+          if [ ! -f Voices/kokoro/model.int8.onnx ]; then
+            curl -fsSL -o kokoro.tar.bz2               https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-int8-multi-lang-v1_0.tar.bz2
+            tar xjf kokoro.tar.bz2
+            mkdir -p Voices/kokoro
+            (cd kokoro-int8-multi-lang-v1_0 && mv model.int8.onnx voices.bin tokens.txt lexicon-us-en.txt espeak-ng-data LICENSE ../Voices/kokoro/)
+            rm -rf kokoro.tar.bz2 kokoro-int8-multi-lang-v1_0
+          fi
+          du -sh Voices/kokoro
+          test -f Voices/kokoro/model.int8.onnx
+
       # Optional. Empty secrets leave the app in Meta Developer Mode.
       - name: Write Meta config from secrets
         env:
