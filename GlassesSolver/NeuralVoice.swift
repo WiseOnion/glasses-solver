@@ -8,10 +8,12 @@ import Foundation
 /// apps' voices (iOS 26 doesn't, reliably). The voice files are added to the app by the build
 /// (see .github/workflows/build-ipa.yml) rather than stored in the repo.
 ///
-/// Speaker hands it the same pieces it would give Apple's voice. Each piece is made on a
-/// background thread while the one before it plays, then played followed by its writing
-/// pause as silence, so the audio never stops between pieces: no stop-start gaps, and the
-/// app keeps running with the phone locked (the audio background mode).
+/// Speaker hands it the same pieces it would give Apple's voice. Making speech runs ahead of
+/// playing it: pieces are made one after another on a background thread, up to `maxAhead`
+/// pieces ahead, including during writing pauses, so a piece is ready when the one before it
+/// ends and there's no dead air between sentences. Each piece is played followed by its
+/// writing pause as silence, so the audio never stops, and the app keeps running with the
+/// phone locked (the audio background mode).
 @MainActor
 final class NeuralVoice {
   nonisolated static let voiceName = "Heart"
@@ -93,10 +95,15 @@ final class NeuralVoice {
 
   private let engine = Engine()
   private var loading: Task<Bool, Never>?
-  private var queue: [Item] = []
-  /// The piece being made ahead of time, while the one before it plays.
-  private var ahead: (token: Int, task: Task<Audio, Never>)?
-  private var running = false
+  /// Pieces not made yet, and pieces made and waiting to play, in order.
+  private var pending: [Item] = []
+  private var ready: [(item: Item, audio: Audio)] = []
+  /// At most this many pieces are made ahead of the one playing.
+  private static let maxAhead = 6
+  private var producing = false
+  private var playing = false
+  /// Wakes the player when a piece is ready (or making stops).
+  private var readySignal: Waiter?
   /// Bumped by `stop`, so work from before it is dropped.
   private var generation = 0
   private let audioEngine = AVAudioEngine()
@@ -155,69 +162,98 @@ final class NeuralVoice {
 
   /// Adds pieces to say after whatever is already queued.
   func speak(_ items: [Item]) {
-    queue += items
-    makeNextAhead()
-    guard !running else { return }
-    running = true
-    let current = generation
-    Task { await run(generation: current) }
+    pending += items
+    startProducing()
+    startPlaying()
   }
 
   /// Stops at once and forgets everything queued.
   func stop() {
     generation += 1
-    queue.removeAll()
-    ahead = nil
-    running = false
+    pending.removeAll()
+    ready.removeAll()
+    producing = false
+    playing = false
     if player.isPlaying { player.stop() }
     finishPlaying?.finish()
     finishPlaying = nil
+    wakePlayer()
   }
 
-  private func run(generation current: Int) async {
+  private func startProducing() {
+    guard !producing, !pending.isEmpty else { return }
+    producing = true
+    let current = generation
+    Task { await produce(generation: current) }
+  }
+
+  private func startPlaying() {
+    guard !playing else { return }
+    playing = true
+    let current = generation
+    Task { await playAll(generation: current) }
+  }
+
+  private func wakePlayer() {
+    readySignal?.finish()
+    readySignal = nil
+  }
+
+  /// Makes pending pieces one after another, staying at most `maxAhead` ahead of playback.
+  private func produce(generation current: Int) async {
     guard await preload().value else {
       guard current == generation else { return }
-      let tokens = queue.map(\.token)
-      queue.removeAll()
-      running = false
+      let tokens = ready.map(\.item.token) + pending.map(\.token)
+      ready.removeAll()
+      pending.removeAll()
+      producing = false
+      wakePlayer()
       onFailure?(tokens)
       return
     }
-    while current == generation, !queue.isEmpty {
-      let item = queue.removeFirst()
-      let task = ahead?.token == item.token ? ahead!.task : make(item)
-      ahead = nil
-      let started = Date()
-      let audio = await task.value
+    while current == generation, !pending.isEmpty, ready.count < Self.maxAhead {
+      let item = pending.removeFirst()
+      let engine = self.engine
+      let audio = await Task.detached(priority: .userInitiated) {
+        engine.synthesize(item.text, speed: item.speed)
+      }.value
       guard current == generation else { return }
-      logSpeed(item, audio: audio, waited: Date().timeIntervalSince(started))
+      ready.append((item, audio))
+      wakePlayer()
+    }
+    if current == generation {
+      producing = false
+      wakePlayer()
+    }
+  }
+
+  /// Plays ready pieces in order, waiting only when the next one isn't made yet.
+  private func playAll(generation current: Int) async {
+    while current == generation {
+      guard !ready.isEmpty else {
+        if pending.isEmpty && !producing { break }
+        let started = Date()
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+          readySignal = Waiter(continuation)
+        }
+        guard current == generation else { return }
+        logWait(Date().timeIntervalSince(started), next: ready.first?.item)
+        continue
+      }
+      let (item, audio) = ready.removeFirst()
+      startProducing()
       onStart?(item.token)
-      makeNextAhead()
       await play(audio, pauseAfter: item.pauseAfter)
       guard current == generation else { return }
       onEnd?(item.token)
     }
-    if current == generation { running = false }
+    if current == generation { playing = false }
   }
 
-  private func make(_ item: Item) -> Task<Audio, Never> {
-    let engine = self.engine
-    return Task.detached(priority: .userInitiated) { engine.synthesize(item.text, speed: item.speed) }
-  }
-
-  /// Starts making the next piece, if it isn't already being made.
-  private func makeNextAhead() {
-    guard let next = queue.first, ahead?.token != next.token else { return }
-    ahead = (next.token, make(next))
-  }
-
-  /// Logs a piece that took a moment to start, so slow phones show up in the diagnostics.
-  private func logSpeed(_ item: Item, audio: Audio, waited: TimeInterval) {
-    guard waited > 0.3, audio.sampleRate > 0 else { return }
-    let seconds = Double(audio.samples.count) / Double(audio.sampleRate)
-    diag(
-      "neural",
-      "waited \(String(format: "%.1f", waited)) s for \(String(format: "%.1f", seconds)) s of speech: \"\(item.text.prefix(40))\"")
+  /// Logs a wait for the next piece (dead air), so a slow phone shows up in the diagnostics.
+  private func logWait(_ waited: TimeInterval, next: Item?) {
+    guard waited > 0.3, let next else { return }
+    diag("neural", "waited \(String(format: "%.1f", waited)) s for the next piece: \"\(next.text.prefix(40))\"")
   }
 
   /// Plays the speech and then the pause as silence, and returns when both are done (or
@@ -265,7 +301,7 @@ final class NeuralVoice {
   }
 
   private func restartAfterRouteChange() {
-    guard running, !audioEngine.isRunning else { return }
+    guard playing, !audioEngine.isRunning else { return }
     diag("neural", "audio route changed; starting the voice again")
     do {
       try audioEngine.start()
