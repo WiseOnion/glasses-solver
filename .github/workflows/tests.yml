@@ -21,6 +21,11 @@ jobs:
       - name: Install XcodeGen
         run: brew install xcodegen
 
+      # The app copies a Voices folder; tests run without the 160 MB built-in voice, so it's
+      # empty here and Apple's voice is used (see build-ipa.yml for the real download).
+      - name: Empty voice folder
+        run: mkdir -p Voices
+
       - name: Generate Xcode project
         run: xcodegen generate
 
