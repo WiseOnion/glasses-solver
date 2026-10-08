@@ -34,15 +34,18 @@ final class AppModel {
     Problem: 3
     This is the derivative of g of w, equals, 1 plus tangent w, over 6 minus w cubed, by the quotient rule.
     You'll write six lines.
+    First, write down u, v and their derivatives.
     Write: u equals, 1, plus tangent w
     Write: u prime equals, secant squared w
     Write: v equals, 6, minus w cubed
     Write: v prime equals, negative 3 w squared
+    Now put them into the quotient rule.
     Write: g prime of w equals, a fraction
     Continue: on top, you have open parenthesis, secant squared w, close parenthesis, times open parenthesis, 6 minus w cubed, close parenthesis
     Continue: minus, open parenthesis, 1 plus tangent w, close parenthesis, times open parenthesis, negative 3 w squared, close parenthesis
     Continue: on the bottom, you have open parenthesis, 6 minus w cubed, close parenthesis, squared
     Check: Just to make sure you got all that, line 5 should look like g prime of w equals a fraction, with secant squared w in parentheses, times 6 minus w cubed in parentheses, minus 1 plus tangent w in parentheses, times negative 3 w squared in parentheses, all on top, and 6 minus w cubed in parentheses, squared, on the bottom.
+    Now simplify the top. This is the answer.
     Write: g prime of w equals, a fraction
     Continue: on top, you have open parenthesis, 6 minus w cubed, close parenthesis, times secant squared w
     Continue: plus 3 w squared, times open parenthesis, 1 plus tangent w, close parenthesis
@@ -58,25 +61,32 @@ final class AppModel {
     Problem: 4
     This is the derivative of f of x, equals, negative 3 x squared plus 8 x minus 2, using the limit definition.
     You'll write seven lines.
+    First, write the limit definition.
     Write: f prime of x equals, the limit as h approaches 0, of a fraction
     Continue: on top, you have f of, open parenthesis, x plus h, close parenthesis, minus f of x
     Continue: on the bottom, you have h
+    Now put in f of x plus h and f of x.
     Write: equals, the limit as h approaches 0, of a fraction
     Continue: on top, you have open parenthesis, negative 3, times open parenthesis, x plus h, close parenthesis, squared, plus 8, times open parenthesis, x plus h, close parenthesis, minus 2, close parenthesis
     Continue: minus, open parenthesis, negative 3 x squared, plus 8 x, minus 2, close parenthesis
     Continue: on the bottom, you have h
+    Now expand, and distribute the minus sign.
     Write: equals, the limit as h approaches 0, of a fraction
     Continue: on top, you have negative 3 x squared, minus 6 x h, minus 3 h squared, plus 8 x, plus 8 h, minus 2
     Continue: plus 3 x squared, minus 8 x, plus 2
     Continue: on the bottom, you have h
+    Now combine like terms.
     Write: equals, the limit as h approaches 0, of a fraction
     Continue: on top, you have negative 6 x h, minus 3 h squared, plus 8 h
     Continue: on the bottom, you have h
+    Now factor out h.
     Write: equals, the limit as h approaches 0, of a fraction
     Continue: on top, you have h, times open parenthesis, negative 6 x, minus 3 h, plus 8, close parenthesis
     Continue: on the bottom, you have h
+    Now cancel the h.
     Mark: On line 5, cross out both h's, the h on top in front of the parentheses and the h on the bottom.
     Write: equals, the limit as h approaches 0, of negative 6 x, minus 3 h, plus 8
+    Now plug in 0 for h. This is the answer.
     Write: equals negative 6 x, plus 8
     Mark: Draw a box around line 7.
     Done.
