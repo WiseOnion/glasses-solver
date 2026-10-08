@@ -181,6 +181,9 @@ final class AppModel {
   @ObservationIgnored private let speaker = Speaker()
   /// True once the current answer's first piece has arrived and begun being spoken.
   @ObservationIgnored private var answerStarted = false
+  /// When `lastAnswer` arrived. A photo within `followUpWindow` of it is sent as a follow-up.
+  @ObservationIgnored private var lastAnswerTime: Date?
+  private static let followUpWindow: TimeInterval = 60 * 60
   @ObservationIgnored private let shutter = ShutterButton()
   @ObservationIgnored private var sessionStateTask: Task<Void, Never>?
   @ObservationIgnored private var pendingSessionPrompt: String?
@@ -513,7 +516,13 @@ final class AppModel {
       // still writing the rest.
       let reply: ClaudeClient.Answer
       if let apiKey, !testMode {
-        reply = try await ClaudeClient(apiKey: apiKey).solve(photo: photo, prompt: prompt) { [weak self] piece in
+        // A photo taken soon after an answer goes as a follow-up to it, so a photo of the
+        // listener's own work can be checked and continued from where they stopped.
+        let previous = lastAnswerTime.map { Date.now.timeIntervalSince($0) < Self.followUpWindow } == true
+          ? lastAnswer : nil
+        if previous != nil { diag("solve", "sending as a follow-up to the last answer") }
+        reply = try await ClaudeClient(apiKey: apiKey).solve(photo: photo, prompt: prompt, previousAnswer: previous) {
+          [weak self] piece in
           self?.answerArrived(piece)
         }
       } else {
@@ -534,6 +543,7 @@ final class AppModel {
       let answer = [reply.text.trimmingCharacters(in: .whitespacesAndNewlines), notice]
         .compactMap { $0 }.joined(separator: "\n")
       lastAnswer = answer
+      lastAnswerTime = .now
       diag(
         "solve",
         "answer received, \(reply.text.count) characters, ended by \(reply.stopReason ?? "a dropped connection") "

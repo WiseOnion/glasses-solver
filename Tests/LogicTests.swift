@@ -267,6 +267,23 @@ final class ClaudeClientTests: XCTestCase {
     XCTAssertEqual(StubAnthropic.requestCount, 1)
   }
 
+  func testFollowUpPhotoIncludesTheEarlierAnswer() throws {
+    let jpeg = try XCTUnwrap(ClaudeClient.preparedJPEG(from: TestImages.jpeg()))
+    // A first photo: just the photo and the prompt.
+    let first = ClaudeClient.body(jpeg: jpeg, prompt: "Solve", previousAnswer: nil)
+    let firstMessages = try XCTUnwrap(first["messages"] as? [[String: Any]])
+    XCTAssertEqual(firstMessages.map { $0["role"] as? String }, ["user"])
+    // A follow-up: the earlier prompt (no photo), the earlier answer, then the new photo.
+    let followUp = ClaudeClient.body(jpeg: jpeg, prompt: "Solve", previousAnswer: "Problem: 3\nWrite: x")
+    let messages = try XCTUnwrap(followUp["messages"] as? [[String: Any]])
+    XCTAssertEqual(messages.map { $0["role"] as? String }, ["user", "assistant", "user"])
+    let types = messages.map { ($0["content"] as? [[String: Any]])?.compactMap { $0["type"] as? String } ?? [] }
+    XCTAssertEqual(types, [["text"], ["text"], ["image", "text"]])
+    let answer = (messages[1]["content"] as? [[String: Any]])?.first?["text"] as? String
+    XCTAssertEqual(answer, "Problem: 3\nWrite: x")
+    XCTAssertEqual(followUp["stream"] as? Bool, true)
+  }
+
   func testOverloadIsRetriedOnce() async throws {
     StubAnthropic.responses = [(529, #"{"error":{"message":"Overloaded"}}"#), (200, answer)]
     let reply = try await ClaudeClient(apiKey: "sk-test").solve(photo: TestImages.jpeg(), prompt: "Solve")

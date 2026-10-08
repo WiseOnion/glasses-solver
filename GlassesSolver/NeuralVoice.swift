@@ -31,10 +31,14 @@ final class NeuralVoice {
     FileManager.default.fileExists(atPath: folder.appendingPathComponent("model.int8.onnx").path)
   }
 
-  /// Kokoro's speed for a speaking rate on Apple's scale, where 0.5 is a voice's normal
-  /// speed: the same rate sounds about as fast in either voice.
-  static func speed(forRate rate: Float) -> Float {
-    min(max(rate / 0.5, 0.6), 1.4)
+  /// Kokoro's speed for a speaking rate on Apple's scale (0.5 is the default). Heart's own
+  /// speed (1) is about 150 words a minute, which the user found far too fast, so the
+  /// default is slower: 0.85 for sentences, and 0.7 for pen lines, which are being written
+  /// down. Unlike Apple's voices, Kokoro sounds natural slowed down: it speaks slower rather
+  /// than stretching the sound. The speed slider scales both.
+  static func speed(forRate rate: Float, penLine: Bool) -> Float {
+    let base: Float = penLine ? 0.7 : 0.85
+    return min(max(base * rate / 0.5, 0.45), 1.3)
   }
 
   /// One piece to say, then a pause. `token` comes back in `onStart` and `onEnd`.

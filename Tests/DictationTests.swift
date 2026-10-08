@@ -165,15 +165,28 @@ final class DictationTests: XCTestCase {
     }
   }
 
+  func testAProblemCanContinueFromALine() {
+    XCTAssertEqual(Speaker.startingLine(in: "3, line 4"), 4)
+    XCTAssertNil(Speaker.startingLine(in: "3"))
+    XCTAssertNil(Speaker.startingLine(in: "5, part A"))
+    let speaker = Speaker()
+    defer { speaker.stop() }
+    speaker.speak("You're on problem 3, line 4.\nProblem: 3, line 4\nWrite: y equals 2\nWrite: y equals 3")
+    XCTAssertEqual(
+      speaker.queued.map(\.text),
+      ["You're on problem 3, line 4.", "Problem 3, line 4.", "Start line 4. y equals 2.", "Start line 5. y equals 3."])
+  }
+
   // MARK: - The built-in voice
 
-  func testNeuralVoiceSpeedMatchesAppleRates() {
-    // 0.5 is a voice's normal speed on Apple's scale; the built-in voice is kept in a range
-    // where it still sounds natural.
-    XCTAssertEqual(NeuralVoice.speed(forRate: 0.5), 1, accuracy: 0.001)
-    XCTAssertEqual(NeuralVoice.speed(forRate: 0.4), 0.8, accuracy: 0.001)
-    XCTAssertEqual(NeuralVoice.speed(forRate: 0.1), 0.6, accuracy: 0.001)
-    XCTAssertEqual(NeuralVoice.speed(forRate: 0.9), 1.4, accuracy: 0.001)
+  func testNeuralVoiceSpeed() {
+    // At the default rate (0.5), sentences are a little slower than the voice's own speed and
+    // pen lines slower still; the slider scales both, within a range that sounds natural.
+    XCTAssertEqual(NeuralVoice.speed(forRate: 0.5, penLine: false), 0.85, accuracy: 0.001)
+    XCTAssertEqual(NeuralVoice.speed(forRate: 0.5, penLine: true), 0.7, accuracy: 0.001)
+    XCTAssertEqual(NeuralVoice.speed(forRate: 0.4, penLine: true), 0.56, accuracy: 0.001)
+    XCTAssertEqual(NeuralVoice.speed(forRate: 0.1, penLine: true), 0.45, accuracy: 0.001)
+    XCTAssertEqual(NeuralVoice.speed(forRate: 0.9, penLine: false), 1.3, accuracy: 0.001)
   }
 
   func testWithoutTheVoiceFilesAppleVoiceIsUsed() throws {

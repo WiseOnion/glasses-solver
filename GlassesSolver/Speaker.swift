@@ -291,7 +291,7 @@ final class Speaker: NSObject {
       if segment.neural || (neuralVoiceActive && segment.voice == nil), NeuralVoice.isBundled, !neuralFailed {
         neuralItems.append(
           NeuralVoice.Item(
-            text: segment.text, speed: NeuralVoice.speed(forRate: segment.rate), pauseAfter: segment.pauseAfter,
+            text: segment.text, speed: NeuralVoice.speed(forRate: segment.rate, penLine: segment.penLine != nil), pauseAfter: segment.pauseAfter,
             token: index))
       } else {
         speakWithApple(index, voice: segment.voice ?? voice)
@@ -452,7 +452,8 @@ final class Speaker: NSObject {
   private func segments(forParagraph raw: String) -> [Segment] {
     let paragraph = Self.speakable(raw)
     if let label = Self.problemLabel(in: paragraph) {
-      lineNumber = 0
+      // "Problem: 3, line 4" continues a problem from line 4 (after checking their work).
+      lineNumber = (Self.startingLine(in: label) ?? 1) - 1
       return flushProse(beforeWrite: true)
         + [Segment(text: "Problem \(label).", rate: rate, pauseAfter: Self.problemPause, penLine: nil)]
     }
@@ -527,6 +528,12 @@ final class Speaker: NSObject {
   static func markPause(_ text: String) -> TimeInterval {
     let items = text.lowercased().components(separatedBy: " and ").count
     return min(markItemPause * Double(items), maxMarkPause)
+  }
+
+  /// The line a problem continues from, for a label like "3, line 4".
+  static func startingLine(in label: String) -> Int? {
+    guard let range = label.range(of: #"(?<=\bline )\d+$"#, options: .regularExpression) else { return nil }
+    return Int(label[range]).map { max($0, 1) }
   }
 
   /// The label after "Problem:" ("4", "number 7") if this paragraph starts a problem.

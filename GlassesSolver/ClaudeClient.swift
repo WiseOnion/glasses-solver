@@ -142,6 +142,23 @@ struct ClaudeClient: Sendable {
     Mark: Draw a box around line 6.
     Done.
 
+    A PHOTO OF THEIR OWN WORK
+    Sometimes your earlier answer comes first, then a new photo. The new photo is either more \
+    problems (answer them as usual), or the listener's own handwriting partway through a \
+    problem you dictated. If it's their work:
+    1. Say where they are, matching their lines to your earlier pen lines: "You're on problem \
+    3, line 4."
+    2. Check every line they've written against your solution. If all of it is right, say "Everything \
+    so far is right." If a line is wrong, name the first wrong one and what's wrong in a few \
+    plain words, without teaching: "Line 3 has a mistake: it should be negative 6 x, not 6 x." \
+    Then "Mark: On line 3, cross out the whole line." and go on from line 3 as below.
+    3. Continue from the first line they still need to write: a line "Problem:" with the \
+    number and that line, such as "Problem: 3, line 4", so the app counts from there, then \
+    "You have N lines left.", the remaining pen lines, the box, and "Done." Never dictate \
+    lines they've already written correctly.
+    If you can't read their writing or can't tell where they are, say so and ask them to retake \
+    the photo closer.
+
     SHOWING THE WORK
     The pen lines are the full worked solution as it would look on paper: usually two to six \
     Write lines, one step each, so a teacher sees every step. Don't combine two steps on one \
@@ -219,14 +236,25 @@ struct ClaudeClient: Sendable {
     var isComplete: Bool { stopReason == "end_turn" }
   }
 
+  /// Sent with a new photo when the earlier answer is included: the photo may be the
+  /// listener's own work, to check and continue (see "A PHOTO OF THEIR OWN WORK" above).
+  static let followUpPrompt =
+    "Here's a new photo. If it shows my own work on a problem you dictated, tell me where I am, "
+    + "check it, and continue from where I stopped. If it shows new problems, answer them."
+
   /// Streams the answer, handing each new piece of text to `onText` as it arrives, so it can
-  /// be spoken before the rest is written. Throws only if no text arrived; once some has,
-  /// a dropped connection returns what came, with no stop reason.
+  /// be spoken before the rest is written. With `previousAnswer` (the answer to the last
+  /// photo, as text), the new photo is sent as a follow-up to it, so a photo of the
+  /// listener's own work can be checked and continued. Throws only if no text arrived; once
+  /// some has, a dropped connection returns what came, with no stop reason.
   func solve(
-    photo: Data, prompt: String = defaultPrompt, onText: @escaping @MainActor @Sendable (String) -> Void = { _ in }
+    photo: Data, prompt: String = defaultPrompt, previousAnswer: String? = nil,
+    onText: @escaping @MainActor @Sendable (String) -> Void = { _ in }
   ) async throws -> Answer {
     guard let jpeg = Self.preparedJPEG(from: photo) else { throw ClaudeError.badImage }
-    let request = try Self.request(apiKey: apiKey, jpeg: jpeg, prompt: prompt)
+    var request = try Self.request(apiKey: apiKey)
+    request.httpBody = try JSONSerialization.data(
+      withJSONObject: Self.body(jpeg: jpeg, prompt: prompt, previousAnswer: previousAnswer))
 
     // Retried once after a short pause when the failure is temporary (rate limit, overload,
     // server error, or a dropped connection), but only before any text has arrived, so
@@ -256,8 +284,36 @@ struct ClaudeClient: Sendable {
     throw ClaudeError.emptyAnswer  // not reached: the second attempt returns or throws
   }
 
-  /// The streaming request: the photo and the prompt, with the system prompt above.
-  private static func request(apiKey: String, jpeg: Data, prompt: String) throws -> URLRequest {
+  /// The request's JSON body. Without `previousAnswer`: the photo and the prompt. With it:
+  /// the earlier prompt (its photo isn't sent again), the earlier answer, then the new photo
+  /// with `followUpPrompt`.
+  static func body(jpeg: Data, prompt: String, previousAnswer: String?) -> [String: Any] {
+    let image: [String: Any] = [
+      "type": "image", "source": ["type": "base64", "media_type": "image/jpeg", "data": jpeg.base64EncodedString()],
+    ]
+    let messages: [[String: Any]]
+    if let previousAnswer, !previousAnswer.isEmpty {
+      messages = [
+        ["role": "user", "content": [["type": "text", "text": prompt + " (That photo isn't included again.)"]]],
+        ["role": "assistant", "content": [["type": "text", "text": previousAnswer]]],
+        ["role": "user", "content": [image, ["type": "text", "text": followUpPrompt]]],
+      ]
+    } else {
+      messages = [["role": "user", "content": [image, ["type": "text", "text": prompt]]]]
+    }
+    return [
+      "model": model,
+      "max_tokens": 16000,
+      "stream": true,
+      "fallbacks": "default",
+      "output_config": ["effort": "medium"],
+      "system": system,
+      "messages": messages,
+    ]
+  }
+
+  /// The streaming request's URL and headers; the body is set by `solve`.
+  private static func request(apiKey: String) throws -> URLRequest {
     var request = URLRequest(url: URL(string: "https://api.anthropic.com/v1/messages")!)
     request.httpMethod = "POST"
     // While streaming, this is the longest wait between pieces, not for the whole answer
@@ -268,24 +324,6 @@ struct ClaudeClient: Sendable {
     request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
     // Retry on Anthropic's recommended model server-side if a safety classifier declines.
     request.setValue("server-side-fallback-2026-07-01", forHTTPHeaderField: "anthropic-beta")
-    let body: [String: Any] = [
-      "model": model,
-      "max_tokens": 16000,
-      "stream": true,
-      "fallbacks": "default",
-      "output_config": ["effort": "medium"],
-      "system": system,
-      "messages": [
-        [
-          "role": "user",
-          "content": [
-            ["type": "image", "source": ["type": "base64", "media_type": "image/jpeg", "data": jpeg.base64EncodedString()]],
-            ["type": "text", "text": prompt],
-          ],
-        ]
-      ],
-    ]
-    request.httpBody = try JSONSerialization.data(withJSONObject: body)
     return request
   }
 
