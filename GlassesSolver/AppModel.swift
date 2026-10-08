@@ -26,18 +26,18 @@ final class AppModel {
     Problem: 3
     This is the derivative of g of w, equals, 1 plus tangent w, over 6 minus w cubed, by the quotient rule.
     You'll write six lines.
-    Write: u, equals sign, 1, plus sign, the letters t a n, w
-    Write: u, prime mark, a small tick at the top right, equals sign, the letters s e c, small raised 2, back down, w
-    Write: v, equals sign, 6, minus sign, w, small raised 3
-    Write: v, prime mark, equals sign, minus sign, 3, w, small raised 2
-    Write: g, prime mark, open parenthesis, w, close parenthesis, equals sign, start fraction, on top
-    Continue: open parenthesis, the letters s e c, small raised 2, back down, w, close parenthesis, open parenthesis, 6, minus sign, w, small raised 3, back down, close parenthesis
-    Continue: minus sign, open parenthesis, 1, plus sign, the letters t a n, w, close parenthesis, open parenthesis, minus sign, 3, w, small raised 2, back down, close parenthesis
-    Continue: draw the fraction bar, under the bar, open parenthesis, 6, minus sign, w, small raised 3, back down, close parenthesis, small raised 2, end fraction
-    Write: g, prime mark, open parenthesis, w, close parenthesis, equals sign, start fraction, on top
-    Continue: open parenthesis, 6, minus sign, w, small raised 3, back down, close parenthesis, the letters s e c, small raised 2, back down, w
-    Continue: plus sign, 3, w, small raised 2, back down, open parenthesis, 1, plus sign, the letters t a n, w, close parenthesis
-    Continue: draw the fraction bar, under the bar, open parenthesis, 6, minus sign, w, small raised 3, back down, close parenthesis, small raised 2, end fraction
+    Write: u, equals 1, plus the letters t a n, w
+    Write: u, prime mark, a small tick at the top right, equals the letters s e c, raised to the power of 2, right beside that, w
+    Write: v, equals 6, minus w, raised to the power of 3
+    Write: v, prime mark, equals minus 3 w, raised to the power of 2
+    Write: g, prime mark, start an open parenthesis, w, close parenthesis, equals a fraction, on top
+    Continue: start an open parenthesis, the letters s e c, raised to the power of 2, right beside that, w, close parenthesis, start an open parenthesis, 6, minus w, raised to the power of 3, right beside that, close parenthesis
+    Continue: minus, start an open parenthesis, 1, plus the letters t a n, w, close parenthesis, start an open parenthesis, minus 3 w, raised to the power of 2, right beside that, close parenthesis
+    Continue: on the bottom, start an open parenthesis, 6, minus w, raised to the power of 3, right beside that, close parenthesis, raised to the power of 2
+    Write: g, prime mark, start an open parenthesis, w, close parenthesis, equals a fraction, on top
+    Continue: start an open parenthesis, 6, minus w, raised to the power of 3, right beside that, close parenthesis, the letters s e c, raised to the power of 2, right beside that, w
+    Continue: plus 3 w, raised to the power of 2, right beside that, start an open parenthesis, 1, plus the letters t a n, w, close parenthesis
+    Continue: on the bottom, start an open parenthesis, 6, minus w, raised to the power of 3, right beside that, close parenthesis, raised to the power of 2
     Mark: Draw a box around line 6.
     Done.
     """
@@ -48,29 +48,29 @@ final class AppModel {
     Problem: 4
     This is the derivative of f of x, equals, negative 3 x squared plus 8 x minus 2, using the limit definition.
     You'll write seven lines.
-    Write: f, prime mark, a small tick at the top right, open parenthesis, x, close parenthesis, equals sign
-    Continue: the letters l i m, then under them, small, h, arrow pointing right, 0, end under
-    Continue: start fraction, on top, f, open parenthesis, x, plus sign, h, close parenthesis
-    Continue: minus sign, f, open parenthesis, x, close parenthesis, draw the fraction bar, under the bar, h, end fraction
-    Write: equals sign, the letters l i m, then under them, small, h, arrow pointing right, 0, end under
-    Continue: start fraction, on top, open parenthesis, minus sign, 3, open parenthesis, x, plus sign, h, close parenthesis, small raised 2, back down
-    Continue: plus sign, 8, open parenthesis, x, plus sign, h, close parenthesis, minus sign, 2, close parenthesis
-    Continue: minus sign, open parenthesis, minus sign, 3, x, small raised 2, back down, plus sign, 8, x, minus sign, 2, close parenthesis
-    Continue: draw the fraction bar, under the bar, h, end fraction
-    Write: equals sign, the letters l i m, then under them, small, h, arrow pointing right, 0, end under
-    Continue: start fraction, on top, minus sign, 3, x, small raised 2, back down, minus sign, 6, x, h
-    Continue: minus sign, 3, h, small raised 2, back down, plus sign, 8, x, plus sign, 8, h, minus sign, 2
-    Continue: plus sign, 3, x, small raised 2, back down, minus sign, 8, x, plus sign, 2, draw the fraction bar, under the bar, h, end fraction
-    Write: equals sign, the letters l i m, then under them, small, h, arrow pointing right, 0, end under
-    Continue: start fraction, on top, minus sign, 6, x, h, minus sign, 3, h, small raised 2, back down, plus sign, 8, h
-    Continue: draw the fraction bar, under the bar, h, end fraction
-    Write: equals sign, the letters l i m, then under them, small, h, arrow pointing right, 0, end under
-    Continue: start fraction, on top, h, open parenthesis, minus sign, 6, x, minus sign, 3, h, plus sign, 8, close parenthesis
-    Continue: draw the fraction bar, under the bar, h, end fraction
-    Mark: On line 5, cross out the h on top, in front of the parentheses, and the h under the fraction bar.
-    Write: equals sign, the letters l i m, then under them, small, h, arrow pointing right, 0, end under
-    Continue: open parenthesis, minus sign, 6, x, minus sign, 3, h, plus sign, 8, close parenthesis
-    Write: equals sign, minus sign, 6, x, plus sign, 8
+    Write: f, prime mark, a small tick at the top right, start an open parenthesis, x, close parenthesis, equals
+    Continue: the letters l i m, and under them, small, h, an arrow pointing right, 0
+    Continue: a fraction, on top, f, start an open parenthesis, x, plus h, close parenthesis
+    Continue: minus f, start an open parenthesis, x, close parenthesis, on the bottom, h
+    Write: equals the letters l i m, and under them, small, h, an arrow pointing right, 0
+    Continue: a fraction, on top, start an open parenthesis, minus 3, start an open parenthesis, x, plus h, close parenthesis, raised to the power of 2, right beside that, plus 8
+    Continue: start an open parenthesis, x, plus h, close parenthesis, minus 2, close parenthesis
+    Continue: minus, start an open parenthesis, minus 3 x, raised to the power of 2, right beside that, plus 8 x, minus 2, close parenthesis
+    Continue: on the bottom, h
+    Write: equals the letters l i m, and under them, small, h, an arrow pointing right, 0
+    Continue: a fraction, on top, minus 3 x, raised to the power of 2, right beside that, minus 6 x h
+    Continue: minus 3 h, raised to the power of 2, right beside that, plus 8 x, plus 8 h, minus 2
+    Continue: plus 3 x, raised to the power of 2, right beside that, minus 8 x, plus 2, on the bottom, h
+    Write: equals the letters l i m, and under them, small, h, an arrow pointing right, 0
+    Continue: a fraction, on top, minus 6 x h, minus 3 h, raised to the power of 2, right beside that, plus 8 h
+    Continue: on the bottom, h
+    Write: equals the letters l i m, and under them, small, h, an arrow pointing right, 0
+    Continue: a fraction, on top, h, start an open parenthesis, minus 6 x, minus 3 h, plus 8, close parenthesis
+    Continue: on the bottom, h
+    Mark: On line 5, cross out the h on top, in front of the parentheses, and the h on the bottom.
+    Write: equals the letters l i m, and under them, small, h, an arrow pointing right, 0
+    Continue: start an open parenthesis, minus 6 x, minus 3 h, plus 8, close parenthesis
+    Write: equals minus 6 x, plus 8
     Mark: Draw a box around line 7.
     Done.
     """
@@ -408,7 +408,7 @@ final class AppModel {
   /// Says one sentence in the current voice and speed.
   func previewVoice() {
     // A real piece of dictation, with its pauses, rather than a sentence of ordinary speech.
-    speaker.speak("Write: the letters c o s, open parenthesis, 3 x, small raised 2, back down, close parenthesis")
+    speaker.speak("Write: the letters c o s, start an open parenthesis, 3 x, raised to the power of 2, right beside that, close parenthesis")
   }
 
   /// The same real line of dictation in each of the best voices, one after another.

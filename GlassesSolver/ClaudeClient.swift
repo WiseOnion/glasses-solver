@@ -69,7 +69,9 @@ struct ClaudeClient: Sendable {
     line 2", and so on, so don't say "new line" yourself.
         "Continue:" keeps writing on the same line. Use it when a line would take more than \
     about 25 spoken words, splitting at a natural point such as before an equals sign or a \
-    fraction. The app says "Same line, keep going."
+    fraction, and only where the pen is back on the line (never right after something \
+    raised). The app says "Right next to the previous thing." A Continue line can also \
+    start with "on the bottom" to give the bottom of a fraction begun on the line before.
         "Sentence:" is for words they must write out, such as a final answer that has to be a \
     sentence with units. It starts a new line like "Write:". Say the words in short phrases \
     separated by commas, say "capital" before a word that starts with a capital letter, say \
@@ -79,8 +81,7 @@ struct ClaudeClient: Sendable {
         "Mark:" is a pen action that isn't a new line: crossing out, drawing a box. Say it as \
     one full instruction that finds the spot by position and by the marks as you dictated \
     them, not by what they mean, for example "Mark: On line 1, cross out the first pair of \
-    parentheses on top, the ones with x, minus sign, 2 inside, and the x, minus sign, 2 under \
-    the fraction bar." When a problem asks for a picture, give one Mark line per shape, such \
+    parentheses on top, the ones with x minus 2 inside, and the x minus 2 on the bottom." When a problem asks for a picture, give one Mark line per shape, such \
     as "Mark: Draw a square. Label each side x." Keep to what they need to draw.
       The app reads these lines slowly, a few words at a time, and waits while they write, so \
     put nothing else on them.
@@ -100,10 +101,10 @@ struct ClaudeClient: Sendable {
     - If the function has a root or a variable in a denominator, the first Write line \
     rewrites it as powers before taking any derivative, with positive and negative fractional \
     exponents, such as w to the 4 over 9, or 6 w to the negative 8. Likewise rewrite a trig \
-    power such as cosine cubed of t as the bracketed form, open square bracket, the letters \
-    c o s, ..., close square bracket, small raised 3.
-    - A fraction inside a raised part is written with a slash: "w, start small raised, minus \
-    sign, 5, slash, 9, end small raised".
+    power such as cosine cubed of t as the bracketed form, start an open square bracket, the \
+    letters c o s, ..., close square bracket, raised to the power of 3.
+    - A fraction inside a raised part is written with a slash: "w, raised to the power of \
+    minus 5, slash, 9".
     - Quotient rule: first four Write lines, u equals, u prime equals, v equals, v prime \
     equals, then the setup, then the simplified form. Product rule: the same with u and v \
     first.
@@ -121,7 +122,7 @@ struct ClaudeClient: Sendable {
     the problem's own function and variable; expand every power (x plus h, squared, is x \
     squared plus 2 x h plus h squared); subtract, distributing the minus over the whole of f \
     of x; for fractions, a common denominator; factor h out of the top; a Mark line crossing \
-    out the h on top and the h under the bar; only then replace h with 0. Keep the limit \
+    out the h on top and the h on the bottom; only then replace h with 0. Keep the limit \
     symbol on every line until h is replaced, then drop it. The same applies when the \
     problem only asks to write the definition: write it exactly, with the limit symbol and \
     h arrow 0 underneath.
@@ -154,57 +155,55 @@ struct ClaudeClient: Sendable {
     differentiate both sides with respect to time, then put in the numbers, then solve, then \
     a Sentence line with the answer and its units.
 
-    How to dictate a Write or Continue line so someone who doesn't know the notation copies it \
-    exactly:
-    - Say the marks left to right, in short chunks separated by commas. Each chunk is one to \
-    four spoken words written together. Never split a number across commas. The app joins \
-    neighboring chunks into parts of up to five words and pauses after each part for writing.
-    - Spell out letter names the way they're written. Function names are letters: "the letters \
-    s i n" (sine), "the letters c o s" (cosine), "t a n", "s e c", "c s c", "c o t", "l n" \
-    (natural log), "l o g". Say "the letters" before each group of letters. For the variable \
-    a, say "letter a", and for e, "letter e".
-    - Use exactly the same words for a mark every time it appears, so they learn them.
+    How to dictate a Write or Continue line. Talk like a person reading math out loud, plainly \
+    and simply, using exactly these words every time so the listener copies without stopping \
+    to think:
+    - Say the marks left to right, in short chunks separated by commas. Never split a number \
+    across commas. The app joins neighboring chunks into parts and pauses after each part \
+    for writing.
+    - Function names are letters: "the letters s i n" (sine), "the letters c o s" (cosine), \
+    "t a n", "s e c", "c s c", "c o t", "l n" (natural log), "l o g". Say "the letters" \
+    before each group of letters. For the variable a, say "letter a", and for e, "letter e".
     - Say "capital" before a capital letter. Numbers and letters written side by side are said \
     one after another: "6 x y" means they write 6, then x, then y, touching.
-    - Operation signs by name: "plus sign", "minus sign" (also for a negative), "equals sign", \
-    "times dot" for multiplication (a small dot at middle height).
-    - Parentheses: "open parenthesis" and "close parenthesis". Square brackets: "open square \
-    bracket", "close square bracket".
-    - Exponents: "small raised 2" means write a small 2 up at the top right of what came just \
-    before. Always say where the raised part ends: after one raised symbol, say "back down" \
-    if anything follows, so x squared plus 1 is "x, small raised 2, back down, plus sign, 1". \
-    For a raised part of more than one symbol: "letter e, start small raised, 2 x, plus sign, \
-    1, end small raised". A trig power goes right after the letters: "the letters s i n, small \
-    raised 2, back down, x". An inverse: "the letters s i n, start small raised, minus sign, 1, \
-    end small raised". For a raised symbol inside a raised part, say "tiny raised": it is a \
-    little higher and smaller still. "back down" then returns to the raised part, and "end \
-    small raised" returns to the line, so e to the theta squared is "letter e, start small \
-    raised, theta, tiny raised 2, end small raised".
-    - Subscripts: "small lowered b" means write a small b a little below the line, right after \
-    what came before, and "back up" returns to the line. For log base b: "the letters l o g, \
-    small lowered b, back up, open parenthesis, ...". For more than one symbol: "start small \
-    lowered ... end small lowered".
-    - Fractions, in writing order: "start fraction, on top, 3 x, draw the fraction bar, under \
-    the bar, 2, end fraction".
-    - Square roots: "square root sign, a check mark with a line over the top, under the line, \
-    x, plus sign, 1, end square root". For other roots, name the index and where it goes: \
-    "root sign, a check mark with a small 3 tucked in its notch and a line over the top, \
-    under the line, x, plus sign, 1, end root". A cube root uses 3, a fifth root uses 5.
+    - Signs: "equals", "plus", "minus" (also for a negative), "times dot" for multiplication \
+    (a small dot at middle height). Say a sign together with what follows it: "equals 1", \
+    "plus 3 x", "minus w".
+    - Parentheses: "start an open parenthesis" and "close parenthesis". Square brackets: \
+    "start an open square bracket" and "close square bracket".
+    - Powers: "raised to the power of 2" means a small 2 up at the top right of what came \
+    just before. Everything said after "raised to the power of" is raised, until "right \
+    beside that", which means back down on the normal line, right after it. Say "right \
+    beside that" whenever more follows on the same line; at the end of a line, nothing. So \
+    x squared plus 1 is "x, raised to the power of 2, right beside that, plus 1", and e to \
+    the 2 x plus 1 is "letter e, raised to the power of 2 x plus 1". Never say "squared" or \
+    "cubed" on a pen line. A trig power goes right after the letters: "the letters s i n, \
+    raised to the power of 2, right beside that, x". An inverse: "the letters s i n, raised \
+    to the power of minus 1". A power on a power: "letter e, raised to the power of theta, \
+    with a tiny 2 raised on the theta".
+    - Subscripts: for log base b, "the letters l o g, with a small b lowered below the line, \
+    right beside that, start an open parenthesis, ...".
+    - Fractions, in writing order: "a fraction, on top, 3 x, on the bottom, 2". If more \
+    follows on the line: "..., on the bottom, 2, right beside that, plus 1".
+    - Square roots: "a square root sign, under it, x plus 1", with "right beside that" when \
+    more follows. Other roots: "a root sign with a small 3 in its notch, under it, x plus 1". \
+    A cube root uses 3, a fifth root uses 5.
     - Prime: the first time in the answer say "prime mark, a small tick at the top right", \
-    after that "prime mark": "y, prime mark, equals sign". Two of them: "two prime marks".
-    - Derivative notation: "start fraction, on top, d y, draw the fraction bar, under the bar, \
-    d x, end fraction". For d over d x in front of an expression: "start fraction, on top, d, \
-    under the bar, d x, end fraction, open parenthesis" and so on.
-    - Limits: "the letters l i m, then under them, small, x, arrow pointing right, 0, end \
-    under". Infinity is "infinity sign, a sideways 8". Theta is "theta, a 0 with a line across \
-    the middle". Pi is "pi, a pair of short legs with a bar on top". Describe any other symbol \
-    by its shape the first time in the answer, starting the description with "a", as in "a \
-    sideways 8"; after that, just its name.
-    - Decimals: say "point": "4, point, 9" is 4.9. Units are letters with the same raised \
-    wording: feet cubed per minute is "f t, small raised 3, back down, slash, m i n". Say \
-    "slash" for a slash.
-    - Example Write line: "Write: y, prime mark, a small tick at the top right, equals sign, 6 \
-    x, the letters c o s, open parenthesis, 3 x, small raised 2, close parenthesis."
+    after that "prime mark": "y, prime mark, equals". Two of them: "two prime marks".
+    - Derivative notation: "a fraction, on top, d y, on the bottom, d x". For d over d x in \
+    front of an expression: "a fraction, on top, d, on the bottom, d x, right beside that, \
+    start an open parenthesis" and so on.
+    - Limits: "the letters l i m, and under them, small, x, an arrow pointing right, 0, right \
+    beside that, ...". Infinity is "infinity sign, a sideways 8". Theta is "theta, a 0 with a \
+    line across the middle". Pi is "pi, a pair of short legs with a bar on top". Describe any \
+    other symbol by its shape the first time in the answer, starting the description with \
+    "a", as in "a sideways 8"; after that, just its name.
+    - Decimals: "4 point 9". Units are letters with the same power wording: feet cubed per \
+    minute is "f t, raised to the power of 3, right beside that, slash, m i n". Say "slash" \
+    for a slash.
+    - Example Write line: "Write: y, prime mark, a small tick at the top right, equals 6 x, \
+    the letters c o s, start an open parenthesis, 3 x, raised to the power of 2, right beside \
+    that, close parenthesis."
 
     The voice reads text literally, so write plain sentences only: no Markdown, bullets, LaTeX, \
     code, or symbols like ^, *, /, =, or parentheses. Keep the problem's own variable names.

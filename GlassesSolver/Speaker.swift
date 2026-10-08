@@ -193,9 +193,8 @@ final class Speaker: NSObject {
 
   /// A real line of dictation (letters, a raised power, a fraction) for hearing a voice.
   static let comparisonLine =
-    "the letters c o s, open parenthesis, 3 x, small raised 2, back down, close parenthesis, "
-    + "times dot, start fraction, on top, the letters s i n, x, draw the fraction bar, "
-    + "under the bar, 2, end fraction"
+    "the letters c o s, start an open parenthesis, 3 x, raised to the power of 2, right beside that, "
+    + "close parenthesis, times dot, a fraction, on top, the letters s i n, x, on the bottom, 2"
 
   /// A sentence of about 30 words, spoken to measure a voice's speed.
   static let calibrationText =
@@ -403,11 +402,14 @@ final class Speaker: NSObject {
     return [Segment(text: joined, rate: rate, pauseAfter: beforeWrite ? Self.beforeWritePause : 0, penLine: nil)]
   }
 
-  /// What's said before a pen line: where on the paper it goes. A Mark line says it itself.
+  /// What's said before a pen line: where on the paper it goes. A Mark line says it itself,
+  /// and so does a Continue line that starts with where it goes ("on the bottom, ...").
   static func cue(for line: PenLine) -> String {
     switch line.kind {
     case .write, .sentence: "Start line \(line.number)."
-    case .continueLine: "Same line, keep going."
+    case .continueLine:
+      line.text.lowercased().hasPrefix("on the bottom") || line.text.lowercased().hasPrefix("on top")
+        ? "" : "Right next to the previous thing."
     case .mark: ""
     }
   }
@@ -561,6 +563,8 @@ final class Speaker: NSObject {
     "line": 0, "right": 0, "left": 0, "pointing": 0, "middle": 0, "height": 0, "check": 0,
     "short": 0, "across": 0, "sideways": 0, "tick": 0, "dot": 0, "back": 0, "down": 0,
     "tiny": 0, "lowered": 0, "up": 0, "root": 0, "notch": 0, "tucked": 0, "in": 0, "its": 0,
+    "an": 0, "power": 0, "beside": 0, "next": 0, "that": 0, "previous": 0, "thing": 0, "it": 0,
+    "below": 0,
     "bottom": 1, "draw": 1,
     "sine": 3, "cosine": 3, "tangent": 3, "secant": 3, "cosecant": 3, "cotangent": 3,
     "log": 2, "limit": 3, "inverse": 2,

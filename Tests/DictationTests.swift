@@ -23,6 +23,21 @@ final class DictationTests: XCTestCase {
       Speaker.penLine(in: "Write: the letters c o s, a small tick")?.1, "the letters c o s, a small tick")
   }
 
+  func testPlainWordingIsCounted() {
+    // The words that say where to write put nothing on paper.
+    XCTAssertEqual(Speaker.writtenCharacters("x, raised to the power of 2"), 2)
+    XCTAssertEqual(Speaker.writtenCharacters("right beside that, plus 1"), 2)
+    XCTAssertEqual(Speaker.writtenCharacters("start an open parenthesis, w, close parenthesis"), 3)
+    XCTAssertEqual(Speaker.writtenCharacters("u, equals 1, plus the letters t a n, w"), 8)
+    // "on the bottom" counts the fraction bar.
+    XCTAssertEqual(Speaker.writtenCharacters("a fraction, on top, 3 x, on the bottom, 2"), 4)
+    XCTAssertEqual(Speaker.writtenCharacters("the letters l i m, and under them, small, h, an arrow pointing right, 0"), 6)
+    // "right beside that" is a place, so the chunk after it is in the same part.
+    XCTAssertEqual(
+      Speaker.dictationGroups("x, raised to the power of 2, right beside that, plus 1"),
+      ["x", "raised to the power of 2", "right beside that, plus 1"])
+  }
+
   func testSpelledLettersAreCounted() {
     XCTAssertEqual(Speaker.writtenCharacters("the letters t a n, w"), 4)
     XCTAssertEqual(Speaker.writtenCharacters("the letters t A n"), 3)
@@ -60,7 +75,11 @@ final class DictationTests: XCTestCase {
 
   func testCues() {
     XCTAssertEqual(Speaker.cue(for: .init(kind: .write, text: "x", number: 2)), "Start line 2.")
-    XCTAssertEqual(Speaker.cue(for: .init(kind: .continueLine, text: "x", number: 2)), "Same line, keep going.")
+    XCTAssertEqual(
+      Speaker.cue(for: .init(kind: .continueLine, text: "x", number: 2)), "Right next to the previous thing.")
+    // A line that says where it goes needs no cue.
+    XCTAssertEqual(Speaker.cue(for: .init(kind: .continueLine, text: "on the bottom, h", number: 2)), "")
+    XCTAssertEqual(Speaker.cue(for: .init(kind: .continueLine, text: "On top, 3 x", number: 2)), "")
     XCTAssertEqual(Speaker.cue(for: .init(kind: .mark, text: "x", number: 2)), "")
   }
 
@@ -111,6 +130,15 @@ final class DictationTests: XCTestCase {
       "Write: 4, point, 9, f t, small raised 3, back down, slash, m i n.",
       "Write: letter e, start small raised, 2 x, plus sign, 1, end small raised.",
       "Problem: 4",
+      // The plain wording.
+      "Write: u, equals 1, plus the letters t a n, w.",
+      "Write: x, raised to the power of 2, right beside that, plus 1.",
+      "Write: w, raised to the power of minus 5, slash, 9.",
+      "Write: a fraction, on top, 3 x, on the bottom, 2, right beside that, plus 1.",
+      "Write: the letters l i m, and under them, small, h, an arrow pointing right, 0.",
+      "Write: g, prime mark, start an open parenthesis, w, close parenthesis, equals minus 3 w.",
+      "Write: a square root sign, under it, x plus 1.",
+      "Write: 4 point 9.",
     ] {
       XCTAssertEqual(Speaker.speakable(line), line)
     }
