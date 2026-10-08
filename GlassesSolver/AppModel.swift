@@ -249,6 +249,8 @@ final class AppModel {
   /// When `lastAnswer` arrived. A photo within `followUpWindow` of it is sent as a follow-up.
   @ObservationIgnored private var lastAnswerTime: Date?
   private static let followUpWindow: TimeInterval = 60 * 60
+  /// How often "Still working." is said while waiting for the answer's first words.
+  private static let stillWorkingInterval = Duration.seconds(20)
   @ObservationIgnored private let shutter = ShutterButton()
   @ObservationIgnored private var sessionStateTask: Task<Void, Never>?
   @ObservationIgnored private var pendingSessionPrompt: String?
@@ -583,8 +585,18 @@ final class AppModel {
     // the app running until the spoken answer, which keeps it running to the end.
     speaker.beginKeepAlive()
     answerStarted = false
+    speaker.speak("Got it. Working on it.")
+    // Claude can think for a minute before the first words; say so now and then, so the
+    // silence doesn't sound like the app stopped.
+    let waitingCue = Task { [weak self] in
+      while true {
+        try? await Task.sleep(for: Self.stillWorkingInterval)
+        guard !Task.isCancelled, let self, !self.answerStarted else { return }
+        self.speaker.announce("Still working.", ifBusy: .skip)
+      }
+    }
+    defer { waitingCue.cancel() }
     do {
-      speaker.speak("Got it. Working on it.")
       // The answer is spoken as it arrives, so the first problem starts while Claude is
       // still writing the rest.
       let reply: ClaudeClient.Answer
@@ -616,7 +628,8 @@ final class AppModel {
       let answer = [reply.text.trimmingCharacters(in: .whitespacesAndNewlines), notice]
         .compactMap { $0 }.joined(separator: "\n")
       lastAnswer = answer
-      lastAnswerTime = .now
+      // A Test mode sample isn't a real answer, so it's never sent as one to follow up on.
+      lastAnswerTime = testMode ? nil : .now
       diag(
         "solve",
         "answer received, \(reply.text.count) characters, ended by \(reply.stopReason ?? "a dropped connection") "
@@ -730,7 +743,7 @@ final class AppModel {
         resetSessionState()
         conversation.endSession()
         errorMessage = ErrorDetail.alertText(error)
-        speaker.speak("Lost the connection to the glasses. Start the session again.")
+        speaker.announce("Lost the connection to the glasses. Start the session again.", ifBusy: .after)
       }
       throw error
     }
@@ -846,7 +859,7 @@ final class AppModel {
       shutter.detach(from: nil)
       resetSessionState()
       conversation.endSession()
-      speaker.speak("Glasses session ended.")
+      speaker.announce("Glasses session ended.", ifBusy: .after)
     case .idle, .starting, .stopping:
       break
     }
@@ -942,7 +955,7 @@ final class AppModel {
       "The capture button can't trigger Solve. \(reason)\n\n"
       + "Still works: the session stays on, and the Solve button in this app uses your session prompt."
     // The wearer may not be looking at the phone.
-    speaker.speak("The capture button isn't available. Use the Solve button in the app.")
+    speaker.announce("The capture button isn't available. Use the Solve button in the app.", ifBusy: .after)
   }
 
   private func shutterPressed(at timestampMs: Int64) {
@@ -956,7 +969,7 @@ final class AppModel {
       // The view has likely changed since; a photo now wouldn't show what was pressed for.
       if lastLateNotice.map({ Date.now.timeIntervalSince($0) > 10 }) ?? true {
         lastLateNotice = .now
-        speaker.speak("That button press reached the phone late. Press again.")
+        speaker.announce("That button press reached the phone late. Press again.", ifBusy: .skip)
       }
       return
     }
@@ -971,12 +984,12 @@ final class AppModel {
       // Once per solve, so repeated presses don't keep cutting off the speech.
       if !saidStillWorking {
         saidStillWorking = true
-        speaker.speak("Still working on the last one.")
+        speaker.announce("Still working on the last one.", ifBusy: .skip)
       }
       return
     }
     guard !sessionPaused else {
-      speaker.speak("The session is paused. Tap the touchpad once to resume.")
+      speaker.announce("The session is paused. Tap the touchpad once to resume.", ifBusy: .skip)
       return
     }
     solveInFlight = true

@@ -100,6 +100,8 @@ final class Speaker: NSObject {
   private var unfinishedLine = ""
   private var pendingProse: [String] = []
   private var lineNumber = 0
+  /// Notices (`announce`) that came while an answer was arriving, said after it.
+  private var pendingNotices: [String] = []
 
   /// An instruction to do something on paper, from a line tagged in the answer.
   struct PenLine: Equatable {
@@ -182,6 +184,7 @@ final class Speaker: NSObject {
     activateSession()
     answerOpen = false
     unfinishedLine = ""
+    pendingNotices.removeAll()
     lastPenLine = nil
     repeatCount = 0
     let voice = resolvedVoice
@@ -224,8 +227,36 @@ final class Speaker: NSObject {
     return true
   }
 
+  /// What `announce` does with a notice while something is being said.
+  enum WhenBusy {
+    /// Drop it: what's being said matters more (such as "Still working on the last one").
+    case skip
+    /// Say it once everything queued is said, after the rest of an arriving answer.
+    case after
+  }
+
+  /// Says a short notice without cutting off an answer: `speak` starts over and would drop
+  /// the rest of an answer still arriving, so notices that can come at any time (a capture
+  /// press, the session ending) go through here.
+  func announce(_ text: String, ifBusy: WhenBusy) {
+    guard answerOpen || isActive else {
+      speak(text)
+      return
+    }
+    guard ifBusy == .after else {
+      diag("audio", "busy speaking, so not saying: \(text)")
+      return
+    }
+    if answerOpen {
+      pendingNotices.append(text)
+    } else {
+      enqueue([Segment(text: text, rate: rate, pauseAfter: 0, penLine: nil)], voice: resolvedVoice)
+    }
+  }
+
   func stop() {
     answerOpen = false
+    pendingNotices.removeAll()
     reset()
     if stopKeepAliveAfterSpeech { endKeepAlive() }
   }
@@ -426,8 +457,10 @@ final class Speaker: NSObject {
       rest += flushProse(beforeWrite: true)
       rest.append(Segment(text: notice, rate: rate * Self.dictationRateFactor, pauseAfter: 0, penLine: nil))
     } else {
-      rest += flushProse(beforeWrite: false)
+      rest += flushProse(beforeWrite: !pendingNotices.isEmpty)
     }
+    rest += pendingNotices.map { Segment(text: $0, rate: rate, pauseAfter: 0, penLine: nil) }
+    pendingNotices.removeAll()
     enqueue(rest, voice: resolvedVoice)
   }
 

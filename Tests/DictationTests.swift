@@ -323,6 +323,27 @@ final class DictationTests: XCTestCase {
       speaker.queued.map(\.text), ["Problem 3.", "This is a sum.", "Start line 1. x, plus.", "Stop. Cut off."])
   }
 
+  func testANoticeDuringAnAnswerWaitsForTheEnd() {
+    let speaker = Speaker()
+    defer { speaker.stop() }
+    speaker.beginAnswer()
+    speaker.continueAnswer("Problem: 3\n")
+    // A notice that can wait is said after the answer, not instead of it.
+    speaker.announce("Glasses session ended.", ifBusy: .after)
+    // One that only matters when nothing is being said is dropped.
+    speaker.announce("Still working on the last one.", ifBusy: .skip)
+    speaker.continueAnswer("Write: x\n")
+    speaker.finishAnswer()
+    XCTAssertEqual(speaker.queued.map(\.text), ["Problem 3.", "Start line 1. x.", "Glasses session ended."])
+  }
+
+  func testANoticeWithNothingBeingSaidIsSpokenRightAway() {
+    let speaker = Speaker()
+    defer { speaker.stop() }
+    speaker.announce("Still working.", ifBusy: .skip)
+    XCTAssertEqual(speaker.queued.map(\.text), ["Still working."])
+  }
+
   func testCutOffNotices() {
     XCTAssertEqual(
       Speaker.cutOffNotice(.ranOut, answer: "I can see problems 4 and 5.\nProblem: 4\nWrite: x\nProblem: 5, part a\nWrite: y"),
