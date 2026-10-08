@@ -34,17 +34,18 @@ final class DictationTests: XCTestCase {
     // "over" and "on the bottom" are the fraction bar.
     XCTAssertEqual(Speaker.writtenCharacters("d y over d x"), 5)
     XCTAssertEqual(Speaker.writtenCharacters("on the bottom, you have h"), 2)
-    // A part is a whole piece of math: up to 6 marks, however many words they take.
+    // A part is a whole piece of math, however many words it takes: each factor in its
+    // parentheses, never "close parenthesis, times open parenthesis" on its own.
     XCTAssertEqual(
       Speaker.dictationGroups(
         "on top, you have open parenthesis, secant squared w, close parenthesis, times open parenthesis, "
           + "6 minus w cubed, close parenthesis"),
-      ["on top, you have open parenthesis, secant squared w", "close parenthesis, times open parenthesis",
-       "6 minus w cubed, close parenthesis"])
+      ["on top, you have open parenthesis, secant squared w, close parenthesis",
+       "times open parenthesis, 6 minus w cubed, close parenthesis"])
     // A power stays with what it's on.
     XCTAssertEqual(
       Speaker.dictationGroups("on the bottom, you have open parenthesis, 6 minus w cubed, close parenthesis, squared"),
-      ["on the bottom, you have open parenthesis, 6 minus w cubed", "close parenthesis, squared"])
+      ["on the bottom, you have open parenthesis, 6 minus w cubed, close parenthesis, squared"])
     // Words that only say where to write, at the end of a line, stay with the last part.
     XCTAssertEqual(Speaker.dictationGroups("g prime of w, equals a fraction, on top"), ["g prime of w, equals a fraction, on top"])
   }
@@ -95,20 +96,64 @@ final class DictationTests: XCTestCase {
   }
 
   func testLinesSplitIntoWritableParts() {
+    // A function stays with what it applies to, and a coefficient with what it multiplies.
     XCTAssertEqual(
       Speaker.dictationGroups("y prime, equals, 6 x, cosine, open paren, 3 x squared, close paren."),
-      ["y prime, equals, 6 x", "cosine, open paren", "3 x squared, close paren"])
+      ["y prime, equals", "6 x, cosine, open paren, 3 x squared, close paren"])
     // A comma inside a number doesn't split it.
     XCTAssertEqual(Speaker.dictationGroups("y prime, equals, 1,000 x squared"), ["y prime, equals", "1,000 x squared"])
-    // A part that writes nothing yet leads into the next one.
+    // "end exponent" finishes the power before it; a short line is said in one go.
     XCTAssertEqual(
       Speaker.dictationGroups("e to the 2 x plus 1, end exponent, plus 5"),
-      ["e to the 2 x plus 1", "end exponent, plus 5"])
+      ["e to the 2 x plus 1, end exponent, plus 5"])
     // A shape description stays with the mark it describes, and doesn't count as marks.
     XCTAssertEqual(
       Speaker.dictationGroups("y, prime mark, a small tick at the top right, equals sign, 3, times dot, a small dot at middle height"),
       ["y, prime mark, a small tick at the top right, equals sign, 3", "times dot, a small dot at middle height"])
     XCTAssertEqual(Speaker.dictationGroups(" , ."), [])
+  }
+
+  /// Writing pauses come only between whole pieces of math; Claude's other commas are breaths.
+  func testWritingPausesFallBetweenWholePiecesOfMath() {
+    // Not "7 ... 5 x squared ... plus 2 ... negative 1 ... sine x".
+    XCTAssertEqual(
+      Speaker.dictationGroups("7 times, open parenthesis, 5 x squared, plus 2, close parenthesis, minus 1, sine x"),
+      ["7 times, open parenthesis, 5 x squared, plus 2, close parenthesis", "minus 1, sine x"])
+    // A coefficient stays with its variable, and "end exponent" with the power it ends.
+    XCTAssertEqual(
+      Speaker.dictationGroups(
+        "h prime of w equals, negative 40 over 9, w to the negative 13 over 9, end exponent, plus 6 w to the negative 9"),
+      ["h prime of w equals", "negative 40 over 9, w to the negative 13 over 9, end exponent",
+       "plus 6 w to the negative 9"])
+    // A long sum is split before its terms.
+    XCTAssertEqual(
+      Speaker.dictationGroups("y equals, 3 x to the 4th, minus 5 x cubed, plus 2 x squared, minus 7 x, plus 9"),
+      ["y equals, 3 x to the 4th", "minus 5 x cubed, plus 2 x squared", "minus 7 x, plus 9"])
+    // A limit stays with "of", and f stays with its argument.
+    XCTAssertEqual(
+      Speaker.dictationGroups("f prime of x equals, the limit as h approaches 0, of a fraction"),
+      ["f prime of x equals", "the limit as h approaches 0, of a fraction"])
+    XCTAssertEqual(
+      Speaker.dictationGroups("on top, you have f of, open parenthesis, x plus h, close parenthesis, minus f of x"),
+      ["on top, you have f of, open parenthesis, x plus h, close parenthesis", "minus f of x"])
+    // Parentheses too long to hold in mind are split between their terms, never mid-term,
+    // and the power on them stays with the close.
+    XCTAssertEqual(
+      Speaker.dictationGroups(
+        "y equals, 4 times open parenthesis, 3 x squared, plus 2 x, minus 7 x to the 5th, plus 11 x, "
+          + "minus 13, close parenthesis, cubed"),
+      ["y equals, 4 times open parenthesis, 3 x squared", "plus 2 x, minus 7 x to the 5th", "plus 11 x",
+       "minus 13, close parenthesis, cubed"])
+    // A Sentence line is words, so any comma between phrases can be a stop.
+    XCTAssertEqual(
+      Speaker.dictationGroups(
+        "capital the radius of the balloon is increasing, at a rate of 3 feet per second, period", isMath: false),
+      ["capital the radius of the balloon is increasing", "at a rate of 3 feet per second, period"])
+    // The commas stay as breaths inside one utterance, with one writing pause after it.
+    let speaker = Speaker()
+    defer { speaker.stop() }
+    speaker.speak("Problem: 1\nWrite: u equals, 1, plus tangent w")
+    XCTAssertEqual(speaker.queued.map(\.text), ["Problem 1.", "Start line 1. u equals, 1, plus tangent w."])
   }
 
   func testWrittenCharacters() {

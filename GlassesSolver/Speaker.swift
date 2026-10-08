@@ -36,12 +36,15 @@ final class Speaker: NSObject {
   private static let beforeWritePause: TimeInterval = 0.4
   /// Each repeat of the same line in a row is this much slower, at most twice.
   private static let repeatRateFactor: Float = 0.9
-  /// A dictated part puts at most this many marks on paper (a short piece to hold in mind
-  /// while writing) and is at most this many spoken words. Words that only say where or
-  /// how to write don't count as marks, so a part is a whole piece of math, and each part
-  /// is one utterance: fewer, longer utterances keep the voice's natural intonation.
-  private static let maxGroupMarks = 6
-  private static let maxGroupWords = 16
+  /// Whole pieces of math are joined into one dictated part while it puts at most this many
+  /// marks on paper (a piece to hold in mind while writing) and is at most this many spoken
+  /// words. Words that only say where or how to write don't count as marks. Each part is one
+  /// utterance: fewer, longer utterances keep the voice's natural intonation. A piece is
+  /// never split to fit (see `dictationGroups`) unless it's parentheses holding more than
+  /// `maxPieceMarks`, which are then split between their terms.
+  private static let maxGroupMarks = 8
+  private static let maxGroupWords = 20
+  private static let maxPieceMarks = 14
   /// Writing time per character on paper (careful handwriting of math runs about one and a
   /// half characters a second), the least pause after a part, the most after a whole line,
   /// and a beat after a line to finish it and move the pen down.
@@ -629,7 +632,7 @@ final class Speaker: NSObject {
           penLine: line, lineID: lineID)
       ]
     }
-    let groups = Self.dictationGroups(line.text)
+    let groups = Self.dictationGroups(line.text, isMath: line.kind != .sentence)
     let writingTime = line.kind == .sentence ? Self.sentenceWritingTime : Self.writingTime
     guard inParts, !groups.isEmpty else {
       let pause = min(groups.map(writingTime).reduce(0, +), Self.maxLinePause)
@@ -683,13 +686,32 @@ final class Speaker: NSObject {
     return label.isEmpty ? nil : label
   }
 
-  /// The comma-separated chunks of a Write line, joined into parts that each put at most
-  /// `maxGroupMarks` marks on paper (and at most `maxGroupWords` spoken words), so a part is
-  /// a whole piece of math however many words it takes to say. Words that only say where
-  /// to write ("right beside that", "on top") lead into what follows; a shape description
-  /// ("a small tick at the top right") or a power ("squared", "to the 4th") stays with
-  /// the mark before it. Commas inside numbers ("1,000") don't split.
-  static func dictationGroups(_ line: String) -> [String] {
+  /// Where a pen line may stop for writing, between two of its comma chunks.
+  private enum Join {
+    /// Never: the two belong to one piece of math ("5 x squared" and "close parenthesis").
+    case never
+    /// Only if the parentheses around it are too long to hold in mind at once.
+    case insideGroup
+    /// Between whole pieces of math, such as after "equals" or before a term.
+    case free
+  }
+
+  /// The parts of a pen line, each said as one utterance and followed by time to write it.
+  ///
+  /// Claude's commas are where a person reading math aloud takes a breath, and they stay in
+  /// the text as short natural pauses. Writing pauses come only between whole pieces of
+  /// math, after "equals" or before a new term (`canStop`). So never inside parentheses
+  /// (unless the inside is longer than `maxPieceMarks`, and then only between its terms),
+  /// and never between a coefficient and its variable, a function or operator and what it
+  /// applies to, or something and its power, closing words ("close parenthesis", "end
+  /// exponent") or shape description. Words that only say where to write ("on top, you
+  /// have") lead into what follows. Pieces are then joined into parts of up to
+  /// `maxGroupMarks` marks on paper (and `maxGroupWords` words), so short lines are said in
+  /// one go. Commas inside numbers ("1,000") don't split.
+  ///
+  /// A Sentence line (`isMath` false) is words, which Claude splits into short phrases, so it
+  /// can stop at any comma.
+  static func dictationGroups(_ line: String, isMath: Bool = true) -> [String] {
     let chunks = line.replacingOccurrences(of: #",(?!\d)"#, with: "\n", options: .regularExpression)
       .components(separatedBy: "\n")
       .map { chunk in
@@ -698,42 +720,99 @@ final class Speaker: NSObject {
         return chunk.trimmingCharacters(in: .whitespacesAndNewlines)
       }
       .filter { !$0.isEmpty }
-    // Units that are never split: a mark with whatever leads into it or belongs to it.
-    var units: [String] = []
-    var leading: String?
-    for chunk in chunks {
-      let lowered = chunk.lowercased()
-      let belongsBefore = ["a ", "raised to the power", "squared", "cubed", "to the "].contains { lowered.hasPrefix($0) }
-      if leading == nil, belongsBefore, let last = units.last {
-        units[units.count - 1] = last + ", " + chunk
-        continue
-      }
-      let text = leading.map { $0 + ", " + chunk } ?? chunk
-      leading = nil
-      if writtenCharacters(text) == 0 {
-        leading = text
+    guard !chunks.isEmpty else { return [] }
+    // joins[i] is between chunks[i] and chunks[i + 1].
+    var joins: [Join] = []
+    var depth = 0
+    for index in chunks.indices.dropLast() {
+      depth = max(0, depth + nestingChange(chunks[index]))
+      let next = chunks[index + 1]
+      let lastWritesNothing = index + 1 == chunks.count - 1 && writtenCharacters(next) == 0
+      if !isMath {
+        joins.append(.free)
+      } else if lastWritesNothing || !canStop(after: chunks[index], before: next) {
+        joins.append(.never)
       } else {
-        units.append(text)
+        joins.append(depth > 0 ? .insideGroup : .free)
       }
     }
-    if let leading {
-      if let last = units.last { units[units.count - 1] = last + ", " + leading } else { units.append(leading) }
+    func text(_ range: Range<Int>) -> String { chunks[range].joined(separator: ", ") }
+    /// `range` cut at each join of the given kinds.
+    func pieces(_ range: Range<Int>, at kinds: [Join]) -> [Range<Int>] {
+      var result: [Range<Int>] = []
+      var start = range.lowerBound
+      for index in range.dropLast() where kinds.contains(joins[index]) {
+        result.append(start..<(index + 1))
+        start = index + 1
+      }
+      return result + [start..<range.upperBound]
     }
     var groups: [String] = []
-    for unit in units {
-      if let last = groups.last {
-        let joined = last + ", " + unit
-        if writtenCharacters(joined) <= maxGroupMarks,
-          joined.split(whereSeparator: \.isWhitespace).count <= maxGroupWords
-        {
-          groups[groups.count - 1] = joined
-          continue
+    for piece in pieces(0..<chunks.count, at: [.free]) {
+      let units =
+        writtenCharacters(text(piece)) > maxPieceMarks ? pieces(piece, at: [.free, .insideGroup]) : [piece]
+      for unit in units.map(text) {
+        if let last = groups.last {
+          let joined = last + ", " + unit
+          if writtenCharacters(joined) <= maxGroupMarks,
+            joined.split(whereSeparator: \.isWhitespace).count <= maxGroupWords
+          {
+            groups[groups.count - 1] = joined
+            continue
+          }
         }
+        groups.append(unit)
       }
-      groups.append(unit)
     }
     return groups
   }
+
+  /// How many groups a chunk opens minus how many it closes: parentheses, brackets, and the
+  /// older "start small raised ... end small raised".
+  static func nestingChange(_ chunk: String) -> Int {
+    func count(_ pattern: String) -> Int {
+      (try? NSRegularExpression(pattern: pattern, options: .caseInsensitive))
+        .map { $0.numberOfMatches(in: chunk, range: NSRange(chunk.startIndex..., in: chunk)) } ?? 0
+    }
+    return count(#"\bopen (?:paren\w*|bracket|brace)\b|\bstart small raised\b"#)
+      - count(#"\bclose (?:paren\w*|bracket|brace)\b|\bend small raised\b"#)
+  }
+
+  /// True when stopping to write between these two chunks of math keeps every piece whole:
+  /// after "equals", or before an operator that starts a new term. Anything else is a breath
+  /// inside one term ("negative 40 over 9, w to the negative 13 over 9", "minus 1, sine x").
+  static func canStop(after previous: String, before next: String) -> Bool {
+    let before = previous.lowercased()
+    let after = next.lowercased()
+    func starts(_ text: String, with words: [String]) -> Bool {
+      words.contains { text.hasPrefix($0 + " ") || text == $0 }
+    }
+    func ends(_ text: String, with words: [String]) -> Bool {
+      words.contains { text.hasSuffix(" " + $0) || text == $0 }
+    }
+    // "on top, you have" and other words that only say where to write lead into what follows
+    // (closing words such as "end exponent" write nothing too, but they end a piece).
+    if writtenCharacters(previous) == 0 && !starts(before, with: ["close", "end", "back"]) { return false }
+    if ends(before, with: leadsIntoNext) || starts(after, with: belongsToPrevious) { return false }
+    return ends(before, with: ["equals", "equals sign"]) || starts(after, with: startsATerm)
+  }
+
+  /// Words that start a new term or side, where a writing pause can go before them.
+  private static let startsATerm = ["plus", "minus", "times", "divided by", "equals", "is", "does not equal"]
+
+  /// Chunk endings that need what comes next: an operator, a function name, an opening.
+  private static let leadsIntoNext = [
+    "plus", "minus", "times", "over", "divided by", "of", "the", "to", "and", "a fraction",
+    "sine", "cosine", "tangent", "secant", "cosecant", "cotangent", "log", "natural log",
+    "open parenthesis", "open paren", "open bracket", "start small raised", "you have",
+  ]
+
+  /// Chunk beginnings that finish what came before: closings, powers, primes, the rest of a
+  /// small fraction, and shape descriptions ("a small tick at the top right").
+  private static let belongsToPrevious = [
+    "close", "end", "squared", "cubed", "to the", "raised to the", "a", "over", "prime",
+    "small raised", "tiny raised", "small lowered", "back down", "back up", "factorial",
+  ]
 
   /// Seconds to write a part by hand, before the writing-time setting.
   static func writingTime(_ group: String) -> TimeInterval {

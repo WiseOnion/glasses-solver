@@ -95,12 +95,13 @@ struct ClaudeClient: Sendable {
     line 5, cross out both h's, the h on top in front of the parentheses and the h on the \
     bottom." For a picture, one Mark line per shape: "Mark: Draw a square. Label each side \
     x."
-    Inside a Write or Continue line, commas mark where a person dictating would pause for the \
-    listener to write: right after every "equals", before each plus or minus that starts a new \
-    term, and around anything in parentheses, such as "u equals, 1, plus tangent w" or "g prime \
-    of w equals, a fraction". Keep a term together ("negative 3 w squared", "secant squared \
-    w"), and never split a number. The app decides how long each pause is from how much there \
-    is to write.
+    Inside a Write or Continue line, commas are the short breaths a person reading math aloud \
+    takes: right after every "equals", before each plus or minus that starts a new term, and \
+    around anything in parentheses, such as "u equals, 1, plus tangent w" or "g prime of w \
+    equals, a fraction". Keep a term together ("negative 3 w squared", "secant squared w"), and \
+    never split a number. The app stops for writing only after whole pieces of math (after \
+    "equals", or before a new term outside parentheses), never inside a term or a group, and \
+    decides how long from how much there is to write.
 
     HOW TO SAY THE MATH
     Say what the math is, never what it looks like. Use these words, every time:
