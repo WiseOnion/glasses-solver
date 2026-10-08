@@ -22,21 +22,26 @@ import AVFoundation
 final class Speaker: NSObject {
   /// Slider range for the speaking speed (AVSpeechUtterance rates run 0...1; 0.5 is iOS's default).
   static let rateRange: ClosedRange<Float> = 0.3...0.6
-  /// Aims for about 150 words a minute, the middle of what studies of synthetic speech find
-  /// listeners follow best (slower helps comprehension; adults pick about 157, children 127).
-  /// Apple doesn't publish a rate-to-words mapping and it varies by voice, so the log reports
-  /// the measured words per minute (see `logMeasuredRate`). See README, "How the voice dictates".
-  static let defaultRate: Float = 0.42
+  /// Apple's own default speed. Voices are tuned for it; slower rates stretch the sound and
+  /// make it flat and robotic. The writing pauses give the time to write, so the talking
+  /// doesn't also need to be slow. Apple doesn't publish a rate-to-words mapping and it
+  /// varies by voice, so the log reports the measured words per minute (see
+  /// `logMeasuredRate`). See README, "How the voice dictates".
+  static let defaultRate: Float = 0.5
   /// Slider range for the writing pause, as a multiple of the estimated writing time.
   static let writingTimeRange: ClosedRange<Double> = 0.5...2.5
-  /// Dictation speed relative to `rate`, and the short beat before a Write line.
-  private static let dictationRateFactor: Float = 0.88
+  /// Dictation speed relative to `rate` (the same: see `defaultRate`), and the short beat
+  /// before a Write line.
+  private static let dictationRateFactor: Float = 1
   private static let beforeWritePause: TimeInterval = 0.4
   /// Each repeat of the same line in a row is this much slower, at most twice.
   private static let repeatRateFactor: Float = 0.9
-  /// A dictated part is at most this many spoken words (about two seconds of speech, what
-  /// the phonological loop holds), unless it writes nothing yet ("fraction, top").
-  private static let maxGroupWords = 5
+  /// A dictated part puts at most this many marks on paper (a short piece to hold in mind
+  /// while writing) and is at most this many spoken words. Words that only say where or
+  /// how to write don't count as marks, so a part is a whole piece of math, and each part
+  /// is one utterance: fewer, longer utterances keep the voice's natural intonation.
+  private static let maxGroupMarks = 6
+  private static let maxGroupWords = 16
   /// Writing time per character on paper (careful handwriting of math runs about one and a
   /// half characters a second), the least pause after a part, the most after a whole line,
   /// and a beat after a line to finish it and move the pen down.
@@ -193,8 +198,8 @@ final class Speaker: NSObject {
 
   /// A real line of dictation (letters, a raised power, a fraction) for hearing a voice.
   static let comparisonLine =
-    "the letters c o s, start an open parenthesis, 3 x, raised to the power of 2, right beside that, "
-    + "close parenthesis, times dot, a fraction, on top, the letters s i n, x, on the bottom, 2"
+    "y prime equals cosine of, open parenthesis, 3 x squared, close parenthesis, times a fraction, "
+    + "on top, you have sine x, on the bottom, you have 2"
 
   /// A sentence of about 30 words, spoken to measure a voice's speed.
   static let calibrationText =
@@ -409,7 +414,7 @@ final class Speaker: NSObject {
     case .write, .sentence: "Start line \(line.number)."
     case .continueLine:
       line.text.lowercased().hasPrefix("on the bottom") || line.text.lowercased().hasPrefix("on top")
-        ? "" : "Right next to the previous thing."
+        ? "" : "Same line."
     case .mark: ""
     }
   }
@@ -470,9 +475,12 @@ final class Speaker: NSObject {
     return label.isEmpty ? nil : label
   }
 
-  /// The comma-separated chunks of a Write line, joined into parts of at most
-  /// `maxGroupWords` spoken words. A part that writes nothing yet ("fraction, top") leads
-  /// into the next chunk. Commas inside numbers ("1,000") don't split.
+  /// The comma-separated chunks of a Write line, joined into parts that each put at most
+  /// `maxGroupMarks` marks on paper (and at most `maxGroupWords` spoken words), so a part is
+  /// a whole piece of math however many words it takes to say. Words that only say where
+  /// to write ("right beside that", "on top") lead into what follows; a shape description
+  /// ("a small tick at the top right") or a power ("squared", "to the 4th") stays with
+  /// the mark before it. Commas inside numbers ("1,000") don't split.
   static func dictationGroups(_ line: String) -> [String] {
     let chunks = line.replacingOccurrences(of: #",(?!\d)"#, with: "\n", options: .regularExpression)
       .components(separatedBy: "\n")
@@ -482,21 +490,39 @@ final class Speaker: NSObject {
         return chunk.trimmingCharacters(in: .whitespacesAndNewlines)
       }
       .filter { !$0.isEmpty }
-    var groups: [String] = []
-    var words = 0
+    // Units that are never split: a mark with whatever leads into it or belongs to it.
+    var units: [String] = []
+    var leading: String?
     for chunk in chunks {
-      let count = chunk.split(whereSeparator: \.isWhitespace).count
-      // A shape description ("a small tick at the top right") stays with its mark.
-      let isDescription = chunk.lowercased().hasPrefix("a ")
-      if let last = groups.last,
-        words + count <= maxGroupWords || writtenCharacters(last) == 0 || isDescription
-      {
-        groups[groups.count - 1] = last + ", " + chunk
-        words += count
-      } else {
-        groups.append(chunk)
-        words = count
+      let lowered = chunk.lowercased()
+      let belongsBefore = ["a ", "raised to the power", "squared", "cubed", "to the "].contains { lowered.hasPrefix($0) }
+      if leading == nil, belongsBefore, let last = units.last {
+        units[units.count - 1] = last + ", " + chunk
+        continue
       }
+      let text = leading.map { $0 + ", " + chunk } ?? chunk
+      leading = nil
+      if writtenCharacters(text) == 0 {
+        leading = text
+      } else {
+        units.append(text)
+      }
+    }
+    if let leading {
+      if let last = units.last { units[units.count - 1] = last + ", " + leading } else { units.append(leading) }
+    }
+    var groups: [String] = []
+    for unit in units {
+      if let last = groups.last {
+        let joined = last + ", " + unit
+        if writtenCharacters(joined) <= maxGroupMarks,
+          joined.split(whereSeparator: \.isWhitespace).count <= maxGroupWords
+        {
+          groups[groups.count - 1] = joined
+          continue
+        }
+      }
+      groups.append(unit)
     }
     return groups
   }
@@ -564,7 +590,7 @@ final class Speaker: NSObject {
     "short": 0, "across": 0, "sideways": 0, "tick": 0, "dot": 0, "back": 0, "down": 0,
     "tiny": 0, "lowered": 0, "up": 0, "root": 0, "notch": 0, "tucked": 0, "in": 0, "its": 0,
     "an": 0, "power": 0, "beside": 0, "next": 0, "that": 0, "previous": 0, "thing": 0, "it": 0,
-    "below": 0, "underneath": 0,
+    "below": 0, "underneath": 0, "you": 0, "have": 0, "base": 0,
     "bottom": 1, "draw": 1, "over": 1,
     "sine": 3, "cosine": 3, "tangent": 3, "secant": 3, "cosecant": 3, "cotangent": 3,
     "log": 2, "limit": 3, "inverse": 2,

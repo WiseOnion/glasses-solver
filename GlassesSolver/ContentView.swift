@@ -290,7 +290,7 @@ struct SettingsView: View {
         } footer: {
           Text(
             "Using \(model.voiceDescription). Enhanced and Premium voices sound far more natural than Default "
-              + "ones. Download them in iOS Settings → Accessibility → Spoken Content → Voices → English (for "
+              + "ones. Download them in iOS Settings → Accessibility → Read & Speak → Voices → English (for "
               + "example Ava, Zoe or Evan, Premium), then come back here and pick one. Compare voices reads "
               + "one real line of dictation in each voice, so you can choose by ear; Match speed sets the "
               + "current voice to about 150 words a minute. Answers dictate each "

@@ -15,7 +15,9 @@ final class AppModel {
 
   private static let apiKeyAccount = "anthropic-api-key"
   private static let highResDefaultsKey = "useHighResPhoto"
-  private static let speechRateDefaultsKey = "speechRate"
+  /// A new key when the default changed to Apple's normal speed, so an old, slower saved
+  /// speed (which made voices sound robotic) starts over at the new default once.
+  private static let speechRateDefaultsKey = "speechRate.v2"
   private static let testModeDefaultsKey = "testMode"
   private static let writingTimeDefaultsKey = "writingTime"
   private static let voiceDefaultsKey = "voiceIdentifier"
@@ -26,18 +28,18 @@ final class AppModel {
     Problem: 3
     This is the derivative of g of w, equals, 1 plus tangent w, over 6 minus w cubed, by the quotient rule.
     You'll write six lines.
-    Write: u, equals 1, plus the letters t a n, w
-    Write: u, prime mark, a small tick at the top right, equals the letters s e c, raised to the power of 2, right beside that, w
-    Write: v, equals 6, minus w, raised to the power of 3
-    Write: v, prime mark, equals minus 3 w, raised to the power of 2
-    Write: g, prime mark, start an open parenthesis, w, close parenthesis, equals a fraction, on top
-    Continue: start an open parenthesis, the letters s e c, raised to the power of 2, right beside that, w, close parenthesis, start an open parenthesis, 6, minus w, raised to the power of 3, right beside that, close parenthesis
-    Continue: minus, start an open parenthesis, 1, plus the letters t a n, w, close parenthesis, start an open parenthesis, minus 3 w, raised to the power of 2, right beside that, close parenthesis
-    Continue: on the bottom, start an open parenthesis, 6, minus w, raised to the power of 3, right beside that, close parenthesis, raised to the power of 2
-    Write: g, prime mark, start an open parenthesis, w, close parenthesis, equals a fraction, on top
-    Continue: start an open parenthesis, 6, minus w, raised to the power of 3, right beside that, close parenthesis, the letters s e c, raised to the power of 2, right beside that, w
-    Continue: plus 3 w, raised to the power of 2, right beside that, start an open parenthesis, 1, plus the letters t a n, w, close parenthesis
-    Continue: on the bottom, start an open parenthesis, 6, minus w, raised to the power of 3, right beside that, close parenthesis, raised to the power of 2
+    Write: u equals 1, plus tangent w
+    Write: u prime equals secant squared w
+    Write: v equals 6, minus w cubed
+    Write: v prime equals negative 3 w squared
+    Write: g prime of w equals a fraction
+    Continue: on top, you have open parenthesis, secant squared w, close parenthesis, times open parenthesis, 6 minus w cubed, close parenthesis
+    Continue: minus, open parenthesis, 1 plus tangent w, close parenthesis, times open parenthesis, negative 3 w squared, close parenthesis
+    Continue: on the bottom, you have open parenthesis, 6 minus w cubed, close parenthesis, squared
+    Write: g prime of w equals a fraction
+    Continue: on top, you have open parenthesis, 6 minus w cubed, close parenthesis, times secant squared w
+    Continue: plus 3 w squared, times open parenthesis, 1 plus tangent w, close parenthesis
+    Continue: on the bottom, you have open parenthesis, 6 minus w cubed, close parenthesis, squared
     Mark: Draw a box around line 6.
     Done.
     """
@@ -48,29 +50,26 @@ final class AppModel {
     Problem: 4
     This is the derivative of f of x, equals, negative 3 x squared plus 8 x minus 2, using the limit definition.
     You'll write seven lines.
-    Write: f, prime mark, a small tick at the top right, start an open parenthesis, x, close parenthesis, equals
-    Continue: the letters l i m, with h arrow 0 underneath
-    Continue: a fraction, on top, f, start an open parenthesis, x, plus h, close parenthesis
-    Continue: minus f, start an open parenthesis, x, close parenthesis, on the bottom, h
-    Write: equals the letters l i m, with h arrow 0 underneath
-    Continue: a fraction, on top, start an open parenthesis, minus 3, start an open parenthesis, x, plus h, close parenthesis, raised to the power of 2, right beside that, plus 8
-    Continue: start an open parenthesis, x, plus h, close parenthesis, minus 2, close parenthesis
-    Continue: minus, start an open parenthesis, minus 3 x, raised to the power of 2, right beside that, plus 8 x, minus 2, close parenthesis
-    Continue: on the bottom, h
-    Write: equals the letters l i m, with h arrow 0 underneath
-    Continue: a fraction, on top, minus 3 x, raised to the power of 2, right beside that, minus 6 x h
-    Continue: minus 3 h, raised to the power of 2, right beside that, plus 8 x, plus 8 h, minus 2
-    Continue: plus 3 x, raised to the power of 2, right beside that, minus 8 x, plus 2, on the bottom, h
-    Write: equals the letters l i m, with h arrow 0 underneath
-    Continue: a fraction, on top, minus 6 x h, minus 3 h, raised to the power of 2, right beside that, plus 8 h
-    Continue: on the bottom, h
-    Write: equals the letters l i m, with h arrow 0 underneath
-    Continue: a fraction, on top, h, start an open parenthesis, minus 6 x, minus 3 h, plus 8, close parenthesis
-    Continue: on the bottom, h
-    Mark: On line 5, cross out the h on top, in front of the parentheses, and the h on the bottom.
-    Write: equals the letters l i m, with h arrow 0 underneath
-    Continue: start an open parenthesis, minus 6 x, minus 3 h, plus 8, close parenthesis
-    Write: equals minus 6 x, plus 8
+    Write: f prime of x equals, the limit as h approaches 0, of a fraction
+    Continue: on top, you have f of, open parenthesis, x plus h, close parenthesis, minus f of x
+    Continue: on the bottom, you have h
+    Write: equals, the limit as h approaches 0, of a fraction
+    Continue: on top, you have open parenthesis, negative 3, times open parenthesis, x plus h, close parenthesis, squared, plus 8, times open parenthesis, x plus h, close parenthesis, minus 2, close parenthesis
+    Continue: minus, open parenthesis, negative 3 x squared, plus 8 x, minus 2, close parenthesis
+    Continue: on the bottom, you have h
+    Write: equals, the limit as h approaches 0, of a fraction
+    Continue: on top, you have negative 3 x squared, minus 6 x h, minus 3 h squared, plus 8 x, plus 8 h, minus 2
+    Continue: plus 3 x squared, minus 8 x, plus 2
+    Continue: on the bottom, you have h
+    Write: equals, the limit as h approaches 0, of a fraction
+    Continue: on top, you have negative 6 x h, minus 3 h squared, plus 8 h
+    Continue: on the bottom, you have h
+    Write: equals, the limit as h approaches 0, of a fraction
+    Continue: on top, you have h, times open parenthesis, negative 6 x, minus 3 h, plus 8, close parenthesis
+    Continue: on the bottom, you have h
+    Mark: On line 5, cross out both h's, the h on top in front of the parentheses and the h on the bottom.
+    Write: equals, the limit as h approaches 0, of negative 6 x, minus 3 h, plus 8
+    Write: equals negative 6 x, plus 8
     Mark: Draw a box around line 7.
     Done.
     """
@@ -408,7 +407,7 @@ final class AppModel {
   /// Says one sentence in the current voice and speed.
   func previewVoice() {
     // A real piece of dictation, with its pauses, rather than a sentence of ordinary speech.
-    speaker.speak("Write: the letters c o s, start an open parenthesis, 3 x, raised to the power of 2, right beside that, close parenthesis")
+    speaker.speak("Write: cosine of, open parenthesis, 3 x squared, close parenthesis, times secant squared x")
   }
 
   /// The same real line of dictation in each of the best voices, one after another.

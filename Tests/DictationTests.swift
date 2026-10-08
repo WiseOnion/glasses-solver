@@ -24,21 +24,29 @@ final class DictationTests: XCTestCase {
   }
 
   func testPlainWordingIsCounted() {
-    // The words that say where to write put nothing on paper.
-    XCTAssertEqual(Speaker.writtenCharacters("x, raised to the power of 2"), 2)
-    XCTAssertEqual(Speaker.writtenCharacters("right beside that, plus 1"), 2)
-    XCTAssertEqual(Speaker.writtenCharacters("start an open parenthesis, w, close parenthesis"), 3)
-    XCTAssertEqual(Speaker.writtenCharacters("u, equals 1, plus the letters t a n, w"), 8)
-    // "on the bottom" counts the fraction bar.
-    XCTAssertEqual(Speaker.writtenCharacters("a fraction, on top, 3 x, on the bottom, 2"), 4)
-    XCTAssertEqual(Speaker.writtenCharacters("the letters l i m, with h arrow 0 underneath"), 6)
-    // "over" is the fraction bar.
+    // Words that only say where to write put nothing on paper; math words count their marks.
+    XCTAssertEqual(Speaker.writtenCharacters("secant squared w"), 5)
+    XCTAssertEqual(Speaker.writtenCharacters("the limit as h approaches 0"), 6)
+    XCTAssertEqual(Speaker.writtenCharacters("natural log of x"), 3)
+    XCTAssertEqual(Speaker.writtenCharacters("log base 2 of x"), 4)
+    XCTAssertEqual(Speaker.writtenCharacters("on top, you have 3 x"), 2)
+    XCTAssertEqual(Speaker.writtenCharacters("e to the 2 x plus 1, end exponent, plus 5"), 7)
+    // "over" and "on the bottom" are the fraction bar.
     XCTAssertEqual(Speaker.writtenCharacters("d y over d x"), 5)
-    XCTAssertEqual(Speaker.writtenCharacters("1 over x, right beside that, plus 1"), 5)
-    // "right beside that" is a place, so the chunk after it is in the same part.
+    XCTAssertEqual(Speaker.writtenCharacters("on the bottom, you have h"), 2)
+    // A part is a whole piece of math: up to 6 marks, however many words they take.
     XCTAssertEqual(
-      Speaker.dictationGroups("x, raised to the power of 2, right beside that, plus 1"),
-      ["x", "raised to the power of 2", "right beside that, plus 1"])
+      Speaker.dictationGroups(
+        "on top, you have open parenthesis, secant squared w, close parenthesis, times open parenthesis, "
+          + "6 minus w cubed, close parenthesis"),
+      ["on top, you have open parenthesis, secant squared w", "close parenthesis, times open parenthesis",
+       "6 minus w cubed, close parenthesis"])
+    // A power stays with what it's on.
+    XCTAssertEqual(
+      Speaker.dictationGroups("on the bottom, you have open parenthesis, 6 minus w cubed, close parenthesis, squared"),
+      ["on the bottom, you have open parenthesis, 6 minus w cubed", "close parenthesis, squared"])
+    // Words that only say where to write, at the end of a line, stay with the last part.
+    XCTAssertEqual(Speaker.dictationGroups("g prime of w, equals a fraction, on top"), ["g prime of w, equals a fraction, on top"])
   }
 
   func testSpelledLettersAreCounted() {
@@ -79,7 +87,7 @@ final class DictationTests: XCTestCase {
   func testCues() {
     XCTAssertEqual(Speaker.cue(for: .init(kind: .write, text: "x", number: 2)), "Start line 2.")
     XCTAssertEqual(
-      Speaker.cue(for: .init(kind: .continueLine, text: "x", number: 2)), "Right next to the previous thing.")
+      Speaker.cue(for: .init(kind: .continueLine, text: "x", number: 2)), "Same line.")
     // A line that says where it goes needs no cue.
     XCTAssertEqual(Speaker.cue(for: .init(kind: .continueLine, text: "on the bottom, h", number: 2)), "")
     XCTAssertEqual(Speaker.cue(for: .init(kind: .continueLine, text: "On top, 3 x", number: 2)), "")
@@ -94,12 +102,12 @@ final class DictationTests: XCTestCase {
     XCTAssertEqual(Speaker.dictationGroups("y prime, equals, 1,000 x squared"), ["y prime, equals", "1,000 x squared"])
     // A part that writes nothing yet leads into the next one.
     XCTAssertEqual(
-      Speaker.dictationGroups("fraction, top, sine of 5 x, bottom, 5 x, end fraction"),
-      ["fraction, top, sine of 5 x", "bottom, 5 x, end fraction"])
-    // A shape description stays with the mark it describes.
+      Speaker.dictationGroups("e to the 2 x plus 1, end exponent, plus 5"),
+      ["e to the 2 x plus 1", "end exponent, plus 5"])
+    // A shape description stays with the mark it describes, and doesn't count as marks.
     XCTAssertEqual(
       Speaker.dictationGroups("y, prime mark, a small tick at the top right, equals sign, 3, times dot, a small dot at middle height"),
-      ["y, prime mark, a small tick at the top right", "equals sign, 3, times dot, a small dot at middle height"])
+      ["y, prime mark, a small tick at the top right, equals sign, 3", "times dot, a small dot at middle height"])
     XCTAssertEqual(Speaker.dictationGroups(" , ."), [])
   }
 
@@ -140,6 +148,15 @@ final class DictationTests: XCTestCase {
       "Write: a fraction, on top, 3 x, on the bottom, 2, right beside that, plus 1.",
       "Write: the letters l i m, with h arrow 0 underneath.",
       "Write: d y over d x, equals 3 x over 2, right beside that, plus 1.",
+      // The tutor wording.
+      "Write: u prime equals secant squared w.",
+      "Write: v prime equals negative 3 w squared.",
+      "Write: f prime of x equals, the limit as h approaches 0, of a fraction.",
+      "Continue: on top, you have f of, open parenthesis, x plus h, close parenthesis, minus f of x.",
+      "Write: y equals natural log of x, plus log base 2 of x.",
+      "Write: e to the 2 x plus 1, end exponent, plus 5.",
+      "Write: the square root of x plus 1, end root, plus 2.",
+      "Mark: On line 5, cross out both h's, the h on top and the h on the bottom.",
       "Write: g, prime mark, start an open parenthesis, w, close parenthesis, equals minus 3 w.",
       "Write: a square root sign, under it, x plus 1.",
       "Write: 4 point 9.",
