@@ -88,6 +88,8 @@ final class AppModel {
   private(set) var lastPhoto: UIImage?
   private(set) var lastAnswer = ""
   private(set) var hasAPIKey: Bool
+  /// True while speech is paused because the glasses' audio disconnected (see `Speaker.heldForRoute`).
+  private(set) var speechHeld = false
 
   // Hands-free session (capture button on the glasses)
   private(set) var sessionActive = false
@@ -312,6 +314,7 @@ final class AppModel {
     speaker.writingTimeScale = writingTime
     speaker.voiceIdentifier = voiceIdentifier
     speaker.dictateInParts = dictateInParts
+    speaker.onHoldChanged = { [weak self] held in self?.speechHeld = held }
     applyVoiceEngine()
     if let sdkSetupError {
       errorMessage =
@@ -451,6 +454,11 @@ final class AppModel {
 
   func stopSpeaking() {
     speaker.stop()
+  }
+
+  /// Plays speech held for the glasses' audio through the phone instead.
+  func playOnPhone() {
+    speaker.playOnPhone()
   }
 
   /// Says the latest "Write:" line again (touchpad double-tap or the on-screen button).

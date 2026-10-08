@@ -187,6 +187,20 @@ final class Speaker: NSObject {
   private var keepAlivePlayer: AVAudioPlayer?
   private var stopKeepAliveAfterSpeech = false
   private var interruptionObserver: NSObjectProtocol?
+  private var routeObserver: NSObjectProtocol?
+
+  /// True while speech is paused because the glasses' audio disconnected: iOS would
+  /// otherwise switch to the phone's speaker and read the answer out loud. It carries on when
+  /// they reconnect, or with `playOnPhone`.
+  private(set) var heldForRoute = false {
+    didSet {
+      guard heldForRoute != oldValue else { return }
+      neural.held = heldForRoute
+      onHoldChanged?(heldForRoute)
+    }
+  }
+  /// Called when `heldForRoute` changes.
+  var onHoldChanged: ((Bool) -> Void)?
 
   /// True while anything is queued or being said (including a writing pause).
   var isActive: Bool { outstanding > 0 }
@@ -203,11 +217,69 @@ final class Speaker: NSObject {
     neural.onFailure = { [weak self] indexes in self?.neuralVoiceFailed(indexes) }
     interruptionObserver = NotificationCenter.default.addObserver(
       forName: AVAudioSession.interruptionNotification, object: nil, queue: .main
-    ) { note in
+    ) { [weak self] note in
       let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
       let type = raw.flatMap(AVAudioSession.InterruptionType.init(rawValue:))
       diag("audio", "interruption \(type == .began ? "began" : type == .ended ? "ended" : "unknown")")
+      if type == .ended {
+        MainActor.assumeIsolated { self?.interruptionEnded() }
+      }
     }
+    routeObserver = NotificationCenter.default.addObserver(
+      forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main
+    ) { [weak self] note in
+      let raw = note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt
+      let reason = raw.flatMap(AVAudioSession.RouteChangeReason.init(rawValue:))
+      let previous = note.userInfo?[AVAudioSessionRouteChangePreviousRouteKey] as? AVAudioSessionRouteDescription
+      let wasPrivate = previous.map(Self.isPrivate) ?? false
+      let lostDevice = reason == .oldDeviceUnavailable
+      MainActor.assumeIsolated { self?.routeChanged(lostDevice: lostDevice, wasPrivate: wasPrivate) }
+    }
+  }
+
+  /// True when a route plays only to the listener: Bluetooth (the glasses) or headphones.
+  nonisolated static func isPrivate(_ route: AVAudioSessionRouteDescription) -> Bool {
+    let privatePorts: [AVAudioSession.Port] = [.bluetoothA2DP, .bluetoothHFP, .bluetoothLE, .headphones]
+    return route.outputs.contains { privatePorts.contains($0.portType) }
+  }
+
+  /// Holds speech when the glasses' audio drops while something is being said (or an answer
+  /// is on its way), and carries on when a private route is back.
+  private func routeChanged(lostDevice: Bool, wasPrivate: Bool) {
+    let nowPrivate = Self.isPrivate(AVAudioSession.sharedInstance().currentRoute)
+    diag("audio", "route changed to \(Self.routeDescription)")
+    if nowPrivate {
+      if heldForRoute {
+        diag("audio", "the glasses' audio is back; carrying on")
+        heldForRoute = false
+        synthesizer.continueSpeaking()
+      }
+    } else if lostDevice, wasPrivate, !heldForRoute, isActive || answerOpen || keepAlivePlayer != nil {
+      diag("audio", "the glasses' audio disconnected; holding speech so it isn't played out loud")
+      heldForRoute = true
+      synthesizer.pauseSpeaking(at: .immediate)
+    }
+  }
+
+  /// After a call or Siri, iOS leaves the app's audio stopped: start it again, or with the
+  /// phone locked the app can be suspended partway through a solve.
+  private func interruptionEnded() {
+    guard isActive || answerOpen || keepAlivePlayer != nil else { return }
+    activateSession()
+    if let player = keepAlivePlayer, !player.isPlaying {
+      let started = player.play()
+      diag("audio", "keep-alive \(started ? "restarted" : "FAILED to restart") after the interruption")
+    }
+    neural.resumeAfterInterruption()
+    if !heldForRoute { synthesizer.continueSpeaking() }
+  }
+
+  /// Ends a hold (`heldForRoute`) and plays the speech through whatever is connected now.
+  func playOnPhone() {
+    guard heldForRoute else { return }
+    diag("audio", "playing on the phone, as asked")
+    heldForRoute = false
+    synthesizer.continueSpeaking()
   }
 
   /// Says `text` from the start. `isAnswer` marks it as an answer, so `progress` follows it.
@@ -300,6 +372,9 @@ final class Speaker: NSObject {
     sayingAnswer = false
     pendingNotices.removeAll()
     reset()
+    // Stopping ends a hold too (after the queue is cleared, so nothing old plays), so
+    // whatever is said next isn't held.
+    heldForRoute = false
     if stopKeepAliveAfterSpeech { endKeepAlive() }
   }
 
@@ -404,6 +479,8 @@ final class Speaker: NSObject {
     utterances.append(utterance)
     utteranceIndex[ObjectIdentifier(utterance)] = index
     synthesizer.speak(utterance)
+    // Speech queued during a hold waits with the rest.
+    if heldForRoute { synthesizer.pauseSpeaking(at: .immediate) }
   }
 
   /// The neural voice couldn't run: say what it had left in Apple's voice, and keep using

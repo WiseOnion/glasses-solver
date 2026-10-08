@@ -42,6 +42,26 @@ struct ContentView: View {
           .buttonStyle(.borderedProminent)
           .disabled(model.isBusy || !model.isRegistered || !model.canSolve)
 
+          if model.speechHeld {
+            VStack(alignment: .leading, spacing: 10) {
+              Label("Paused: the glasses' audio disconnected", systemImage: "speaker.slash.fill")
+                .font(.headline)
+                .foregroundStyle(.orange)
+              Text("So it isn't read out loud on the phone. It carries on when the glasses reconnect.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+              HStack {
+                Button("Play on phone", systemImage: "iphone.radiowaves.left.and.right") { model.playOnPhone() }
+                Spacer()
+                Button("Stop", systemImage: "stop.fill") { model.stopSpeaking() }
+              }
+              .buttonStyle(.bordered)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding()
+            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 12))
+          }
+
           sessionSection
 
           if let photo = model.lastPhoto {

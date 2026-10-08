@@ -58,6 +58,19 @@ final class NeuralVoice {
   /// Use Azure when set (and reachable); Heart otherwise.
   var azure: AzureVoice?
 
+  /// While true, playback is paused where it is (clips keep being made); set false to carry on.
+  /// `stop` leaves it as it is, so speech queued during a hold waits too.
+  var held = false {
+    didSet {
+      guard held != oldValue else { return }
+      if held {
+        player.pause()
+      } else if playing {
+        resumePlayback()
+      }
+    }
+  }
+
   /// One piece to say, then a pause. `token` comes back in `onStart` and `onEnd`. Pieces with
   /// the same `group` (one pen line) are said in one Azure request.
   struct Item: Sendable {
@@ -200,7 +213,8 @@ final class NeuralVoice {
     ready.removeAll()
     producing = false
     playing = false
-    if player.isPlaying { player.stop() }
+    // Also when paused (a hold), so the old clip is dropped rather than played on release.
+    if connectedRate != 0 { player.stop() }
     finishPlaying?.finish()
     finishPlaying = nil
     wakePlayer()
@@ -411,13 +425,16 @@ final class NeuralVoice {
       (channel + audio.samples.count).initialize(repeating: 0, count: silence)
     }
     guard startEngine(format: format) else { return }
+    var waiterForThisClip: Waiter?
     await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
       let waiter = Waiter(continuation)
+      waiterForThisClip = waiter
       finishPlaying = waiter
       player.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { _ in waiter.finish() }
-      if !player.isPlaying { player.play() }
+      if !player.isPlaying && !held { player.play() }
     }
-    finishPlaying = nil
+    // Only its own wait: a `stop` and a new clip may have replaced it meanwhile.
+    if finishPlaying === waiterForThisClip { finishPlaying = nil }
   }
 
   private func startEngine(format: AVAudioFormat) -> Bool {
@@ -436,12 +453,29 @@ final class NeuralVoice {
     }
   }
 
+  /// Starts playing again after a call or Siri stopped the audio, unless held.
+  func resumeAfterInterruption() {
+    guard playing, !held else { return }
+    diag("neural", "starting the voice again after an interruption")
+    resumePlayback()
+  }
+
+  private func resumePlayback() {
+    do {
+      if !audioEngine.isRunning { try audioEngine.start() }
+      player.play()
+    } catch {
+      diag("neural", "audio engine couldn't restart: \(ErrorDetail.describe(error))")
+      finishPlaying?.finish()
+    }
+  }
+
   private func restartAfterRouteChange() {
     guard playing, !audioEngine.isRunning else { return }
-    diag("neural", "audio route changed; starting the voice again")
+    diag("neural", "audio route changed; starting the voice again\(held ? " (held, so not playing yet)" : "")")
     do {
       try audioEngine.start()
-      player.play()
+      if !held { player.play() }
     } catch {
       diag("neural", "audio engine couldn't restart: \(ErrorDetail.describe(error))")
       // Let the current clip finish so the rest isn't stuck waiting.
