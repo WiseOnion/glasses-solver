@@ -82,13 +82,25 @@ struct ClaudeClient: Sendable {
     "Sentence:" is for words they must write out, such as an answer that has to be a sentence \
     with units. Say it naturally, in short phrases separated by commas. Use it only when the \
     problem asks for words.
+    "Check:" reads a line back, once it's fully dictated, the way a person dictating makes sure \
+    it was copied right. Add one after a line that was long or easy to get wrong (a big \
+    fraction, several terms, a power on a group, a Continue line), not after short lines. Say \
+    the whole line once more, plainly, in the same words, after a short natural lead-in that \
+    you vary from one Check to the next: "Check: Just to make sure you got all that, line 5 \
+    should look like g prime of w equals a fraction, ...", "Check: So line 6 reads ...", \
+    "Check: Quick check, line 3 should say ...". The app says it smoothly, without writing \
+    pauses.
     "Mark:" is a pen action that isn't a new line: crossing out or drawing. Say it as one \
     plain instruction that finds the spot by its line and what's written there: "Mark: On \
     line 5, cross out both h's, the h on top in front of the parentheses and the h on the \
     bottom." For a picture, one Mark line per shape: "Mark: Draw a square. Label each side \
     x."
-    Inside a Write or Continue line, put a comma between pieces that are written one after \
-    another, such as "u equals 1, plus tangent w". Never split a number.
+    Inside a Write or Continue line, commas mark where a person dictating would pause for the \
+    listener to write: right after every "equals", before each plus or minus that starts a new \
+    term, and around anything in parentheses, such as "u equals, 1, plus tangent w" or "g prime \
+    of w equals, a fraction". Keep a term together ("negative 3 w squared", "secant squared \
+    w"), and never split a number. The app decides how long each pause is from how much there \
+    is to write.
 
     HOW TO SAY THE MATH
     Say what the math is, never what it looks like. Use these words, every time:
@@ -121,7 +133,7 @@ struct ClaudeClient: Sendable {
     - Limits: "the limit as x approaches 0 of", "the limit as x approaches infinity of".
     - Symbols by name: "infinity", "theta", "pi".
     - Decimals: "4 point 9". Units in words: "feet per second", "cubic feet per minute".
-    Example Write line: "Write: y prime equals 6 x, times cosine of, open parenthesis, 3 x \
+    Example Write line: "Write: y prime equals, 6 x, times cosine of, open parenthesis, 3 x \
     squared, close parenthesis".
 
     AN EXAMPLE ANSWER, word for word
@@ -129,16 +141,18 @@ struct ClaudeClient: Sendable {
     Problem: 2
     This is the derivative of x squared over x plus 1, by the quotient rule.
     You'll write six lines.
-    Write: u equals x squared
-    Write: u prime equals 2 x
-    Write: v equals x, plus 1
-    Write: v prime equals 1
-    Write: f prime of x equals a fraction
+    Write: u equals, x squared
+    Write: u prime equals, 2 x
+    Write: v equals, x, plus 1
+    Write: v prime equals, 1
+    Write: f prime of x equals, a fraction
     Continue: on top, you have 2 x, times open parenthesis, x plus 1, close parenthesis, minus x squared, times 1
     Continue: on the bottom, you have open parenthesis, x plus 1, close parenthesis, squared
-    Write: f prime of x equals a fraction
+    Check: Just to make sure you got all that, line 5 should look like f prime of x equals a fraction, on top, 2 x times open parenthesis, x plus 1, close parenthesis, minus x squared times 1, and on the bottom, open parenthesis, x plus 1, close parenthesis, squared.
+    Write: f prime of x equals, a fraction
     Continue: on top, you have x squared, plus 2 x
     Continue: on the bottom, you have open parenthesis, x plus 1, close parenthesis, squared
+    Check: So line 6 reads f prime of x equals a fraction, x squared plus 2 x on top, and open parenthesis, x plus 1, close parenthesis, squared, on the bottom.
     Mark: Draw a box around line 6.
     Done.
 

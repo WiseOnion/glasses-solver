@@ -201,6 +201,62 @@ final class DictationTests: XCTestCase {
     XCTAssertTrue(speaker.isActive)
   }
 
+  func testAzureLineIsOneRequestWithItsPauses() {
+    let items = [
+      NeuralVoice.Item(text: "Start line 1. u equals 1,", speed: 0.7, pauseAfter: 1.4, token: 0, group: 5),
+      NeuralVoice.Item(text: "plus tangent w.", speed: 0.7, pauseAfter: 25, token: 1, group: 5),
+    ]
+    let ssml = NeuralVoice.ssml(for: items, voice: "en-US-AvaMultilingualNeural")
+    XCTAssertTrue(ssml.contains("<voice name=\"en-US-AvaMultilingualNeural\">"))
+    // The speed becomes a rate, and the pause between the parts a break inside the request;
+    // the last part's pause is played as silence after it.
+    XCTAssertTrue(ssml.contains("<prosody rate=\"-30%\">"))
+    XCTAssertTrue(ssml.contains("Start line 1. u equals 1,<break time=\"1400ms\"/> plus tangent w."))
+    XCTAssertFalse(ssml.contains("25000ms"))
+    // A pause over Azure's 20-second limit is several breaks.
+    let long = NeuralVoice.ssml(
+      for: [
+        NeuralVoice.Item(text: "a", speed: 1, pauseAfter: 25, token: 0),
+        NeuralVoice.Item(text: "b", speed: 1, pauseAfter: 0, token: 1),
+      ], voice: "v")
+    XCTAssertTrue(long.contains("<break time=\"20000ms\"/><break time=\"5000ms\"/>"))
+    XCTAssertTrue(long.contains("<prosody rate=\"0%\">"))
+    // Text is escaped, so "h's" or "<" can't break the request.
+    XCTAssertEqual(NeuralVoice.escapeXML("both h's & x < 2"), "both h&apos;s &amp; x &lt; 2")
+    XCTAssertEqual(Speaker.azureVoiceName("en-US-AvaMultilingualNeural"), "Ava")
+    XCTAssertEqual(Speaker.azureVoiceName("en-US-JennyNeural"), "Jenny")
+  }
+
+  func testUnreachableAzureFallsBackToApple() async throws {
+    try XCTSkipIf(NeuralVoice.isBundled, "this build includes Heart, which would be used instead")
+    let speaker = Speaker()
+    defer { speaker.stop() }
+    speaker.useNeuralVoice = true
+    // A region that doesn't exist, so the request fails at once.
+    speaker.azureVoice = NeuralVoice.AzureVoice(key: "k", region: "nowhere.invalid", voice: "en-US-AvaMultilingualNeural")
+    XCTAssertTrue(speaker.neuralVoiceActive)
+    speaker.speak("Problem: 3")
+    // Azure fails, there's no Heart, so Apple's voice takes over.
+    let fellBack = await waitUntil(20) { !speaker.neuralVoiceActive }
+    XCTAssertTrue(fellBack)
+    XCTAssertTrue(speaker.isActive)
+  }
+
+  func testCheckLinesAreReadBackSmoothly() {
+    XCTAssertEqual(Speaker.checkLine(in: "Check: So line 1 reads y equals 2"), "So line 1 reads y equals 2.")
+    XCTAssertNil(Speaker.checkLine(in: "Check:"))
+    XCTAssertNil(Speaker.checkLine(in: "Checking is fun"))
+    let speaker = Speaker()
+    defer { speaker.stop() }
+    speaker.speak("Problem: 3\nWrite: y equals, 2\nCheck: So line 1 reads y equals 2.\nWrite: y prime equals, 0")
+    // The read-back is its own smooth sentence with a short beat after it, and doesn't count
+    // as a line: the next Write is line 2.
+    XCTAssertEqual(
+      speaker.queued.map(\.text),
+      ["Problem 3.", "Start line 1. y equals, 2.", "So line 1 reads y equals 2.", "Start line 2. y prime equals, 0."])
+    XCTAssertEqual(speaker.queued[2].pause, 0.8, accuracy: 0.001)
+  }
+
   // MARK: - An answer arriving in pieces
 
   private static let answer = """

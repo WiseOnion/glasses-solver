@@ -207,6 +207,7 @@ struct SettingsView: View {
   @Bindable var model: AppModel
   @Environment(\.dismiss) private var dismiss
   @State private var keyDraft = ""
+  @State private var azureKeyDraft = ""
   /// Re-read when Settings opens, so newly downloaded voices show up.
   @State private var voices: [(id: String, label: String)] = []
   @Environment(\.scenePhase) private var scenePhase
@@ -243,18 +244,45 @@ struct SettingsView: View {
         }
 
         Section {
-          if model.hasNeuralVoice {
-            Toggle("Natural voice (Heart, built in)", isOn: $model.useNeuralVoice)
-          }
-          Picker(model.hasNeuralVoice ? "Apple voice (when natural voice is off)" : "Voice", selection: $model.voiceIdentifier) {
-            Text("Automatic (best installed)").tag(String?.none)
-            // Keep a saved voice in the list even when iOS isn't offering it right now, so
-            // the choice isn't lost and you can see it's still selected.
-            if let saved = model.voiceIdentifier, !voices.contains(where: { $0.id == saved }) {
-              Text("Your saved voice (not available right now)").tag(String?.some(saved))
+          Picker("Voice", selection: $model.voiceEngine) {
+            Text("Azure (online, clearest)").tag(AppModel.VoiceEngine.azure)
+            if model.hasNeuralVoice {
+              Text("Heart (built in, offline)").tag(AppModel.VoiceEngine.heart)
             }
-            ForEach(voices, id: \.id) { voice in
-              Text(voice.label).tag(String?.some(voice.id))
+            Text("Apple").tag(AppModel.VoiceEngine.apple)
+          }
+          if model.voiceEngine == .azure {
+            Picker("Azure voice", selection: $model.azureVoiceName) {
+              ForEach(AppModel.azureVoices, id: \.self) { id in
+                Text(Speaker.azureVoiceName(id)).tag(id)
+              }
+            }
+            TextField("Region, such as eastus", text: $model.azureRegion)
+              .textInputAutocapitalization(.never)
+              .autocorrectionDisabled()
+            SecureField(model.hasAzureKey ? "Azure key saved" : "Azure Speech key", text: $azureKeyDraft)
+              .textInputAutocapitalization(.never)
+              .autocorrectionDisabled()
+            Button("Save Azure key") {
+              model.saveAzureKey(azureKeyDraft)
+              azureKeyDraft = ""
+            }
+            .disabled(azureKeyDraft.trimmingCharacters(in: .whitespaces).isEmpty)
+            if model.hasAzureKey {
+              Button("Delete Azure key", role: .destructive) { model.deleteAzureKey() }
+            }
+          }
+          if model.voiceEngine == .apple {
+            Picker("Apple voice", selection: $model.voiceIdentifier) {
+              Text("Automatic (best installed)").tag(String?.none)
+              // Keep a saved voice in the list even when iOS isn't offering it right now, so
+              // the choice isn't lost and you can see it's still selected.
+              if let saved = model.voiceIdentifier, !voices.contains(where: { $0.id == saved }) {
+                Text("Your saved voice (not available right now)").tag(String?.some(saved))
+              }
+              ForEach(voices, id: \.id) { voice in
+                Text(voice.label).tag(String?.some(voice.id))
+              }
             }
           }
           Button("Preview voice", systemImage: "play.circle") { model.previewVoice() }
@@ -292,8 +320,9 @@ struct SettingsView: View {
           Text("Voice")
         } footer: {
           Text(
-            "Using \(model.voiceDescription). The natural voice runs inside the app, works offline and with the "
-              + "phone locked. Turn it off to use an Apple voice instead. "
+            "Using \(model.voiceDescription). Azure is the clearest: it needs internet and your own free key "
+              + "(portal.azure.com, a Speech resource on the Free F0 tier; copy its key and region), and uses Heart "
+              + "when it can't be reached. Heart runs inside the app and works offline. "
               + "Enhanced and Premium voices sound far more natural than Default "
               + "ones. Download them in iOS Settings → Accessibility → Read & Speak → Voices → English (for "
               + "example Ava, Zoe or Evan, Premium), then come back here and pick one. Compare voices reads "

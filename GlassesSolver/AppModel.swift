@@ -22,25 +22,32 @@ final class AppModel {
   private static let writingTimeDefaultsKey = "writingTime"
   private static let voiceDefaultsKey = "voiceIdentifier"
   private static let dictateInPartsDefaultsKey = "dictateInParts"
+  /// The old on/off switch for the built-in voice, read once to keep a choice of "off".
   private static let neuralVoiceDefaultsKey = "useNeuralVoice"
+  private static let voiceEngineDefaultsKey = "voiceEngine"
+  private static let azureKeyAccount = "azure-speech-key"
+  private static let azureRegionDefaultsKey = "azureRegion"
+  private static let azureVoiceDefaultsKey = "azureVoice"
   /// A sample in the style the system prompt asks for, including dictated Write lines.
   private static let sampleAnswer = """
     I can see problem 3.
     Problem: 3
     This is the derivative of g of w, equals, 1 plus tangent w, over 6 minus w cubed, by the quotient rule.
     You'll write six lines.
-    Write: u equals 1, plus tangent w
-    Write: u prime equals secant squared w
-    Write: v equals 6, minus w cubed
-    Write: v prime equals negative 3 w squared
-    Write: g prime of w equals a fraction
+    Write: u equals, 1, plus tangent w
+    Write: u prime equals, secant squared w
+    Write: v equals, 6, minus w cubed
+    Write: v prime equals, negative 3 w squared
+    Write: g prime of w equals, a fraction
     Continue: on top, you have open parenthesis, secant squared w, close parenthesis, times open parenthesis, 6 minus w cubed, close parenthesis
     Continue: minus, open parenthesis, 1 plus tangent w, close parenthesis, times open parenthesis, negative 3 w squared, close parenthesis
     Continue: on the bottom, you have open parenthesis, 6 minus w cubed, close parenthesis, squared
-    Write: g prime of w equals a fraction
+    Check: Just to make sure you got all that, line 5 should look like g prime of w equals a fraction, with secant squared w in parentheses, times 6 minus w cubed in parentheses, minus 1 plus tangent w in parentheses, times negative 3 w squared in parentheses, all on top, and 6 minus w cubed in parentheses, squared, on the bottom.
+    Write: g prime of w equals, a fraction
     Continue: on top, you have open parenthesis, 6 minus w cubed, close parenthesis, times secant squared w
     Continue: plus 3 w squared, times open parenthesis, 1 plus tangent w, close parenthesis
     Continue: on the bottom, you have open parenthesis, 6 minus w cubed, close parenthesis, squared
+    Check: So line 6 reads g prime of w equals a fraction, with 6 minus w cubed in parentheses times secant squared w, plus 3 w squared times 1 plus tangent w in parentheses, on top, and 6 minus w cubed in parentheses, squared, on the bottom.
     Mark: Draw a box around line 6.
     Done.
     """
@@ -120,18 +127,76 @@ final class AppModel {
     }
   }
 
-  /// Speak with the built-in neural voice (Kokoro Heart) instead of an Apple voice. On by
-  /// default when the build includes it; off falls back to the voice picked below.
-  var useNeuralVoice: Bool {
+  /// Which voice reads answers.
+  enum VoiceEngine: String, CaseIterable {
+    /// Microsoft's neural voices, online, with the user's own key.
+    case azure
+    /// Kokoro Heart, built into the app, offline.
+    case heart
+    /// An Apple voice, picked below.
+    case apple
+  }
+
+  /// Which voice reads answers. Azure needs a saved key (and falls back to Heart when it
+  /// can't be reached); Heart needs a build with its files.
+  var voiceEngine: VoiceEngine {
     didSet {
-      speaker.useNeuralVoice = useNeuralVoice
-      UserDefaults.standard.set(useNeuralVoice, forKey: Self.neuralVoiceDefaultsKey)
-      speaker.preloadNeuralVoice()
+      UserDefaults.standard.set(voiceEngine.rawValue, forKey: Self.voiceEngineDefaultsKey)
+      applyVoiceEngine()
     }
   }
 
   /// True when this build includes the built-in voice.
   var hasNeuralVoice: Bool { NeuralVoice.isBundled }
+
+  /// The Azure Speech resource's region, such as "eastus".
+  var azureRegion: String {
+    didSet {
+      UserDefaults.standard.set(azureRegion, forKey: Self.azureRegionDefaultsKey)
+      applyVoiceEngine()
+    }
+  }
+
+  /// The Azure voice, such as "en-US-AvaMultilingualNeural".
+  var azureVoiceName: String {
+    didSet {
+      UserDefaults.standard.set(azureVoiceName, forKey: Self.azureVoiceDefaultsKey)
+      applyVoiceEngine()
+    }
+  }
+
+  /// Azure voices to choose from: clear US English voices with full SSML support.
+  static let azureVoices = [
+    "en-US-AvaMultilingualNeural", "en-US-AndrewMultilingualNeural", "en-US-EmmaMultilingualNeural",
+    "en-US-BrianMultilingualNeural",
+  ]
+
+  private(set) var hasAzureKey: Bool
+
+  /// Tells the speaker which voice to use, from the setting and the saved Azure key.
+  private func applyVoiceEngine() {
+    speaker.useNeuralVoice = voiceEngine != .apple
+    if voiceEngine == .azure, let key = Keychain.read(Self.azureKeyAccount), !azureRegion.isEmpty {
+      speaker.azureVoice = NeuralVoice.AzureVoice(key: key, region: azureRegion, voice: azureVoiceName)
+    } else {
+      speaker.azureVoice = nil
+    }
+    speaker.preloadNeuralVoice()
+  }
+
+  func saveAzureKey(_ key: String) {
+    let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return }
+    hasAzureKey = Keychain.save(trimmed, account: Self.azureKeyAccount)
+    if !hasAzureKey { errorMessage = "Couldn't save the Azure key to the Keychain." }
+    applyVoiceEngine()
+  }
+
+  func deleteAzureKey() {
+    Keychain.delete(Self.azureKeyAccount)
+    hasAzureKey = false
+    applyVoiceEngine()
+  }
 
   /// The chosen voice's identifier; nil picks the best installed voice automatically.
   var voiceIdentifier: String? {
@@ -228,14 +293,22 @@ final class AppModel {
     } ?? 1
     self.voiceIdentifier = UserDefaults.standard.string(forKey: Self.voiceDefaultsKey)
     self.dictateInParts = UserDefaults.standard.object(forKey: Self.dictateInPartsDefaultsKey) as? Bool ?? true
-    self.useNeuralVoice = UserDefaults.standard.object(forKey: Self.neuralVoiceDefaultsKey) as? Bool ?? true
+    let hasAzureKey = Keychain.read(Self.azureKeyAccount) != nil
+    self.hasAzureKey = hasAzureKey
+    self.azureRegion = UserDefaults.standard.string(forKey: Self.azureRegionDefaultsKey) ?? "eastus"
+    self.azureVoiceName = UserDefaults.standard.string(forKey: Self.azureVoiceDefaultsKey) ?? Self.azureVoices[0]
+    // A saved choice, else the best voice available: Azure with a key, then Heart, then
+    // Apple. Turning the old "natural voice" switch off meant Apple.
+    let savedEngine = UserDefaults.standard.string(forKey: Self.voiceEngineDefaultsKey).flatMap(VoiceEngine.init)
+    let oldNaturalVoiceOff = UserDefaults.standard.object(forKey: Self.neuralVoiceDefaultsKey) as? Bool == false
+    self.voiceEngine =
+      savedEngine ?? (oldNaturalVoiceOff ? .apple : hasAzureKey ? .azure : NeuralVoice.isBundled ? .heart : .apple)
     // All stored properties are set from here on, so `self` can be used.
     speaker.rate = speechRate
     speaker.writingTimeScale = writingTime
     speaker.voiceIdentifier = voiceIdentifier
     speaker.dictateInParts = dictateInParts
-    speaker.useNeuralVoice = useNeuralVoice
-    speaker.preloadNeuralVoice()
+    applyVoiceEngine()
     if let sdkSetupError {
       errorMessage =
         "The Meta glasses SDK failed to start, so glasses features may not work.\n\nDetails: \(sdkSetupError)"
@@ -394,7 +467,7 @@ final class AppModel {
   }
 
   var voiceDescription: String {
-    if speaker.neuralVoiceActive { return "Kokoro " + NeuralVoice.voiceName + ", the built-in natural voice" }
+    if speaker.neuralVoiceActive { return speaker.neuralVoiceName }
     guard let voice = speaker.resolvedVoice else { return "System default voice" }
     let description = "\(voice.name), \(Speaker.qualityName(voice.quality)) quality"
     // Say so when the picked voice can't be found, instead of quietly switching.

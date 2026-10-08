@@ -52,6 +52,8 @@ final class Speaker: NSObject {
   /// Time for each thing a Mark line crosses out or draws, and the most for one Mark line.
   private static let markItemPause: TimeInterval = 2
   private static let maxMarkPause: TimeInterval = 8
+  /// After a "Check:" read-back: a beat, since there's nothing new to write.
+  private static let checkPause: TimeInterval = 0.8
   /// After "Problem 4.": time to find the spot on the paper and write the number.
   private static let problemPause: TimeInterval = 2
 
@@ -61,14 +63,32 @@ final class Speaker: NSObject {
   var dictateInParts = true
   /// The chosen voice; nil means the best installed voice for the phone's language.
   var voiceIdentifier: String?
-  /// Speak with the built-in neural voice (Kokoro Heart) when this build has it.
+  /// Speak with a natural voice (Azure when `azureVoice` is set, else the built-in Heart)
+  /// instead of Apple's.
   var useNeuralVoice = false
-  /// True once the neural voice failed to run, so Apple's voice is used until relaunch.
+  /// The Azure voice to use, when one is set up; nil uses Heart.
+  var azureVoice: NeuralVoice.AzureVoice? {
+    didSet { neural.azure = azureVoice }
+  }
+  /// True once no natural voice could run, so Apple's voice is used until relaunch.
   private var neuralFailed = false
   private let neural = NeuralVoice()
 
-  /// True when speech goes to the built-in neural voice.
-  var neuralVoiceActive: Bool { useNeuralVoice && !neuralFailed && NeuralVoice.isBundled }
+  /// True when a natural voice can run: Azure is set up, or this build has Heart.
+  var neuralVoiceAvailable: Bool { !neuralFailed && (azureVoice != nil || NeuralVoice.isBundled) }
+  /// True when speech goes to a natural voice.
+  var neuralVoiceActive: Bool { useNeuralVoice && neuralVoiceAvailable }
+  /// The natural voice's name, for the log and Settings.
+  var neuralVoiceName: String {
+    if let azure = azureVoice { return Self.azureVoiceName(azure.voice) + " (Azure)" }
+    return "Kokoro " + NeuralVoice.voiceName + " (built in)"
+  }
+
+  /// "Ava" for "en-US-AvaMultilingualNeural".
+  static func azureVoiceName(_ id: String) -> String {
+    let name = id.split(separator: "-").last.map(String.init) ?? id
+    return name.replacingOccurrences(of: "MultilingualNeural", with: "").replacingOccurrences(of: "Neural", with: "")
+  }
   /// The pen line most recently dictated, for `repeatLastWriteLine()`.
   private(set) var lastPenLine: PenLine?
   /// How many times in a row `lastPenLine` has been repeated.
@@ -167,7 +187,7 @@ final class Speaker: NSObject {
     let voice = resolvedVoice
     let voiceName =
       neuralVoiceActive
-      ? "Kokoro \(NeuralVoice.voiceName) (built in)"
+      ? neuralVoiceName
       : voice.map { $0.name + " (" + Self.qualityName($0.quality) + ")" } ?? "default"
     if chosenVoiceIsMissing, let id = voiceIdentifier {
       diag("audio", "the chosen voice \(id) isn't available to the app, so \(voiceName) is used instead")
@@ -247,11 +267,12 @@ final class Speaker: NSObject {
         text: "\(voice.name). \(Self.comparisonLine).", rate: rate * Self.dictationRateFactor,
         pauseAfter: 1.5, penLine: line, lineID: nil, voice: voice)
     }
-    // The built-in voice first, when this build has it.
-    if NeuralVoice.isBundled, !neuralFailed {
+    // The natural voice first, when there is one.
+    if neuralVoiceAvailable {
+      let name = azureVoice.map { Self.azureVoiceName($0.voice) } ?? NeuralVoice.voiceName
       segments.insert(
         Segment(
-          text: "\(NeuralVoice.voiceName), built in. \(Self.comparisonLine).", rate: rate * Self.dictationRateFactor,
+          text: "\(name). \(Self.comparisonLine).", rate: rate * Self.dictationRateFactor,
           pauseAfter: 1.5, penLine: line, lineID: nil, neural: true), at: 0)
     }
     diag("audio", "comparing \(segments.count) voices: \(voices.map(\.name).joined(separator: ", "))")
@@ -276,7 +297,7 @@ final class Speaker: NSObject {
 
   /// Loads the neural voice ahead of time, so the first answer doesn't wait for it.
   func preloadNeuralVoice() {
-    guard neuralVoiceActive else { return }
+    guard neuralVoiceActive, NeuralVoice.isBundled else { return }
     neural.preload()
   }
 
@@ -288,11 +309,12 @@ final class Speaker: NSObject {
       script.append(segment)
       let index = script.count - 1
       outstanding += 1
-      if segment.neural || (neuralVoiceActive && segment.voice == nil), NeuralVoice.isBundled, !neuralFailed {
+      if (segment.neural && neuralVoiceAvailable) || (neuralVoiceActive && segment.voice == nil) {
+        // The parts of one pen line share a group, so Azure says the line in one go.
         neuralItems.append(
           NeuralVoice.Item(
-            text: segment.text, speed: NeuralVoice.speed(forRate: segment.rate, penLine: segment.penLine != nil), pauseAfter: segment.pauseAfter,
-            token: index))
+            text: segment.text, speed: NeuralVoice.speed(forRate: segment.rate, penLine: segment.penLine != nil),
+            pauseAfter: segment.pauseAfter, token: index, group: segment.lineID))
       } else {
         speakWithApple(index, voice: segment.voice ?? voice)
       }
@@ -457,6 +479,12 @@ final class Speaker: NSObject {
       return flushProse(beforeWrite: true)
         + [Segment(text: "Problem \(label).", rate: rate, pauseAfter: Self.problemPause, penLine: nil)]
     }
+    if let check = Self.checkLine(in: paragraph) {
+      // A read-back of the line just dictated: smooth, at the normal pace, with a beat after
+      // it but no writing time, since there's nothing new to write.
+      return flushProse(beforeWrite: true)
+        + [Segment(text: check, rate: rate, pauseAfter: Self.checkPause, penLine: nil)]
+    }
     if let pen = Self.penLine(in: paragraph) {
       if pen.0 == .write || pen.0 == .sentence { lineNumber += 1 }
       let line = PenLine(kind: pen.0, text: pen.1, number: max(lineNumber, 1))
@@ -528,6 +556,15 @@ final class Speaker: NSObject {
   static func markPause(_ text: String) -> TimeInterval {
     let items = text.lowercased().components(separatedBy: " and ").count
     return min(markItemPause * Double(items), maxMarkPause)
+  }
+
+  /// The words of a "Check:" line (Claude reading a long line back), if this paragraph is one.
+  static func checkLine(in paragraph: String) -> String? {
+    let trimmed = paragraph.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard trimmed.lowercased().hasPrefix("check:") else { return nil }
+    let text = trimmed.dropFirst("check:".count).trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !text.isEmpty else { return nil }
+    return text.last.map { ".!?".contains($0) } == true ? text : text + "."
   }
 
   /// The line a problem continues from, for a label like "3, line 4".
