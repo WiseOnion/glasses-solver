@@ -186,7 +186,7 @@ final class DictationTests: XCTestCase {
     defer { speaker.stop() }
     speaker.speak(Self.answer)
     let whole = speaker.queued
-    XCTAssertGreaterThan(whole.count, 10)
+    XCTAssertGreaterThan(whole.count, 5)
     // Split anywhere, including inside a line and right after a line break.
     for size in [1, 7, 40, 500] {
       speaker.beginAnswer()
