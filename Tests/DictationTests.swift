@@ -228,8 +228,8 @@ final class DictationTests: XCTestCase {
     // At the default rate (0.5), sentences are a little slower than the voice's own speed and
     // pen lines slower still; the slider scales both, within a range that sounds natural.
     XCTAssertEqual(NeuralVoice.speed(forRate: 0.5, penLine: false), 0.85, accuracy: 0.001)
-    XCTAssertEqual(NeuralVoice.speed(forRate: 0.5, penLine: true), 0.7, accuracy: 0.001)
-    XCTAssertEqual(NeuralVoice.speed(forRate: 0.4, penLine: true), 0.56, accuracy: 0.001)
+    XCTAssertEqual(NeuralVoice.speed(forRate: 0.5, penLine: true), 0.8, accuracy: 0.001)
+    XCTAssertEqual(NeuralVoice.speed(forRate: 0.4, penLine: true), 0.64, accuracy: 0.001)
     XCTAssertEqual(NeuralVoice.speed(forRate: 0.1, penLine: true), 0.45, accuracy: 0.001)
     XCTAssertEqual(NeuralVoice.speed(forRate: 0.9, penLine: false), 1.3, accuracy: 0.001)
   }
@@ -256,6 +256,8 @@ final class DictationTests: XCTestCase {
     // The speed becomes a rate, and the pause between the parts a break inside the request;
     // the last part's pause is played as silence after it.
     XCTAssertTrue(ssml.contains("<prosody rate=\"-30%\">"))
+    // Commas are breaths of one length, longer when the voice is slowed (200 ms at full speed).
+    XCTAssertTrue(ssml.contains("<mstts:silence type=\"comma-exact\" value=\"286ms\"/>"))
     XCTAssertTrue(ssml.contains("Start line 1. u equals 1,<break time=\"1400ms\"/> plus tangent w."))
     XCTAssertFalse(ssml.contains("25000ms"))
     // A pause over Azure's 20-second limit is several breaks.
@@ -266,6 +268,7 @@ final class DictationTests: XCTestCase {
       ], voice: "v")
     XCTAssertTrue(long.contains("<break time=\"20000ms\"/><break time=\"5000ms\"/>"))
     XCTAssertTrue(long.contains("<prosody rate=\"0%\">"))
+    XCTAssertTrue(long.contains("value=\"200ms\""))
     // Text is escaped, so "h's" or "<" can't break the request.
     XCTAssertEqual(NeuralVoice.escapeXML("both h's & x < 2"), "both h&apos;s &amp; x &lt; 2")
     XCTAssertEqual(Speaker.azureVoiceName("en-US-AvaMultilingualNeural"), "Ava")

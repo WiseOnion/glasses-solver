@@ -38,11 +38,12 @@ final class NeuralVoice {
 
   /// The voice's speed for a speaking rate on Apple's scale (0.5 is the default). Natural
   /// voices at their own speed (about 150 words a minute) were far too fast to copy from, so
-  /// the default is slower: 0.85 for sentences, and 0.7 for pen lines, which are being
-  /// written down. Neural voices speak slower rather than stretching the sound, so they stay
-  /// natural. The speed slider scales both.
+  /// the default is slower: 0.85 for sentences, and 0.8 for pen lines, which are being
+  /// written down. Not slower than that: listening studies find that slowing speech itself
+  /// doesn't help understanding, while pauses at phrase boundaries do (the writing pauses),
+  /// and very slow speech sounds drawn out. The speed slider scales both.
   static func speed(forRate rate: Float, penLine: Bool) -> Float {
-    let base: Float = penLine ? 0.7 : 0.85
+    let base: Float = penLine ? 0.8 : 0.85
     return min(max(base * rate / 0.5, 0.45), 1.3)
   }
 
@@ -367,9 +368,18 @@ final class NeuralVoice {
         body += " "
       }
     }
-    return "<speak version=\"1.0\" xmlns=\"http://www.w3.org/2001/10/synthesis\" xml:lang=\"en-US\">"
-      + "<voice name=\"\(escapeXML(voice))\"><prosody rate=\"\(rate)%\">\(body)</prosody></voice></speak>"
+    // Each comma is a short breath of the same length (MathCAT's short pause, 200 ms at 180
+    // words a minute, made longer as the voice is slowed), so the commas that group the math
+    // sound alike rather than varying with the voice's own phrasing.
+    let comma = Int((commaPause / Double(items.first?.speed ?? 1) * 1000).rounded())
+    return "<speak version=\"1.0\" xmlns=\"http://www.w3.org/2001/10/synthesis\" "
+      + "xmlns:mstts=\"http://www.w3.org/2001/mstts\" xml:lang=\"en-US\">"
+      + "<voice name=\"\(escapeXML(voice))\"><mstts:silence type=\"comma-exact\" value=\"\(comma)ms\"/>"
+      + "<prosody rate=\"\(rate)%\">\(body)</prosody></voice></speak>"
   }
+
+  /// The breath at a comma at the voice's own speed, in seconds.
+  nonisolated static let commaPause: TimeInterval = 0.2
 
   nonisolated static func escapeXML(_ text: String) -> String {
     text.replacingOccurrences(of: "&", with: "&amp;")
