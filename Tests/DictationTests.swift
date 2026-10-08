@@ -31,7 +31,10 @@ final class DictationTests: XCTestCase {
     XCTAssertEqual(Speaker.writtenCharacters("u, equals 1, plus the letters t a n, w"), 8)
     // "on the bottom" counts the fraction bar.
     XCTAssertEqual(Speaker.writtenCharacters("a fraction, on top, 3 x, on the bottom, 2"), 4)
-    XCTAssertEqual(Speaker.writtenCharacters("the letters l i m, and under them, small, h, an arrow pointing right, 0"), 6)
+    XCTAssertEqual(Speaker.writtenCharacters("the letters l i m, with h arrow 0 underneath"), 6)
+    // "over" is the fraction bar.
+    XCTAssertEqual(Speaker.writtenCharacters("d y over d x"), 5)
+    XCTAssertEqual(Speaker.writtenCharacters("1 over x, right beside that, plus 1"), 5)
     // "right beside that" is a place, so the chunk after it is in the same part.
     XCTAssertEqual(
       Speaker.dictationGroups("x, raised to the power of 2, right beside that, plus 1"),
@@ -135,7 +138,8 @@ final class DictationTests: XCTestCase {
       "Write: x, raised to the power of 2, right beside that, plus 1.",
       "Write: w, raised to the power of minus 5, slash, 9.",
       "Write: a fraction, on top, 3 x, on the bottom, 2, right beside that, plus 1.",
-      "Write: the letters l i m, and under them, small, h, an arrow pointing right, 0.",
+      "Write: the letters l i m, with h arrow 0 underneath.",
+      "Write: d y over d x, equals 3 x over 2, right beside that, plus 1.",
       "Write: g, prime mark, start an open parenthesis, w, close parenthesis, equals minus 3 w.",
       "Write: a square root sign, under it, x plus 1.",
       "Write: 4 point 9.",

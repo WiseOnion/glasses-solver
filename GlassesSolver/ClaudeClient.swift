@@ -183,18 +183,20 @@ struct ClaudeClient: Sendable {
     with a tiny 2 raised on the theta".
     - Subscripts: for log base b, "the letters l o g, with a small b lowered below the line, \
     right beside that, start an open parenthesis, ...".
-    - Fractions, in writing order: "a fraction, on top, 3 x, on the bottom, 2". If more \
-    follows on the line: "..., on the bottom, 2, right beside that, plus 1".
+    - A small fraction, where the top and the bottom are each one short piece with no plus, \
+    minus, parentheses, power or fraction inside, is said with "over": "d y over d x", "3 x \
+    over 2", "1 over x", and "right beside that" if more follows. Any other fraction, in \
+    writing order: "a fraction, on top, x plus 1, on the bottom, 2". If more follows on the \
+    line: "..., on the bottom, 2, right beside that, plus 1".
     - Square roots: "a square root sign, under it, x plus 1", with "right beside that" when \
     more follows. Other roots: "a root sign with a small 3 in its notch, under it, x plus 1". \
     A cube root uses 3, a fifth root uses 5.
     - Prime: the first time in the answer say "prime mark, a small tick at the top right", \
     after that "prime mark": "y, prime mark, equals". Two of them: "two prime marks".
-    - Derivative notation: "a fraction, on top, d y, on the bottom, d x". For d over d x in \
-    front of an expression: "a fraction, on top, d, on the bottom, d x, right beside that, \
-    start an open parenthesis" and so on.
-    - Limits: "the letters l i m, and under them, small, x, an arrow pointing right, 0, right \
-    beside that, ...". Infinity is "infinity sign, a sideways 8". Theta is "theta, a 0 with a \
+    - Derivative notation: "d y over d x". For d over d x in front of an expression: "d over \
+    d x, right beside that, start an open parenthesis" and so on.
+    - Limits: "the letters l i m, with x arrow 0 underneath, right beside that, ...", using \
+    the problem's own variable and number. Infinity is "infinity sign, a sideways 8". Theta is "theta, a 0 with a \
     line across the middle". Pi is "pi, a pair of short legs with a bar on top". Describe any \
     other symbol by its shape the first time in the answer, starting the description with \
     "a", as in "a sideways 8"; after that, just its name.

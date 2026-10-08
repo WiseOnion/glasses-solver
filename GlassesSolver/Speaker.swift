@@ -558,14 +558,14 @@ final class Speaker: NSObject {
   private static let writtenWords: [String: Int] = [
     "open": 0, "close": 0, "end": 0, "with": 0, "exponent": 0, "fraction": 0, "top": 0,
     "of": 0, "the": 0, "to": 0, "as": 0, "capital": 0, "square": 0, "natural": 0, "and": 0,
-    "start": 0, "small": 0, "raised": 0, "under": 0, "over": 0, "on": 0, "at": 0, "then": 0,
+    "start": 0, "small": 0, "raised": 0, "under": 0, "on": 0, "at": 0, "then": 0,
     "them": 0, "letters": 0, "letter": 0, "sign": 0, "mark": 0, "marks": 0, "bar": 0,
     "line": 0, "right": 0, "left": 0, "pointing": 0, "middle": 0, "height": 0, "check": 0,
     "short": 0, "across": 0, "sideways": 0, "tick": 0, "dot": 0, "back": 0, "down": 0,
     "tiny": 0, "lowered": 0, "up": 0, "root": 0, "notch": 0, "tucked": 0, "in": 0, "its": 0,
     "an": 0, "power": 0, "beside": 0, "next": 0, "that": 0, "previous": 0, "thing": 0, "it": 0,
-    "below": 0,
-    "bottom": 1, "draw": 1,
+    "below": 0, "underneath": 0,
+    "bottom": 1, "draw": 1, "over": 1,
     "sine": 3, "cosine": 3, "tangent": 3, "secant": 3, "cosecant": 3, "cotangent": 3,
     "log": 2, "limit": 3, "inverse": 2,
   ]

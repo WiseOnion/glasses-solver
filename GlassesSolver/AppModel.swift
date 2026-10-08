@@ -49,26 +49,26 @@ final class AppModel {
     This is the derivative of f of x, equals, negative 3 x squared plus 8 x minus 2, using the limit definition.
     You'll write seven lines.
     Write: f, prime mark, a small tick at the top right, start an open parenthesis, x, close parenthesis, equals
-    Continue: the letters l i m, and under them, small, h, an arrow pointing right, 0
+    Continue: the letters l i m, with h arrow 0 underneath
     Continue: a fraction, on top, f, start an open parenthesis, x, plus h, close parenthesis
     Continue: minus f, start an open parenthesis, x, close parenthesis, on the bottom, h
-    Write: equals the letters l i m, and under them, small, h, an arrow pointing right, 0
+    Write: equals the letters l i m, with h arrow 0 underneath
     Continue: a fraction, on top, start an open parenthesis, minus 3, start an open parenthesis, x, plus h, close parenthesis, raised to the power of 2, right beside that, plus 8
     Continue: start an open parenthesis, x, plus h, close parenthesis, minus 2, close parenthesis
     Continue: minus, start an open parenthesis, minus 3 x, raised to the power of 2, right beside that, plus 8 x, minus 2, close parenthesis
     Continue: on the bottom, h
-    Write: equals the letters l i m, and under them, small, h, an arrow pointing right, 0
+    Write: equals the letters l i m, with h arrow 0 underneath
     Continue: a fraction, on top, minus 3 x, raised to the power of 2, right beside that, minus 6 x h
     Continue: minus 3 h, raised to the power of 2, right beside that, plus 8 x, plus 8 h, minus 2
     Continue: plus 3 x, raised to the power of 2, right beside that, minus 8 x, plus 2, on the bottom, h
-    Write: equals the letters l i m, and under them, small, h, an arrow pointing right, 0
+    Write: equals the letters l i m, with h arrow 0 underneath
     Continue: a fraction, on top, minus 6 x h, minus 3 h, raised to the power of 2, right beside that, plus 8 h
     Continue: on the bottom, h
-    Write: equals the letters l i m, and under them, small, h, an arrow pointing right, 0
+    Write: equals the letters l i m, with h arrow 0 underneath
     Continue: a fraction, on top, h, start an open parenthesis, minus 6 x, minus 3 h, plus 8, close parenthesis
     Continue: on the bottom, h
     Mark: On line 5, cross out the h on top, in front of the parentheses, and the h on the bottom.
-    Write: equals the letters l i m, and under them, small, h, an arrow pointing right, 0
+    Write: equals the letters l i m, with h arrow 0 underneath
     Continue: start an open parenthesis, minus 6 x, minus 3 h, plus 8, close parenthesis
     Write: equals minus 6 x, plus 8
     Mark: Draw a box around line 7.
