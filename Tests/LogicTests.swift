@@ -284,6 +284,23 @@ final class ClaudeClientTests: XCTestCase {
     XCTAssertEqual(followUp["stream"] as? Bool, true)
   }
 
+  func testAPhotoTakenMidAnswerSaysWhereItStopped() throws {
+    let jpeg = try XCTUnwrap(ClaudeClient.preparedJPEG(from: TestImages.jpeg()))
+    let note = AppModel.describeStop(.init(problem: "3", line: 4, lineFinished: false))
+    XCTAssertEqual(
+      note,
+      "Your dictation was cut short when I took this photo: I'd heard problem 3 up to partway through line 4, "
+        + "and nothing after that.")
+    XCTAssertTrue(
+      AppModel.describeStop(.init(problem: "5, part A", line: 2, lineFinished: true))
+        .contains("problem 5, part A up to the end of line 2"))
+    XCTAssertTrue(AppModel.describeStop(.init(problem: "2", line: 0, lineFinished: false)).contains("none of its lines"))
+    let body = ClaudeClient.body(jpeg: jpeg, prompt: "Solve", previousAnswer: "Problem: 3\nWrite: x", stoppedAt: note)
+    let messages = try XCTUnwrap(body["messages"] as? [[String: Any]])
+    let text = (messages[2]["content"] as? [[String: Any]])?.last?["text"] as? String
+    XCTAssertEqual(text, note + " " + ClaudeClient.followUpPrompt)
+  }
+
   func testOverloadIsRetriedOnce() async throws {
     StubAnthropic.responses = [(529, #"{"error":{"message":"Overloaded"}}"#), (200, answer)]
     let reply = try await ClaudeClient(apiKey: "sk-test").solve(photo: TestImages.jpeg(), prompt: "Solve")

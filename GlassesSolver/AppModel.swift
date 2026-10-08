@@ -249,6 +249,8 @@ final class AppModel {
   /// When `lastAnswer` arrived. A photo within `followUpWindow` of it is sent as a follow-up.
   @ObservationIgnored private var lastAnswerTime: Date?
   private static let followUpWindow: TimeInterval = 60 * 60
+  /// How far `lastAnswer` got before a photo or Stop cut it short; nil if heard to the end.
+  @ObservationIgnored private var lastAnswerStoppedAt: Speaker.Progress?
   /// How often "Still working." is said while waiting for the answer's first words.
   private static let stillWorkingInterval = Duration.seconds(20)
   @ObservationIgnored private let shutter = ShutterButton()
@@ -444,7 +446,7 @@ final class AppModel {
 
   func repeatAnswer() {
     guard !lastAnswer.isEmpty else { return }
-    speaker.speak(lastAnswer)
+    speaker.speak(lastAnswer, isAnswer: true)
   }
 
   func stopSpeaking() {
@@ -543,6 +545,10 @@ final class AppModel {
       self?.camera.abortCapture()
     }
     saidStillWorking = false
+    // Where the last answer was, if this photo cut it short (or Stop did), before stopping it.
+    // Kept until a new answer arrives, so a photo that fails doesn't lose it.
+    if let progress = speaker.progress { lastAnswerStoppedAt = progress }
+    let stoppedAt = lastAnswerStoppedAt
     speaker.stop()
     defer {
       phase = .idle
@@ -605,8 +611,11 @@ final class AppModel {
         // listener's own work can be checked and continued from where they stopped.
         let previous = lastAnswerTime.map { Date.now.timeIntervalSince($0) < Self.followUpWindow } == true
           ? lastAnswer : nil
-        if previous != nil { diag("solve", "sending as a follow-up to the last answer") }
-        reply = try await ClaudeClient(apiKey: apiKey).solve(photo: photo, prompt: prompt, previousAnswer: previous) {
+        let stopNote = previous == nil ? nil : stoppedAt.map(Self.describeStop)
+        if previous != nil { diag("solve", "sending as a follow-up to the last answer. \(stopNote ?? "It was heard to the end.")") }
+        reply = try await ClaudeClient(apiKey: apiKey).solve(
+          photo: photo, prompt: prompt, previousAnswer: previous, stoppedAt: stopNote
+        ) {
           [weak self] piece in
           self?.answerArrived(piece)
         }
@@ -628,6 +637,7 @@ final class AppModel {
       let answer = [reply.text.trimmingCharacters(in: .whitespacesAndNewlines), notice]
         .compactMap { $0 }.joined(separator: "\n")
       lastAnswer = answer
+      lastAnswerStoppedAt = nil
       // A Test mode sample isn't a real answer, so it's never sent as one to follow up on.
       lastAnswerTime = testMode ? nil : .now
       diag(
@@ -643,6 +653,19 @@ final class AppModel {
         sessionID: chatSessionID)
     }
     speaker.endKeepAliveAfterSpeech()
+  }
+
+  /// Tells Claude how much of its last answer was heard before a new photo cut it short.
+  nonisolated static func describeStop(_ progress: Speaker.Progress) -> String {
+    let heard =
+      if progress.line == 0 {
+        "I'd heard you start problem \(progress.problem), but none of its lines yet"
+      } else if progress.lineFinished {
+        "I'd heard problem \(progress.problem) up to the end of line \(progress.line)"
+      } else {
+        "I'd heard problem \(progress.problem) up to partway through line \(progress.line)"
+      }
+    return "Your dictation was cut short when I took this photo: \(heard), and nothing after that."
   }
 
   /// Speaks the next piece of an answer, starting the answer with the first piece.

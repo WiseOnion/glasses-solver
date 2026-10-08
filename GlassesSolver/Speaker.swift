@@ -102,6 +102,32 @@ final class Speaker: NSObject {
   private var lineNumber = 0
   /// Notices (`announce`) that came while an answer was arriving, said after it.
   private var pendingNotices: [String] = []
+  /// The problem whose segments are being built, while turning an answer into speech.
+  private var buildingProblem: String?
+  /// True while what's being said is an answer (not a test, sample or notice).
+  private var sayingAnswer = false
+  /// How far the listener got in the answer: the problem and pen line last heard, and the
+  /// last line whose dictation (writing pause included) ended.
+  private var heardProblem: String?
+  private var heardLine = 0
+  private var finishedLine = 0
+  /// Where the answer was when it was stopped, until something else is said.
+  private var progressWhenStopped: Progress?
+
+  /// How far into an answer the listener got: in `problem`, line `line` was started, and
+  /// `lineFinished` says whether all of it (and its writing time) was said.
+  struct Progress: Equatable {
+    let problem: String
+    let line: Int
+    let lineFinished: Bool
+  }
+
+  /// Where the answer being said is now, or where it was when it was stopped; nil if
+  /// no answer was cut short (it was heard to the end, or none had reached a problem).
+  var progress: Progress? {
+    guard sayingAnswer, isActive || answerOpen, let heardProblem else { return progressWhenStopped }
+    return Progress(problem: heardProblem, line: heardLine, lineFinished: heardLine > 0 && finishedLine == heardLine)
+  }
 
   /// An instruction to do something on paper, from a line tagged in the answer.
   struct PenLine: Equatable {
@@ -134,6 +160,8 @@ final class Speaker: NSObject {
     var voice: AVSpeechSynthesisVoice?
     /// Say this segment in the neural voice whatever the setting (voice comparison).
     var neural = false
+    /// The answer's problem this segment belongs to, for `progress`.
+    var problem: String?
   }
 
   /// Called with the measured speaking speed (words a minute) of the next sentence spoken
@@ -179,12 +207,18 @@ final class Speaker: NSObject {
     }
   }
 
-  func speak(_ text: String) {
+  /// Says `text` from the start. `isAnswer` marks it as an answer, so `progress` follows it.
+  func speak(_ text: String, isAnswer: Bool = false) {
     reset()
     activateSession()
     answerOpen = false
     unfinishedLine = ""
     pendingNotices.removeAll()
+    sayingAnswer = isAnswer
+    heardProblem = nil
+    heardLine = 0
+    finishedLine = 0
+    progressWhenStopped = nil
     lastPenLine = nil
     repeatCount = 0
     let voice = resolvedVoice
@@ -223,7 +257,9 @@ final class Speaker: NSObject {
     diag("audio", "repeating the last pen line (\(repeatCount) in a row)")
     let again = repeatCount > 1 ? "Again, slower" : "Again"
     let cue = line.kind == .mark ? again + "." : again + ", line \(line.number)."
-    enqueue(dictation(line, cue: cue, slowdown: slowdown, inParts: true) + remaining, voice: resolvedVoice)
+    var repeated = dictation(line, cue: cue, slowdown: slowdown, inParts: true)
+    for index in repeated.indices { repeated[index].problem = heardProblem }
+    enqueue(repeated + remaining, voice: resolvedVoice)
     return true
   }
 
@@ -255,7 +291,10 @@ final class Speaker: NSObject {
   }
 
   func stop() {
+    // Kept so a photo taken next can say where the answer was stopped.
+    if let current = progress { progressWhenStopped = current }
     answerOpen = false
+    sayingAnswer = false
     pendingNotices.removeAll()
     reset()
     if stopKeepAliveAfterSpeech { endKeepAlive() }
@@ -383,9 +422,16 @@ final class Speaker: NSObject {
     guard index < script.count else { return }
     currentIndex = index
     currentFinished = false
-    if let line = script[index].penLine {
+    let segment = script[index]
+    if let problem = segment.problem, problem != heardProblem {
+      heardProblem = problem
+      heardLine = 0
+      finishedLine = 0
+    }
+    if let line = segment.penLine {
       if line != lastPenLine { repeatCount = 0 }
       lastPenLine = line
+      if segment.problem != nil, line.number > heardLine { heardLine = line.number }
     }
   }
 
@@ -404,6 +450,12 @@ final class Speaker: NSObject {
   private func segmentEnded(_ index: Int, times: (first: Date, last: Date)?) {
     guard index < script.count else { return }
     logMeasuredRate(script[index], times: times)
+    // A line's dictation ends with its last part (a Continue line keeps the same number).
+    if let line = script[index].penLine, script[index].problem != nil,
+      index + 1 >= script.count || script[index + 1].lineID != script[index].lineID
+    {
+      finishedLine = line.number
+    }
     if index == currentIndex { currentFinished = true }
     outstanding = max(0, outstanding - 1)
     if outstanding == 0, stopKeepAliveAfterSpeech { endKeepAlive() }
@@ -433,7 +485,7 @@ final class Speaker: NSObject {
   /// Starts speaking an answer that arrives in pieces (`continueAnswer`), so the first
   /// problem is dictated while the rest is still being written. `finishAnswer` ends it.
   func beginAnswer() {
-    speak("")
+    speak("", isAnswer: true)
     answerOpen = true
   }
 
@@ -498,6 +550,7 @@ final class Speaker: NSObject {
   private func segments(for text: String) -> [Segment] {
     pendingProse.removeAll()
     lineNumber = 0
+    buildingProblem = nil
     return text.components(separatedBy: "\n").flatMap { segments(forParagraph: $0) }
       + flushProse(beforeWrite: false)
   }
@@ -505,12 +558,23 @@ final class Speaker: NSObject {
   /// The speech for one paragraph of an answer. Explanation paragraphs wait in
   /// `pendingProse` until a pen line or problem comes, so a run of them is one utterance.
   private func segments(forParagraph raw: String) -> [Segment] {
+    let problem = buildingProblem
+    var result = untaggedSegments(forParagraph: raw)
+    // Explanation flushed by a "Problem:" line belongs to what came before it.
+    for index in result.indices {
+      result[index].problem = result[index].penLine == nil && index < result.count - 1 ? problem : buildingProblem
+    }
+    return result
+  }
+
+  private func untaggedSegments(forParagraph raw: String) -> [Segment] {
     let paragraph = Self.speakable(raw)
     if let label = Self.problemLabel(in: paragraph) {
       // "Problem: 3, line 4" continues a problem from line 4 (after checking their work).
       lineNumber = (Self.startingLine(in: label) ?? 1) - 1
-      return flushProse(beforeWrite: true)
-        + [Segment(text: "Problem \(label).", rate: rate, pauseAfter: Self.problemPause, penLine: nil)]
+      let prose = flushProse(beforeWrite: true)
+      buildingProblem = label
+      return prose + [Segment(text: "Problem \(label).", rate: rate, pauseAfter: Self.problemPause, penLine: nil)]
     }
     if let check = Self.checkLine(in: paragraph) {
       // A read-back of the line just dictated: smooth, at the normal pace, with a beat after

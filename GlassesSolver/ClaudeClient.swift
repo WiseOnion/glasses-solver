@@ -172,6 +172,15 @@ struct ClaudeClient: Sendable {
     lines they've already written correctly.
     If you can't read their writing or can't tell where they are, say so and ask them to retake \
     the photo closer.
+    If the message with the new photo says your dictation was cut short ("I'd heard problem 3 \
+    up to line 4"), they took the photo partway through, and nothing after that point can be on \
+    their paper. Then:
+    - If it shows their work, check only the lines they heard, and continue from where they \
+    really are, which may be partway through that line.
+    - If it shows the same problems again, they want the rest: don't start over. Pick up at \
+    the line they hadn't finished, as "Problem: 3, line 4", "You have N lines left.", then the \
+    remaining pen lines, and go on to any problems after it that weren't dictated yet.
+    - If it shows different problems, they've moved on: answer those.
 
     SHOWING THE WORK
     The pen lines are the full worked solution as it would look on paper: usually two to six \
@@ -262,13 +271,13 @@ struct ClaudeClient: Sendable {
   /// listener's own work can be checked and continued. Throws only if no text arrived; once
   /// some has, a dropped connection returns what came, with no stop reason.
   func solve(
-    photo: Data, prompt: String = defaultPrompt, previousAnswer: String? = nil,
+    photo: Data, prompt: String = defaultPrompt, previousAnswer: String? = nil, stoppedAt: String? = nil,
     onText: @escaping @MainActor @Sendable (String) -> Void = { _ in }
   ) async throws -> Answer {
     guard let jpeg = Self.preparedJPEG(from: photo) else { throw ClaudeError.badImage }
     var request = try Self.request(apiKey: apiKey)
     request.httpBody = try JSONSerialization.data(
-      withJSONObject: Self.body(jpeg: jpeg, prompt: prompt, previousAnswer: previousAnswer))
+      withJSONObject: Self.body(jpeg: jpeg, prompt: prompt, previousAnswer: previousAnswer, stoppedAt: stoppedAt))
 
     // Retried once after a short pause when the failure is temporary (rate limit, overload,
     // server error, or a dropped connection), but only before any text has arrived, so
@@ -300,17 +309,18 @@ struct ClaudeClient: Sendable {
 
   /// The request's JSON body. Without `previousAnswer`: the photo and the prompt. With it:
   /// the earlier prompt (its photo isn't sent again), the earlier answer, then the new photo
-  /// with `followUpPrompt`.
-  static func body(jpeg: Data, prompt: String, previousAnswer: String?) -> [String: Any] {
+  /// with `followUpPrompt`, after `stoppedAt` (where the earlier answer was cut short) if set.
+  static func body(jpeg: Data, prompt: String, previousAnswer: String?, stoppedAt: String? = nil) -> [String: Any] {
     let image: [String: Any] = [
       "type": "image", "source": ["type": "base64", "media_type": "image/jpeg", "data": jpeg.base64EncodedString()],
     ]
+    let followUpText: String = [stoppedAt, Self.followUpPrompt].compactMap { $0 }.joined(separator: " ")
     let messages: [[String: Any]]
     if let previousAnswer, !previousAnswer.isEmpty {
       messages = [
         ["role": "user", "content": [["type": "text", "text": prompt + " (That photo isn't included again.)"]]],
         ["role": "assistant", "content": [["type": "text", "text": previousAnswer]]],
-        ["role": "user", "content": [image, ["type": "text", "text": followUpPrompt]]],
+        ["role": "user", "content": [image, ["type": "text", "text": followUpText]]],
       ]
     } else {
       messages = [["role": "user", "content": [image, ["type": "text", "text": prompt]]]]
