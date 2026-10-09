@@ -223,7 +223,7 @@ private struct EntryView: View {
               AnswerLine(line: Speaker.spokenPart(line))
             }
           } else {
-            WrittenAnswerView(html: written.html(now: nil))
+            WrittenAnswerView(data: written.pageData(now: nil))
               .frame(height: 380)
               .clipShape(RoundedRectangle(cornerRadius: 8))
           }

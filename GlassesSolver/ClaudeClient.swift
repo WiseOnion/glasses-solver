@@ -121,7 +121,14 @@ struct ClaudeClient: Sendable {
     \\frac{\\cancel{h}(-6x - 3h + 8)}{\\cancel{h}}". To cross out a whole line, put all of it in \
     \\cancel{...}. Continue, Check and box Mark lines get nothing after them. What follows || is \
     only shown, never spoken. Write every fraction with \\frac so it's stacked, top over bottom, \
-    never with a slash, including a fraction in a power: w^{\\frac{4}{9}}.
+    never with a slash, including a fraction in a power: w^{\\frac{4}{9}}. Write it the way a \
+    student writes the step on paper, in standard notation: a line that carries on the same \
+    calculation starts with its = (or <, \\le, and so on), so the equals signs line up; \
+    \\sin, \\cos, \\ln, \\log_b upright; \\sqrt{...} and \\sqrt[3]{...} over the whole inside; \
+    \\left( ... \\right) around anything tall; \\begin{cases} for a piecewise function, \
+    \\begin{bmatrix} for a matrix; \\text{ cm}^2 and the like for units, and \\quad\\text{or}\\quad \
+    between cases. Keep restrictions such as x \\ne 2. Never change the math to make it look \
+    nicer.
     Inside a Write or Continue line, commas are the short breaths a person reading math aloud \
     takes: right after every "equals", before each plus or minus that starts a new term, and \
     around anything in parentheses, such as "u equals, 1, plus tangent w" or "g prime of w \

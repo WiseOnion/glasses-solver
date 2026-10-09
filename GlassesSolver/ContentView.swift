@@ -83,7 +83,7 @@ struct ContentView: View {
                   .textSelection(.enabled)
               } else {
                 WrittenAnswerView(
-                  html: written.html(now: model.linePosition.map { ($0.problem, $0.line) }))
+                  data: written.pageData(now: model.linePosition.map { ($0.problem, $0.line) }))
                   .frame(height: 440)
                   .clipShape(RoundedRectangle(cornerRadius: 8))
               }

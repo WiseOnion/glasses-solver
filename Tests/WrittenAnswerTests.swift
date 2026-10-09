@@ -35,11 +35,45 @@ final class WrittenAnswerTests: XCTestCase {
     XCTAssertTrue(lines[1].boxed)
     XCTAssertFalse(lines[0].boxed)
     XCTAssertEqual(lines[1].note, "Now simplify. This is the answer.")
-    // The line being said is marked, and the math is typeset as display math.
-    let html = written.html(now: ("4", 2))
-    XCTAssertTrue(html.contains(#"id="now""#))
-    XCTAssertTrue(html.contains(#"\(\displaystyle = x + 1\)"#))
-    XCTAssertTrue(html.contains("boxed"))
+    // The page gets the steps as data: the line being said marked, each line split at its
+    // equals sign so the signs line up.
+    let data = try? JSONSerialization.jsonObject(with: Data(written.pageData(now: ("4", 2)).utf8))
+    let problems = data as? [[String: Any]]
+    let steps = problems?.first?["lines"] as? [[String: Any]]
+    XCTAssertEqual(steps?.count, 2)
+    XCTAssertEqual(steps?[1]["now"] as? Bool, true)
+    XCTAssertEqual(steps?[0]["now"] as? Bool, false)
+    XCTAssertEqual(steps?[1]["boxed"] as? Bool, true)
+    XCTAssertEqual(steps?[1]["left"] as? String, "")
+    XCTAssertEqual(steps?[1]["right"] as? String, "= x + 1")
+    XCTAssertEqual(steps?[0]["left"] as? String, "f'(x)")
+    XCTAssertEqual(steps?[1]["words"] as? String, "equals x plus 1")
+  }
+
+  /// The examples from the writing spec: each splits at its first relation outside any group,
+  /// so the equals signs line up, and the math itself is left as it is.
+  func testEqualsSignsLineUp() {
+    func parts(_ latex: String) -> [String]? {
+      WrittenAnswer.alignedParts(latex).map { [$0.left, $0.right] }
+    }
+    XCTAssertEqual(parts("24+18=42"), ["24+18", "=42"])
+    XCTAssertEqual(parts(#"=\frac{3}{4}+\frac{2}{4}"#), ["", #"=\frac{3}{4}+\frac{2}{4}"#])
+    XCTAssertEqual(parts(#"x^2\cdot x^3=x^{2+3}"#), [#"x^2\cdot x^3"#, "=x^{2+3}"])
+    XCTAssertEqual(parts(#"\sqrt{x^2+9}=5"#), [#"\sqrt{x^2+9}"#, "=5"])
+    XCTAssertEqual(
+      parts(#"x-3=0\quad\text{or}\quad x+3=0"#), ["x-3", #"=0\quad\text{or}\quad x+3=0"#])
+    XCTAssertEqual(parts(#"\frac{dy}{dx}=3x^2+4x-5"#), [#"\frac{dy}{dx}"#, "=3x^2+4x-5"])
+    XCTAssertEqual(parts("2x+1<9"), ["2x+1", "<9"])
+    XCTAssertEqual(parts(#"x\geq 0"#), ["x", #"\geq 0"#])
+    XCTAssertEqual(parts(#"\frac{(x-2)(x+2)}{x-2}=x+2,\quad x\ne2"#), [#"\frac{(x-2)(x+2)}{x-2}"#, #"=x+2,\quad x\ne2"#])
+    // A relation inside a group, a case or a matrix isn't where the line lines up.
+    XCTAssertEqual(
+      parts(#"f(x)=\begin{cases}x^2,&x\geq0\\-x,&x<0\end{cases}"#),
+      ["f(x)", #"=\begin{cases}x^2,&x\geq0\\-x,&x<0\end{cases}"#])
+    XCTAssertEqual(parts(#"\sum_{i=1}^{n}i"#), nil)
+    XCTAssertEqual(parts(#"\left(x=1\right)"#), nil)
+    XCTAssertEqual(parts(#"\lim_{x\to2}\frac{x^2-4}{x-2}"#), nil)
+    XCTAssertEqual(parts(#"(-\infty,4)"#), nil)
   }
 
   func testTheWrittenMathIsNeverSpoken() {
