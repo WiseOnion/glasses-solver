@@ -140,7 +140,9 @@ final class NeuralVoice {
   private var loading: Task<Bool, Never>?
   /// Pieces not made yet, and clips made and waiting to play, in order.
   private var pending: [Item] = []
-  private var ready: [(items: [Item], audio: Audio)] = []
+  /// A clip made from the start (`first`) and/or end (`last`) of its pieces: Heart makes a
+  /// long piece one sentence at a time, so its first sentence can play while the rest is made.
+  private var ready: [(items: [Item], audio: Audio, first: Bool, last: Bool)] = []
   /// At most this many clips are made ahead of the one playing.
   private static let maxAhead = 6
   /// After Azure fails, Heart is used for this long before trying Azure again.
@@ -291,7 +293,7 @@ final class NeuralVoice {
         do {
           let audio = try await Self.synthesizeWithAzure(items, voice: azure)
           guard current == generation else { return }
-          ready.append((items, audio))
+          ready.append((items, audio, true, true))
           wakePlayer()
           continue
         } catch {
@@ -314,17 +316,67 @@ final class NeuralVoice {
       guard current == generation, !pending.isEmpty else { break }
       let item = pending.removeFirst()
       let engine = self.engine
-      let audio = await Task.detached(priority: .userInitiated) {
-        engine.synthesize(item.text, speed: item.speed)
-      }.value
-      guard current == generation else { return }
-      ready.append(([item], audio))
-      wakePlayer()
+      let sentences = Self.sentences(item.text)
+      for (index, sentence) in sentences.enumerated() {
+        let started = Date()
+        let audio = await Task.detached(priority: .userInitiated) {
+          engine.synthesize(sentence, speed: item.speed)
+        }.value
+        guard current == generation else { return }
+        let took = Date().timeIntervalSince(started)
+        if took > 0.8 {
+          let length = audio.sampleRate > 0 ? Double(audio.samples.count) / Double(audio.sampleRate) : 0
+          diag(
+            "neural",
+            "Heart took \(String(format: "%.1f", took)) s to make \(String(format: "%.1f", length)) s of speech: "
+              + "\"\(sentence.prefix(40))\"")
+        }
+        ready.append(([item], audio, index == 0, index == sentences.count - 1))
+        wakePlayer()
+      }
     }
     if current == generation {
       producing = false
       wakePlayer()
     }
+  }
+
+  /// A piece split into its sentences, for Heart to make one at a time. A sentence of one
+  /// or two words joins the next, so a short "Now." doesn't stand alone.
+  nonisolated static func sentences(_ text: String) -> [String] {
+    var result: [String] = []
+    var carried = ""
+    for part in splitKeepingEnds(text) {
+      let sentence = (carried + part.trimmingCharacters(in: .whitespaces)).trimmingCharacters(in: .whitespaces)
+      if sentence.split(separator: " ").count < 3 {
+        carried = sentence + " "
+      } else {
+        result.append(sentence)
+        carried = ""
+      }
+    }
+    let rest = carried.trimmingCharacters(in: .whitespaces)
+    if !rest.isEmpty {
+      if result.isEmpty { result.append(rest) } else { result[result.count - 1] += " " + rest }
+    }
+    return result.isEmpty ? [text] : result
+  }
+
+  /// "A. B? C" as ["A.", " B?", " C"]: split after each ., ! or ? that's followed by a space.
+  private nonisolated static func splitKeepingEnds(_ text: String) -> [String] {
+    var parts: [String] = []
+    var current = ""
+    var previous: Character?
+    for character in text {
+      if character == " ", let previous, ".!?".contains(previous) {
+        parts.append(current)
+        current = ""
+      }
+      current.append(character)
+      previous = character
+    }
+    if !current.isEmpty { parts.append(current) }
+    return parts
   }
 
   /// The first pending piece and any after it in the same group (one pen line).
@@ -350,11 +402,13 @@ final class NeuralVoice {
         logWait(Date().timeIntervalSince(started), next: ready.first?.items.first)
         continue
       }
-      let (items, audio) = ready.removeFirst()
+      let (items, audio, first, last) = ready.removeFirst()
       startProducing()
-      onStart?(items[0].token)
-      await play(audio, pauseAfter: items.last?.pauseAfter ?? 0)
+      if first { onStart?(items[0].token) }
+      // A piece's pause comes after its last sentence.
+      await play(audio, pauseAfter: last ? items.last?.pauseAfter ?? 0 : 0)
       guard current == generation else { return }
+      guard last else { continue }
       // A clip holding several pieces reports each, in order, so Speaker's count stays right.
       for (index, item) in items.enumerated() {
         if index > 0 { onStart?(item.token) }
