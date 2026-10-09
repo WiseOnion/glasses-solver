@@ -232,6 +232,9 @@ final class Speaker: NSObject {
   var onHoldChanged: ((Bool) -> Void)?
   /// Called when everything queued has been said.
   var onIdle: (() -> Void)?
+  /// Called when the first words of an answer begin playing (for timing).
+  var onAnswerAudio: (() -> Void)?
+  private var answerAudioStarted = true
 
   /// When the last piece finished being said.
   private var lastSpokeAt = Date()
@@ -727,6 +730,10 @@ final class Speaker: NSObject {
   private func segmentStarted(_ index: Int) {
     guard index < script.count else { return }
     lastProgress = Date()
+    if sayingAnswer, !answerAudioStarted {
+      answerAudioStarted = true
+      onAnswerAudio?()
+    }
     currentIndex = index
     currentFinished = false
     let segment = script[index]
@@ -801,6 +808,7 @@ final class Speaker: NSObject {
   func beginAnswer() {
     speak("", isAnswer: true)
     answerOpen = true
+    answerAudioStarted = false
   }
 
   /// Adds the next piece of the answer. Each line is spoken once it's complete.

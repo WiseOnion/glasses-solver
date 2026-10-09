@@ -302,6 +302,10 @@ final class AppModel {
   @ObservationIgnored private var currentRunID = UUID()
   /// The answer text received so far in the current run.
   @ObservationIgnored private var receivedText = ""
+  /// When each stage of the current photo happened, from the press to the first words heard.
+  @ObservationIgnored private var timing = SolveTiming()
+  /// When the capture press that started the next solve reached the app.
+  @ObservationIgnored private var pressedAt: Date?
   @ObservationIgnored private var registrationTask: Task<Void, Never>?
   @ObservationIgnored private var deviceTask: Task<Void, Never>?
 
@@ -341,6 +345,7 @@ final class AppModel {
     speaker.dictateInParts = dictateInParts
     speaker.onHoldChanged = { [weak self] held in self?.speechHeld = held }
     speaker.onIdle = { [weak self] in self?.updateActivity() }
+    speaker.onAnswerAudio = { [weak self] in self?.firstWordsHeard() }
     applyVoiceEngine()
     if let sdkSetupError {
       errorMessage =
@@ -597,6 +602,8 @@ final class AppModel {
     let runID = UUID()
     currentRunID = runID
     receivedText = ""
+    timing = SolveTiming(start: pressedAt ?? .now, pressed: pressedAt != nil)
+    pressedAt = nil
     // Where the last answer was, if this photo cut it short (or Stop did), before stopping it.
     // Kept until a new answer arrives, so a photo that fails doesn't lose it.
     if let progress = speaker.progress { lastAnswerStoppedAt = progress }
@@ -618,8 +625,12 @@ final class AppModel {
     do {
       phase = .capturing
       // A refresh started after the previous photo must finish before this one.
-      await sessionRefreshTask?.value
+      if let refresh = sessionRefreshTask {
+        await refresh.value
+        timing.mark("waited for the glasses to reconnect")
+      }
       photo = try await captureWithRecovery()
+      timing.mark("photo taken")
       try Task.checkCancellation()
       diag("solve", "photo received, \(photo.count) bytes; calling Claude")
     } catch where Task.isCancelled {
@@ -762,6 +773,14 @@ final class AppModel {
       error: text.isEmpty ? "Stopped for a new photo." : nil, isTest: testMode, sessionID: sessionID)
   }
 
+  /// The answer's first words are playing: logs how long each stage took.
+  private func firstWordsHeard() {
+    guard !timing.finished else { return }
+    timing.mark("first words heard")
+    timing.finished = true
+    diag("timing", timing.summary)
+  }
+
   /// Tells Claude how much of its last answer was heard before a new photo cut it short.
   nonisolated static func describeStop(_ progress: Speaker.Progress) -> String {
     let heard =
@@ -782,6 +801,7 @@ final class AppModel {
     receivedText += piece
     if !answerStarted {
       answerStarted = true
+      timing.mark("Claude's first words arrived")
       speaker.beginAnswer()
     }
     speaker.continueAnswer(piece)
@@ -1122,6 +1142,7 @@ final class AppModel {
     }
     // A press while it's still working means a new photo: the current answer stops and the
     // new photo is answered.
+    pressedAt = .now
     startSolve(reason: "capture press")
   }
 
@@ -1134,6 +1155,42 @@ final class AppModel {
     lastSeenPressTimestampMs = nil
     pressOffsetBaselineMs = nil
     sessionPrompt = ClaudeClient.defaultPrompt
+  }
+}
+
+/// When each stage of answering a photo happened, for the log: each stage is logged as it
+/// ends, then one line with them all once the first words are heard.
+struct SolveTiming {
+  private(set) var start = Date()
+  /// True when `start` is the capture press, false when it's the Solve button or a retry.
+  var pressed = false
+  private(set) var marks: [(stage: String, at: Date)] = []
+  var finished = false
+
+  init(start: Date = .now, pressed: Bool = false) {
+    self.start = start
+    self.pressed = pressed
+  }
+
+  mutating func mark(_ stage: String, at time: Date = .now) {
+    let previous = marks.last?.at ?? start
+    marks.append((stage: stage, at: time))
+    diag("timing", "\(stage): \(Self.seconds(time.timeIntervalSince(previous))) (\(Self.seconds(time.timeIntervalSince(start))) in)")
+  }
+
+  /// "press to first words 9.8 s: photo taken 2.1 s, Claude's first words arrived 7.2 s, ..."
+  var summary: String {
+    var previous = start
+    let stages = marks.map { mark -> String in
+      defer { previous = mark.at }
+      return "\(mark.stage) \(Self.seconds(mark.at.timeIntervalSince(previous)))"
+    }
+    let total = (marks.last?.at ?? start).timeIntervalSince(start)
+    return "\(pressed ? "press" : "start") to first words \(Self.seconds(total)): " + stages.joined(separator: ", ")
+  }
+
+  static func seconds(_ interval: TimeInterval) -> String {
+    String(format: "%.1f s", interval)
   }
 }
 

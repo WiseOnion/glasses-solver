@@ -52,6 +52,20 @@ final class DiagnosticsLogTests: XCTestCase {
   }
 }
 
+// MARK: - Timing each stage
+
+final class SolveTimingTests: XCTestCase {
+  func testEachStageIsTimedFromThePress() {
+    var timing = SolveTiming(start: Date(timeIntervalSince1970: 0), pressed: true)
+    timing.mark("photo taken", at: Date(timeIntervalSince1970: 2))
+    timing.mark("Claude's first words arrived", at: Date(timeIntervalSince1970: 9))
+    timing.mark("first words heard", at: Date(timeIntervalSince1970: 9.5))
+    XCTAssertEqual(
+      timing.summary,
+      "press to first words 9.5 s: photo taken 2.0 s, Claude's first words arrived 7.0 s, first words heard 0.5 s")
+  }
+}
+
 // MARK: - Which camera failures get a fresh session
 
 final class GlassesErrorTests: XCTestCase {

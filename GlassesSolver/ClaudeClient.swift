@@ -311,7 +311,11 @@ struct ClaudeClient: Sendable {
     onText: @escaping @MainActor @Sendable (String) -> Void = { _ in },
     onRestartLine: @escaping @MainActor @Sendable () -> Void = {}
   ) async throws -> Answer {
+    let preparing = Date()
     guard let jpeg = Self.preparedJPEG(from: photo) else { throw ClaudeError.badImage }
+    diag(
+      "timing",
+      "image ready to send: \(jpeg.count / 1024) KB in \(SolveTiming.seconds(Date().timeIntervalSince(preparing)))")
     let messages = Self.messages(jpeg: jpeg, prompt: prompt, previousAnswer: previousAnswer, stoppedAt: stoppedAt)
     var text = ""
     var stopReason: String?
@@ -471,8 +475,10 @@ struct ClaudeClient: Sendable {
   private func read(
     _ request: URLRequest, into stream: inout AnswerStream, onText: @MainActor @Sendable (String) -> Void
   ) async throws {
+    let sent = Date()
     let (bytes, response) = try await URLSession.shared.bytes(for: request)
     let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+    diag("timing", "Claude answered the request (HTTP \(status)) after \(SolveTiming.seconds(Date().timeIntervalSince(sent)))")
     guard status == 200 else {
       var data = Data()
       for try await byte in bytes {
@@ -505,6 +511,9 @@ struct ClaudeClient: Sendable {
         lastLine.set(Date())
         let piece = stream.read(line: line)
         if !piece.isEmpty {
+          if !textStarted.get() {
+            diag("timing", "first text after \(SolveTiming.seconds(Date().timeIntervalSince(sent))) (thinking first)")
+          }
           textStarted.set(true)
           await onText(piece)
         }
