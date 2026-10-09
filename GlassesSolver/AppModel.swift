@@ -565,15 +565,22 @@ final class AppModel {
   /// Writes every voice iOS reports to the diagnostics log, so a voice that doesn't show
   /// up in the picker can be traced (is iOS giving it to apps at all, and how is it labeled).
   func logInstalledVoices() {
+    // Once per launch, and a summary: listing every voice (over a thousand on some phones)
+    // each time Settings opened made the app stutter and pushed everything else out of the log.
+    guard !loggedVoices else { return }
+    loggedVoices = true
     let all = AVSpeechSynthesisVoice.speechVoices()
     let others = all.filter(Speaker.isFromOtherApp)
-    diag("voices", "iOS reports \(all.count) voices, \(others.count) from other apps")
-    for voice in others + all.filter({ !Speaker.isFromOtherApp($0) && Speaker.isPhoneLanguage($0.language) }) {
-      diag(
-        "voices",
-        "\(voice.name) | \(voice.language) | \(Speaker.qualityName(voice.quality)) | \(voice.identifier)")
+    let otherApps = Set(others.map { $0.identifier.split(separator: ".").prefix(3).joined(separator: ".") })
+    diag(
+      "voices",
+      "iOS reports \(all.count) voices, \(others.count) from other apps (\(otherApps.sorted().joined(separator: ", ")))")
+    let best = all.filter { !Speaker.isFromOtherApp($0) && Speaker.isPhoneLanguage($0.language) && $0.quality != .default }
+    for voice in best {
+      diag("voices", "\(voice.name) | \(voice.language) | \(Speaker.qualityName(voice.quality)) | \(voice.identifier)")
     }
   }
+  @ObservationIgnored private var loggedVoices = false
 
   /// Says one sentence in the current voice and speed.
   func previewVoice() {
