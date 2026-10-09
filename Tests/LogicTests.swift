@@ -173,6 +173,7 @@ final class StubAnthropic: URLProtocol, @unchecked Sendable {
   nonisolated(unsafe) static var responses: [(status: Int, body: String)] = []
   nonisolated(unsafe) static var requestCount = 0
   nonisolated(unsafe) static var lastHeaders: [String: String] = [:]
+  nonisolated(unsafe) static var lastBody: [String: Any]?
 
   override class func canInit(with request: URLRequest) -> Bool {
     request.url?.host() == "api.anthropic.com"
@@ -183,6 +184,7 @@ final class StubAnthropic: URLProtocol, @unchecked Sendable {
   override func startLoading() {
     Self.requestCount += 1
     Self.lastHeaders = request.allHTTPHeaderFields ?? [:]
+    Self.lastBody = Self.body(of: request)
     let next = Self.responses.isEmpty ? (500, "{}") : Self.responses.removeFirst()
     let response = HTTPURLResponse(url: request.url!, statusCode: next.0, httpVersion: nil, headerFields: nil)!
     client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
@@ -191,6 +193,22 @@ final class StubAnthropic: URLProtocol, @unchecked Sendable {
   }
 
   override func stopLoading() {}
+
+  /// The request's JSON body. URLSession hands it to the stub as a stream.
+  private static func body(of request: URLRequest) -> [String: Any]? {
+    var data = request.httpBody ?? Data()
+    if data.isEmpty, let stream = request.httpBodyStream {
+      stream.open()
+      defer { stream.close() }
+      var buffer = [UInt8](repeating: 0, count: 65536)
+      while stream.hasBytesAvailable {
+        let count = stream.read(&buffer, maxLength: buffer.count)
+        if count <= 0 { break }
+        data.append(buffer, count: count)
+      }
+    }
+    return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+  }
 }
 
 /// Server-sent events as the Messages API streams them: a thinking block, then one text
@@ -264,19 +282,65 @@ final class ClaudeClientTests: XCTestCase {
     XCTAssertEqual(reply.text, all.joined())
   }
 
-  func testCutOffAnswersSayWhy() async throws {
-    // Ran out of room: the text so far, and the reason.
-    StubAnthropic.responses = [(200, streamBody(["Problem: 4\nWrite: x"], stopReason: "max_tokens"))]
-    var reply = try await ClaudeClient(apiKey: "k").solve(photo: TestImages.jpeg(), prompt: "Solve")
-    XCTAssertEqual(reply, .init(text: "Problem: 4\nWrite: x", stopReason: "max_tokens"))
-    XCTAssertFalse(reply.isComplete)
-    // The stream ended without a stop reason: a dropped connection. Not retried, since
-    // retrying would say the start again.
+  func testAnAnswerThatRunsOutOfRoomIsContinued() async throws {
+    // Out of room partway through line 2: the half-written line was never said, so it's
+    // dropped and Claude, shown the complete lines, writes it again and finishes.
+    StubAnthropic.responses = [
+      (200, streamBody(["Problem: 4\nWrite: x\nWrite: y pr"], stopReason: "max_tokens")),
+      (200, streamBody(["Write: y prime equals, 1\nDone."])),
+    ]
+    let restarts = await Pieces()
+    let pieces = await Pieces()
+    let reply = try await ClaudeClient(apiKey: "k").solve(
+      photo: TestImages.jpeg(), prompt: "Solve", onText: { pieces.all.append($0) },
+      onRestartLine: { restarts.all.append("restart") })
+    XCTAssertEqual(reply, .init(text: "Problem: 4\nWrite: x\nWrite: y prime equals, 1\nDone.", stopReason: "end_turn"))
+    XCTAssertEqual(StubAnthropic.requestCount, 2)
+    let restartCount = await restarts.all.count
+    XCTAssertEqual(restartCount, 1)
+    // The second request shows what was written (complete lines only) and asks to go on.
+    let messages = try XCTUnwrap(StubAnthropic.lastBody?["messages"] as? [[String: Any]])
+    XCTAssertEqual(messages.map { $0["role"] as? String }, ["user", "assistant", "user"])
+    let written = (messages[1]["content"] as? [[String: Any]])?.first?["text"] as? String
+    XCTAssertEqual(written, "Problem: 4\nWrite: x")
+    let ask = (messages[2]["content"] as? [[String: Any]])?.first?["text"] as? String
+    XCTAssertTrue(ask?.contains("ran out of room") == true)
+    XCTAssertEqual(StubAnthropic.lastBody?["max_tokens"] as? Int, ClaudeClient.maxTokens)
+  }
+
+  func testADroppedConnectionIsContinued() async throws {
+    StubAnthropic.responses = [
+      (200, streamBody(["Problem: 4\nWrite: x\n"], stopReason: nil)),
+      (200, streamBody(["Done."])),
+    ]
+    let reply = try await ClaudeClient(apiKey: "k").solve(photo: TestImages.jpeg(), prompt: "Solve")
+    XCTAssertEqual(reply, .init(text: "Problem: 4\nWrite: x\nDone.", stopReason: "end_turn"))
+    let messages = try XCTUnwrap(StubAnthropic.lastBody?["messages"] as? [[String: Any]])
+    let ask = (messages.last?["content"] as? [[String: Any]])?.first?["text"] as? String
+    XCTAssertTrue(ask?.contains("dropped connection") == true)
+  }
+
+  func testContinuingGivesUpAfterAFewTriesAndSaysWhy() async throws {
+    // Always out of room: continued three times, then returned as cut off, so the listener
+    // hears the notice.
+    StubAnthropic.responses = Array(repeating: (status: 200, body: streamBody(["Write: x\n"], stopReason: "max_tokens")), count: 5)
+    let reply = try await ClaudeClient(apiKey: "k").solve(photo: TestImages.jpeg(), prompt: "Solve")
+    XCTAssertEqual(reply.stopReason, "max_tokens")
+    XCTAssertEqual(StubAnthropic.requestCount, 1 + ClaudeClient.maxContinuations)
+    // A continuation that fails returns what came, as a dropped connection.
     StubAnthropic.requestCount = 0
-    StubAnthropic.responses = [(200, streamBody(["Problem: 4"], stopReason: nil)), (200, answer)]
-    reply = try await ClaudeClient(apiKey: "k").solve(photo: TestImages.jpeg(), prompt: "Solve")
-    XCTAssertEqual(reply, .init(text: "Problem: 4", stopReason: nil))
-    XCTAssertEqual(StubAnthropic.requestCount, 1)
+    StubAnthropic.responses = [
+      (200, streamBody(["Problem: 4\nWrite: x\n"], stopReason: nil)), (400, #"{"error":{"message":"bad"}}"#),
+    ]
+    let dropped = try await ClaudeClient(apiKey: "k").solve(photo: TestImages.jpeg(), prompt: "Solve")
+    XCTAssertEqual(dropped, .init(text: "Problem: 4\nWrite: x\n", stopReason: nil))
+  }
+
+  func testCompleteLines() {
+    XCTAssertEqual(ClaudeClient.completeLines("a\nb\nc"), "a\nb\n")
+    XCTAssertEqual(ClaudeClient.completeLines("a\n"), "a\n")
+    XCTAssertEqual(ClaudeClient.completeLines("abc"), "")
+    XCTAssertTrue(ClaudeClient.continuation(of: " \n", reason: nil).isEmpty)
   }
 
   func testFollowUpPhotoIncludesTheEarlierAnswer() throws {

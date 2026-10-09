@@ -657,11 +657,9 @@ final class AppModel {
         let stopNote = previous == nil ? nil : stoppedAt.map(Self.describeStop)
         if previous != nil { diag("solve", "sending as a follow-up to the last answer. \(stopNote ?? "It was heard to the end.")") }
         reply = try await ClaudeClient(apiKey: apiKey).solve(
-          photo: photo, prompt: prompt, previousAnswer: previous, stoppedAt: stopNote
-        ) {
-          [weak self] piece in
-          self?.answerArrived(piece)
-        }
+          photo: photo, prompt: prompt, previousAnswer: previous, stoppedAt: stopNote,
+          onText: { [weak self] piece in self?.answerArrived(piece) },
+          onRestartLine: { [weak self] in self?.speaker.discardUnfinishedLine() })
       } else {
         let text = try await simulatedAnswer(photo: photo)
         answerArrived(text)

@@ -813,6 +813,14 @@ final class Speaker: NSObject {
     enqueue(complete.components(separatedBy: "\n").flatMap { segments(forParagraph: $0) }, voice: resolvedVoice)
   }
 
+  /// Forgets the part of a line still arriving. It hasn't been said (lines are said once
+  /// complete); used when a cut-off answer is continued and Claude writes that line again.
+  func discardUnfinishedLine() {
+    guard !unfinishedLine.isEmpty else { return }
+    diag("audio", "dropping the unfinished line \"\(unfinishedLine.prefix(50))\"; it will be written again")
+    unfinishedLine = ""
+  }
+
   /// Speaks the rest of the answer, then `notice` (such as `cutOffNotice`) if there is one.
   func finishAnswer(notice: String? = nil) {
     guard answerOpen else { return }

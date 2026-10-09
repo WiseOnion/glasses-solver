@@ -283,42 +283,130 @@ struct ClaudeClient: Sendable {
     "Here's a new photo. If it shows my own work on a problem you dictated, tell me where I am, "
     + "check it, and continue from where I stopped. If it shows new problems, answer them."
 
+  /// The longest answer, thinking included (thinking counts toward it on this model). Room
+  /// for a whole page; only what's written is paid for.
+  static let maxTokens = 64000
+  /// How many times an answer that was cut off (a dropped connection, or out of room) is
+  /// continued before giving up and saying so.
+  static let maxContinuations = 3
+  /// Once text is arriving, the longest wait for more before the connection counts as
+  /// dropped (and the answer is continued). Before the first text, `request`'s 180 s applies,
+  /// since Claude may think quietly for a while.
+  static let textIdleLimit: TimeInterval = 45
+
   /// Streams the answer, handing each new piece of text to `onText` as it arrives, so it can
   /// be spoken before the rest is written. With `previousAnswer` (the answer to the last
   /// photo, as text), the new photo is sent as a follow-up to it, so a photo of the
-  /// listener's own work can be checked and continued. Throws only if no text arrived; once
-  /// some has, a dropped connection returns what came, with no stop reason.
+  /// listener's own work can be checked and continued.
+  ///
+  /// An answer cut off partway (the connection dropped, or it ran out of room) is continued:
+  /// Claude is shown what it wrote, up to its last complete line, and asked to go on from
+  /// there. Lines are spoken only once complete, so the unfinished last line was never heard;
+  /// `onRestartLine` is called to drop it, and Claude writes it again in full. After
+  /// `maxContinuations`, or if continuing fails, what came is returned with the stop reason
+  /// (nil for a dropped connection), so the listener is told. Throws only if no text arrived,
+  /// or when cancelled.
   func solve(
     photo: Data, prompt: String = defaultPrompt, previousAnswer: String? = nil, stoppedAt: String? = nil,
-    onText: @escaping @MainActor @Sendable (String) -> Void = { _ in }
+    onText: @escaping @MainActor @Sendable (String) -> Void = { _ in },
+    onRestartLine: @escaping @MainActor @Sendable () -> Void = {}
   ) async throws -> Answer {
     guard let jpeg = Self.preparedJPEG(from: photo) else { throw ClaudeError.badImage }
-    var request = try Self.request(apiKey: apiKey)
-    request.httpBody = try JSONSerialization.data(
-      withJSONObject: Self.body(jpeg: jpeg, prompt: prompt, previousAnswer: previousAnswer, stoppedAt: stoppedAt))
+    let messages = Self.messages(jpeg: jpeg, prompt: prompt, previousAnswer: previousAnswer, stoppedAt: stoppedAt)
+    var text = ""
+    var stopReason: String?
+    var continuations = 0
+    while true {
+      var request = try Self.request(apiKey: apiKey)
+      request.httpBody = try JSONSerialization.data(
+        withJSONObject: Self.body(messages: messages + Self.continuation(of: text, reason: stopReason)))
+      let part: AnswerStream
+      do {
+        part = try await stream(request, continuing: !text.isEmpty, onText: onText)
+      } catch where !text.isEmpty && !Task.isCancelled {
+        diag("claude", "continuing the answer FAILED, so it ends here: \(ErrorDetail.describe(error))")
+        return Answer(text: text, stopReason: nil)
+      }
+      text += part.text
+      stopReason = part.stopReason
+      guard Self.canContinue(stopReason), continuations < Self.maxContinuations, !text.isEmpty else {
+        return Answer(text: text, stopReason: stopReason)
+      }
+      continuations += 1
+      let kept = Self.completeLines(text)
+      diag(
+        "claude",
+        "the answer was cut off (\(stopReason ?? "the connection dropped")) after \(text.count) characters; "
+          + "asking Claude to go on from its last complete line (\(continuations) of \(Self.maxContinuations))")
+      if kept.count < text.count { await onRestartLine() }
+      text = kept
+    }
+  }
 
-    // Retried once after a short pause when the failure is temporary (rate limit, overload,
-    // server error, or a dropped connection), but only before any text has arrived, so
-    // nothing is said twice.
+  /// True for an answer that ended early in a way continuing fixes: out of room, or a
+  /// dropped connection (nil).
+  static func canContinue(_ stopReason: String?) -> Bool {
+    stopReason == nil || stopReason == "max_tokens"
+  }
+
+  /// The text up to and including its last line break: the lines that were complete, and so
+  /// were spoken.
+  static func completeLines(_ text: String) -> String {
+    guard let lastBreak = text.lastIndex(of: "\n") else { return "" }
+    return String(text[...lastBreak])
+  }
+
+  /// After an answer was cut off: what Claude wrote so far, and a request to go on from it.
+  /// Nothing when nothing complete was written (the request is simply sent again).
+  static func continuation(of text: String, reason: String?) -> [[String: Any]] {
+    let written = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !written.isEmpty else { return [] }
+    let why = reason == "max_tokens" ? "ran out of room" : "was cut off by a dropped connection"
+    return [
+      ["role": "assistant", "content": [["type": "text", "text": written]]],
+      [
+        "role": "user",
+        "content": [
+          [
+            "type": "text",
+            "text": "Your answer \(why) right after the last line above. Go on from exactly there: start "
+              + "with the line that comes next, in the same format, without repeating anything and without "
+              + "an introduction, and finish the way you normally would.",
+          ]
+        ],
+      ],
+    ]
+  }
+
+  /// One streamed request. Retried once after a short pause when the failure is temporary
+  /// (rate limit, overload, server error, or a dropped connection), but only before any text
+  /// has arrived, so nothing is said twice; once some has, a dropped connection returns what
+  /// came, with no stop reason. With `continuing`, an empty answer isn't an error.
+  private func stream(
+    _ request: URLRequest, continuing: Bool, onText: @escaping @MainActor @Sendable (String) -> Void
+  ) async throws -> AnswerStream {
     for attempt in 1...2 {
       var stream = AnswerStream()
       do {
         try await read(request, into: &stream, onText: onText)
-        if stream.text.isEmpty {
+        if stream.text.isEmpty && !continuing {
           if stream.stopReason == "refusal" { throw ClaudeError.refused }
           if let failure = stream.failure { throw failure }
           throw ClaudeError.emptyAnswer
         }
-        return Answer(text: stream.text, stopReason: stream.stopReason)
+        if stream.text.isEmpty, let failure = stream.failure { throw failure }
+        return stream
       } catch ClaudeError.http(let status, let message)
         where attempt == 1 && stream.text.isEmpty && Self.retriedStatuses.contains(status)
       {
         diag("claude", "HTTP \(status), retrying once: \(message)")
-      } catch let error as URLError where attempt == 1 && stream.text.isEmpty && Self.isTransient(error) {
+      } catch let error as URLError
+        where attempt == 1 && stream.text.isEmpty && Self.isTransient(error) && !Task.isCancelled
+      {
         diag("claude", "network error, retrying once: \(ErrorDetail.describe(error))")
-      } catch where !stream.text.isEmpty {
+      } catch where !stream.text.isEmpty && !Task.isCancelled {
         diag("claude", "the answer stopped partway: \(ErrorDetail.describe(error))")
-        return Answer(text: stream.text, stopReason: nil)
+        return stream
       }
       try await Task.sleep(for: .seconds(2))
     }
@@ -329,23 +417,29 @@ struct ClaudeClient: Sendable {
   /// the earlier prompt (its photo isn't sent again), the earlier answer, then the new photo
   /// with `followUpPrompt`, after `stoppedAt` (where the earlier answer was cut short) if set.
   static func body(jpeg: Data, prompt: String, previousAnswer: String?, stoppedAt: String? = nil) -> [String: Any] {
+    body(messages: messages(jpeg: jpeg, prompt: prompt, previousAnswer: previousAnswer, stoppedAt: stoppedAt))
+  }
+
+  /// The conversation sent for a photo (see `body(jpeg:prompt:previousAnswer:stoppedAt:)`).
+  static func messages(jpeg: Data, prompt: String, previousAnswer: String?, stoppedAt: String?) -> [[String: Any]] {
     let image: [String: Any] = [
       "type": "image", "source": ["type": "base64", "media_type": "image/jpeg", "data": jpeg.base64EncodedString()],
     ]
     let followUpText: String = [stoppedAt, Self.followUpPrompt].compactMap { $0 }.joined(separator: " ")
-    let messages: [[String: Any]]
     if let previousAnswer, !previousAnswer.isEmpty {
-      messages = [
+      return [
         ["role": "user", "content": [["type": "text", "text": prompt + " (That photo isn't included again.)"]]],
         ["role": "assistant", "content": [["type": "text", "text": previousAnswer]]],
         ["role": "user", "content": [image, ["type": "text", "text": followUpText]]],
       ]
-    } else {
-      messages = [["role": "user", "content": [image, ["type": "text", "text": prompt]]]]
     }
-    return [
+    return [["role": "user", "content": [image, ["type": "text", "text": prompt]]]]
+  }
+
+  static func body(messages: [[String: Any]]) -> [String: Any] {
+    [
       "model": model,
-      "max_tokens": 16000,
+      "max_tokens": maxTokens,
       "stream": true,
       "fallbacks": "default",
       "output_config": ["effort": "medium"],
@@ -371,7 +465,9 @@ struct ClaudeClient: Sendable {
 
   private static let retriedStatuses = [429, 500, 502, 503, 504, 529]
 
-  /// Reads the server-sent events into `stream`, passing new text on as it comes.
+  /// Reads the server-sent events into `stream`, passing new text on as it comes. Once text
+  /// is arriving, a wait of more than `textIdleLimit` for the next line ends the read as a
+  /// timeout (a connection that went quiet without closing).
   private func read(
     _ request: URLRequest, into stream: inout AnswerStream, onText: @MainActor @Sendable (String) -> Void
   ) async throws {
@@ -388,9 +484,34 @@ struct ClaudeClient: Sendable {
         ?? String(decoding: data.prefix(300), as: UTF8.self)
       throw ClaudeError.http(status: status, message: message)
     }
-    for try await line in bytes.lines {
-      let piece = stream.read(line: line)
-      if !piece.isEmpty { await onText(piece) }
+    let lastLine = LockedValue(Date())
+    let textStarted = LockedValue(false)
+    let wentQuiet = LockedValue(false)
+    let task = bytes.task
+    let idleLimit = Self.textIdleLimit
+    let watchdog = Task.detached {
+      while !Task.isCancelled {
+        try? await Task.sleep(for: .seconds(2))
+        if textStarted.get(), Date().timeIntervalSince(lastLine.get()) > idleLimit {
+          wentQuiet.set(true)
+          task.cancel()
+          return
+        }
+      }
+    }
+    defer { watchdog.cancel() }
+    do {
+      for try await line in bytes.lines {
+        lastLine.set(Date())
+        let piece = stream.read(line: line)
+        if !piece.isEmpty {
+          textStarted.set(true)
+          await onText(piece)
+        }
+      }
+    } catch where wentQuiet.get() {
+      diag("claude", "no more of the answer for \(Int(idleLimit)) s; treating the connection as dropped")
+      throw URLError(.timedOut)
     }
   }
 
