@@ -4,48 +4,102 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="only dark">
-<!-- The written answer: white on black, one step per row, equals signs lined up, like
-     worked math on a test page. The app passes the steps as data (render). Every piece of
-     math is typeset by KaTeX, which is built into the app (no internet needed), and nothing
-     from an answer is ever inserted as HTML. -->
+<!-- The written answer: white math on black, one step per row, relations lined up like an
+     aligned derivation, the answer boxed. The app passes the steps as data (render). Every
+     piece of math is typeset by KaTeX, which is built into the app (no internet needed), and
+     nothing from an answer is ever inserted as HTML. -->
 <link rel="stylesheet" href="katex/katex.min.css">
 <script src="katex/katex.min.js"></script>
 <style>
-  html, body { margin: 0; background: #000; color: #fff; }
-  body { font: 16px -apple-system, "Helvetica Neue", sans-serif; -webkit-text-size-adjust: 100%; }
-  /* The math starts right at the top, inside the phone's safe area. */
-  /* A screen's worth of space after the last line, so it can be scrolled up to the top. */
-  #page { padding: 10px max(14px, env(safe-area-inset-right)) 90vh max(14px, env(safe-area-inset-left)); }
-  .problem { font-weight: 600; font-size: 15px; margin: 22px 0 6px; padding-bottom: 3px;
-    border-bottom: 1px solid #fff; }
-  .problem:first-child { margin-top: 2px; }
-  /* Rare: a line too wide even after Claude breaks it scrolls on its own row, never the page. */
-  .work { overflow-x: auto; -webkit-overflow-scrolling: touch; }
-  table { border-collapse: collapse; }
-  /* Baselines, as TeX lines up an aligned block: the equals sign stays level even when one
-     side has a fraction. */
-  td { padding: 9px 0; vertical-align: baseline; white-space: nowrap; }
-  tr.more td { padding-top: 2px; }
-  .katex { font-size: 1.25em; color: #fff; }
-  td.number { font-size: 12px; color: #8e8e8e; padding-right: 10px; text-align: right;
-    min-width: 16px; }
-  td.left { text-align: right; padding-right: 0; }
+  :root {
+    --ink: #fff;
+    --quiet: #7a7a7a;     /* line numbers, the waiting message */
+    --rule: #2e2e2e;      /* under each problem's heading */
+    --now: #1c1c1c;       /* the line being read */
+    --gutter: 16px;
+  }
+  html, body { margin: 0; background: #000; color: var(--ink); }
+  body {
+    font: 17px/1.35 -apple-system, "SF Pro Text", "Helvetica Neue", sans-serif;
+    -webkit-text-size-adjust: 100%;
+    -webkit-tap-highlight-color: transparent;
+    overflow-x: hidden;
+  }
+  /* The math starts right at the top, inside the phone's safe areas. A screen's worth of
+     space after the last line, so the last lines can be scrolled up to the top. */
+  #page {
+    padding: 6px max(var(--gutter), env(safe-area-inset-right))
+      calc(90vh + env(safe-area-inset-bottom)) max(var(--gutter), env(safe-area-inset-left));
+  }
+
+  /* Problem headings: quiet, small, with a hairline under them, so the math is what's seen. */
+  .problem {
+    display: flex; align-items: baseline; gap: 8px;
+    margin: 34px 0 4px; padding-bottom: 6px;
+    border-bottom: 1px solid var(--rule);
+    font-size: 13px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--quiet);
+  }
+  .problem b { font-size: 17px; font-weight: 700; letter-spacing: 0; color: var(--ink); }
+  .problem:first-child { margin-top: 4px; }
+
+  /* Rare: a line too wide even after Claude breaks it scrolls inside its problem, never the
+     whole page. Relative, so the answer's box can be drawn over the work. */
+  .work {
+    position: relative;
+    overflow-x: auto; overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    margin: 0 -6px; padding: 4px 6px;   /* room for the box and the highlight's edges */
+  }
+  table { position: relative; z-index: 1; border-collapse: separate; border-spacing: 0; }
+  /* Baselines, as TeX lines up an aligned block: the relation stays level even when one side
+     has a fraction, and every cell in a row shares the same baseline. */
+  td { padding: 10px 0; vertical-align: baseline; white-space: nowrap; }
+  tr.more td { padding-top: 0; }
+  tr.boxed td { padding-top: 13px; padding-bottom: 13px; }
+  tr.boxed.continued td { padding-bottom: 0; }
+  tr.more.boxed td { padding-top: 2px; }
+
+  .katex { font-size: 1.2em; color: var(--ink); }
+  /* Cross-outs drawn thick enough to see at a glance. */
+  .katex .cancel-pad svg line, .katex .cancel-lap svg line,
+  .katex .cancel svg line, .katex svg line { stroke-width: 1.6px; }
+
+  td.number {
+    width: 22px; padding-right: 16px; text-align: right;
+    font-size: 13px; font-variant-numeric: tabular-nums; color: var(--quiet);
+  }
+  td.left { text-align: right; }
   td.right { text-align: left; }
-  tr.now td.left, tr.now td.right { background: #262626; }
-  .katex.box-left, .katex.box-right, .katex.box-all { display: inline-block; border: 1.5px solid #fff;
-    padding-top: 5px; padding-bottom: 5px; }
-  .katex.box-left { border-right: none; padding-left: 7px; }
-  .katex.box-right { border-left: none; padding-right: 7px; }
-  .katex.box-all { padding-left: 7px; padding-right: 7px; }
-  .words { font-size: 16px; white-space: normal; }
-  .message { color: #8e8e8e; margin: 6px 0; }
+  td.span { text-align: left; }
+  /* A long line's rest, set in from the relation, as it's written on paper. */
+  td.indent { padding-left: 1.6em; }
+  .words { white-space: normal; font-size: 17px; line-height: 1.4;
+    max-width: calc(100vw - 2 * var(--gutter) - 50px); }
+
+  /* The line being read: a soft grey band behind it, the width of the work (drawn by
+     drawMarks, so it's even however wide the row is), and its number brightened. */
+  tr.now td.number { color: var(--ink); }
+  .now-band {
+    position: absolute; left: 0; right: 0; z-index: 0; pointer-events: none;
+    background: var(--now); border-radius: 6px;
+  }
+
+  /* The final answer's box, drawn tightly around its math (both sides of the relation, and
+     any rows it continues onto), over the table so the alignment is untouched. */
+  .answer-box {
+    position: absolute; z-index: 2; pointer-events: none;
+    border: 1.5px solid var(--ink); border-radius: 2px;
+  }
+
+  .message { color: var(--quiet); margin: 10px 0; font-size: 17px; }
 </style>
 </head>
 <body>
 <main id="page" aria-label="Written answer"></main>
 <script>
   // Typesets one piece of math into element, at full display size. If KaTeX can't read it,
-  // the LaTeX is shown as plain white text rather than in red, or not at all.
+  // the LaTeX is shown as plain white text, never red error text.
   function math(latex, element) {
     try {
       katex.render('\\displaystyle ' + latex, element, {
@@ -64,85 +118,176 @@
     return element;
   }
 
+  // The boxed answers on the page: each is {work, cells}, the cells holding its math.
+  var boxes = [];
+  // The line being read: {work, rows}, its row and any rows it continues onto.
+  var reading = null;
+
+  // Draws each answer's box around the visible extent of its math (KaTeX's .base boxes,
+  // which are exactly as tall and deep as the math), with a little room around it.
+  function drawMarks() {
+    drawBand();
+    boxes.forEach(function (answer) {
+      if (answer.element) answer.element.remove();
+      var bases = [];
+      answer.cells.forEach(function (td) {
+        var found = td.querySelectorAll('.katex-html > .base');
+        if (!found.length && td.textContent) found = [td];
+        for (var i = 0; i < found.length; i++) bases.push(found[i]);
+      });
+      if (!bases.length) return;
+      var top = Infinity, left = Infinity, bottom = -Infinity, right = -Infinity;
+      bases.forEach(function (base) {
+        var rect = base.getBoundingClientRect();
+        if (!rect.width && !rect.height) return;
+        top = Math.min(top, rect.top); left = Math.min(left, rect.left);
+        bottom = Math.max(bottom, rect.bottom); right = Math.max(right, rect.right);
+      });
+      if (top === Infinity) return;
+      var frame = answer.work.getBoundingClientRect();
+      var box = document.createElement('div');
+      box.className = 'answer-box';
+      box.setAttribute('aria-hidden', 'true');
+      var padX = 7, padY = 6;
+      box.style.left = (left - frame.left + answer.work.scrollLeft - padX) + 'px';
+      box.style.top = (top - frame.top - padY) + 'px';
+      box.style.width = (right - left + 2 * padX) + 'px';
+      box.style.height = (bottom - top + 2 * padY) + 'px';
+      answer.work.appendChild(box);
+      answer.element = box;
+    });
+  }
+
+  // A grey band behind the line being read, across the whole work.
+  function drawBand() {
+    if (!reading) return;
+    if (reading.element) reading.element.remove();
+    var frame = reading.work.getBoundingClientRect();
+    var first = reading.rows[0].getBoundingClientRect();
+    var last = reading.rows[reading.rows.length - 1].getBoundingClientRect();
+    var band = document.createElement('div');
+    band.className = 'now-band';
+    band.setAttribute('aria-hidden', 'true');
+    band.style.top = (first.top - frame.top) + 'px';
+    band.style.height = (last.bottom - first.top) + 'px';
+    band.style.width = reading.work.scrollWidth + 'px';
+    band.style.right = 'auto';
+    reading.work.insertBefore(band, reading.work.firstChild);
+    reading.element = band;
+  }
+
   // problems: [{label, lines: [{number, words, boxed, now, left?, right?, whole?, more?}]}]
   function render(json, message) {
     var problems = JSON.parse(json);
     var page = document.getElementById('page');
+    // Keep any problem scrolled sideways where it was, as new lines arrive.
+    var sideways = Array.prototype.map.call(page.querySelectorAll('.work'), function (work) {
+      return work.scrollLeft;
+    });
     page.textContent = '';
+    boxes = [];
+    reading = null;
     if (!problems.length) {
       var empty = document.createElement('p');
       empty.className = 'message';
+      empty.setAttribute('role', 'status');
       empty.textContent = message;
       page.appendChild(empty);
       return;
     }
-    var now = null;
-    problems.forEach(function (problem) {
+    problems.forEach(function (problem, problemIndex) {
       if (problem.label) {
-        var heading = document.createElement('div');
+        var heading = document.createElement('h2');
         heading.className = 'problem';
-        heading.textContent = 'Problem ' + problem.label;
+        heading.setAttribute('aria-label', 'Problem ' + problem.label);
+        var word = document.createElement('span');
+        word.textContent = 'Problem';
+        var label = document.createElement('b');
+        label.textContent = problem.label;
+        heading.appendChild(word);
+        heading.appendChild(label);
         page.appendChild(heading);
       }
       var work = document.createElement('div');
       work.className = 'work';
       var table = document.createElement('table');
+      table.setAttribute('role', 'presentation');
       problem.lines.forEach(function (line) {
-        var row = document.createElement('tr');
-        row.setAttribute('aria-label', 'Line ' + line.number + ': ' + line.words);
-        if (line.now) { row.className = 'now'; now = row; }
-        row.appendChild(cell('number', line.number + '.'));
         var more = line.more || [];
-        var box = function (latex) { return line.boxed && !more.length ? '\\boxed{' + latex + '}' : latex; };
-        if (line.right !== undefined) {
-          // Split at its equals sign, so the signs line up down the work. "{}" first, as in
-          // an aligned block, so a leading = gets its space on both sides.
+        var aligned = line.right !== undefined;
+        var hasMath = aligned || line.whole !== undefined;
+        var mathCells = [];
+        var marks = (line.now ? ' now' : '') + (line.boxed && hasMath ? ' boxed' : '');
+
+        var row = document.createElement('tr');
+        row.className = (marks + (more.length ? ' continued' : '')).trim();
+        row.setAttribute('aria-label', 'Line ' + line.number + ': ' + line.words);
+        row.appendChild(cell('number', String(line.number)));
+        if (aligned) {
+          // Split at its relation, so the relations line up down the work. "{}" first, as
+          // in an aligned block, so a leading = gets its space on both sides.
           var left = line.left ? math(line.left, cell('left')) : cell('left');
           var right = math('{}' + line.right, cell('right'));
-          // The answer's box is drawn around both halves, so its equals sign stays in line.
-          // Drawn on the math itself, not its cell, so the box hugs the answer.
-          if (line.boxed && !more.length) {
-            var mark = function (element, className) {
-              var typeset = element.querySelector('.katex');
-              if (typeset) typeset.classList.add(className);
-            };
-            if (line.left) {
-              mark(left, 'box-left');
-              mark(right, 'box-right');
-            } else {
-              mark(right, 'box-all');
-            }
-          }
           row.appendChild(left);
           row.appendChild(right);
+          if (line.left) mathCells.push(left);
+          mathCells.push(right);
         } else if (line.whole !== undefined) {
-          var spanning = math(box(line.whole), cell('right'));
+          // No relation: starts at the work's left edge, across both columns.
+          var spanning = math(line.whole, cell('span'));
           spanning.colSpan = 2;
           row.appendChild(spanning);
+          mathCells.push(spanning);
         } else {
-          var words = cell('right words', line.words);
+          // Words wrap at the screen's width, even when a wide line widens the work.
+          var words = cell('span');
+          var text = document.createElement('div');
+          text.className = 'words';
+          text.textContent = line.words;
+          words.appendChild(text);
           words.colSpan = 2;
           row.appendChild(words);
         }
         table.appendChild(row);
-        // A long line Claude broke to fit the phone: the rest underneath, indented.
-        more.forEach(function (piece) {
+        var rows = [row];
+
+        // A long line Claude broke to fit the phone: the rest underneath, set in from the
+        // relation (or from the line's start, when it has none).
+        more.forEach(function (piece, index) {
           var next = document.createElement('tr');
-          next.className = 'more' + (line.now ? ' now' : '');
+          next.className = ('more' + marks + (index < more.length - 1 ? ' continued' : '')).trim();
+          next.setAttribute('aria-hidden', 'true');
           next.appendChild(cell('number'));
-          next.appendChild(cell('left'));
-          next.appendChild(math('\\qquad {}' + piece, cell('right')));
+          var rest;
+          if (aligned) {
+            next.appendChild(cell('left'));
+            rest = math('{}' + piece, cell('right indent'));
+          } else {
+            rest = math(piece, cell('span indent'));
+            rest.colSpan = 2;
+          }
+          next.appendChild(rest);
+          mathCells.push(rest);
           table.appendChild(next);
+          rows.push(next);
         });
+        if (line.now) reading = { work: work, rows: rows };
+
+        if (line.boxed && mathCells.length) boxes.push({ work: work, cells: mathCells });
       });
       work.appendChild(table);
       page.appendChild(work);
+      if (sideways[problemIndex]) work.scrollLeft = sideways[problemIndex];
     });
-    // Keep the line being read near the top, where the eye starts.
-    if (now) {
-      var top = now.getBoundingClientRect().top + window.scrollY - 70;
-      window.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
-    }
+    // The page stays wherever it was scrolled: the line being read is only highlighted.
+    drawMarks();
+  }
+
+  // Boxes follow the math if the layout changes (rotation, fonts finishing loading).
+  window.addEventListener('resize', drawMarks);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(drawMarks);
+  if (document.fonts && document.fonts.addEventListener) {
+    document.fonts.addEventListener('loadingdone', drawMarks);
   }
 </script>
 </body>
