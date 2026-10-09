@@ -254,6 +254,16 @@ struct SettingsView: View {
         }
 
         Section {
+          Toggle("Fast answers", isOn: $model.fastAnswers)
+        } footer: {
+          Text(
+            "Claude's fast mode: the same model, just as careful with the math, but it thinks and writes "
+              + "about twice as fast, so the first words come sooner. It costs twice as much per answer. "
+              + "If your account can't use it, standard speed is used automatically."
+          )
+        }
+
+        Section {
           Toggle("Test mode (no Claude)", isOn: $model.testMode)
         } footer: {
           Text(

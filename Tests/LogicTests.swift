@@ -350,6 +350,48 @@ final class ClaudeClientTests: XCTestCase {
     XCTAssertEqual(dropped, .init(text: "Problem: 4\nWrite: x\n", stopReason: nil))
   }
 
+  func testSystemPromptIsCachedAndFastModeIsAsked() async throws {
+    ClaudeClient.fastModeRefused.set(false)
+    StubAnthropic.responses = [(200, answer)]
+    _ = try await ClaudeClient(apiKey: "k", fast: true).solve(photo: TestImages.jpeg(), prompt: "Solve")
+    let body = try XCTUnwrap(StubAnthropic.lastBody)
+    XCTAssertEqual(body["speed"] as? String, "fast")
+    XCTAssertTrue(StubAnthropic.lastHeaders["anthropic-beta"]?.contains("fast-mode-2026-02-01") == true)
+    let system = try XCTUnwrap(body["system"] as? [[String: Any]])
+    XCTAssertEqual(system.first?["text"] as? String, ClaudeClient.system)
+    let cache = try XCTUnwrap(system.first?["cache_control"] as? [String: String])
+    XCTAssertEqual(cache, ["type": "ephemeral", "ttl": "1h"])
+  }
+
+  func testFastModeTurnedDownFallsBackToStandardSpeed() async throws {
+    ClaudeClient.fastModeRefused.set(false)
+    defer { ClaudeClient.fastModeRefused.set(false) }
+    StubAnthropic.responses = [(400, #"{"error":{"message":"speed: fast mode is not available"}}"#), (200, answer)]
+    let reply = try await ClaudeClient(apiKey: "k", fast: true).solve(photo: TestImages.jpeg(), prompt: "Solve")
+    XCTAssertEqual(reply.text, "The answer is 5.")
+    XCTAssertEqual(StubAnthropic.requestCount, 2)
+    XCTAssertNil(StubAnthropic.lastBody?["speed"])
+    XCTAssertFalse(StubAnthropic.lastHeaders["anthropic-beta"]?.contains("fast-mode") == true)
+    XCTAssertTrue(ClaudeClient.fastModeRefused.get(), "later requests shouldn't keep trying it")
+  }
+
+  func testPhotosAreSentSmallAndQuickly() throws {
+    // A small JPEG from the glasses' stream goes as it is, with no re-encoding.
+    let small = TestImages.jpeg()
+    XCTAssertEqual(ClaudeClient.preparedJPEG(from: small), small)
+    // A big still is scaled down to the long-edge cap.
+    let format = UIGraphicsImageRendererFormat()
+    format.scale = 1
+    let big = UIGraphicsImageRenderer(size: CGSize(width: 4032, height: 3024), format: format).image { context in
+      UIColor.white.setFill()
+      context.fill(CGRect(x: 0, y: 0, width: 4032, height: 3024))
+    }.jpegData(compressionQuality: 0.9)!
+    let prepared = try XCTUnwrap(ClaudeClient.preparedJPEG(from: big))
+    let image = try XCTUnwrap(UIImage(data: prepared))
+    XCTAssertEqual(max(image.size.width, image.size.height), 1568, accuracy: 1)
+    XCTAssertEqual(min(image.size.width, image.size.height), 1176, accuracy: 1)
+  }
+
   func testCompleteLines() {
     XCTAssertEqual(ClaudeClient.completeLines("a\nb\nc"), "a\nb\n")
     XCTAssertEqual(ClaudeClient.completeLines("a\n"), "a\n")

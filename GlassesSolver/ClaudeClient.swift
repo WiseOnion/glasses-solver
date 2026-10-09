@@ -1,5 +1,7 @@
 import Foundation
+import ImageIO
 import UIKit
+import UniformTypeIdentifiers
 
 enum ClaudeError: LocalizedError {
   case badImage
@@ -268,6 +270,12 @@ struct ClaudeClient: Sendable {
     """
 
   let apiKey: String
+  /// Fast mode: the same model and effort, writing (and thinking) up to about 2.5 times as
+  /// fast, at twice the price per token. Falls back to standard speed if it isn't accepted.
+  var fast = false
+
+  /// Set once fast mode is refused for this key, so later requests don't keep trying it.
+  static let fastModeRefused = LockedValue(false)
 
   /// An answer and why it ended. Only "end_turn" means it's complete: "max_tokens" ran out
   /// of room, "refusal" was stopped partway, and nil means the connection dropped.
@@ -320,13 +328,13 @@ struct ClaudeClient: Sendable {
     var text = ""
     var stopReason: String?
     var continuations = 0
+    var fast = self.fast && !Self.fastModeRefused.get()
     while true {
-      var request = try Self.request(apiKey: apiKey)
-      request.httpBody = try JSONSerialization.data(
-        withJSONObject: Self.body(messages: messages + Self.continuation(of: text, reason: stopReason)))
       let part: AnswerStream
       do {
-        part = try await stream(request, continuing: !text.isEmpty, onText: onText)
+        part = try await send(
+          messages + Self.continuation(of: text, reason: stopReason), fast: &fast, continuing: !text.isEmpty,
+          onText: onText)
       } catch where !text.isEmpty && !Task.isCancelled {
         diag("claude", "continuing the answer FAILED, so it ends here: \(ErrorDetail.describe(error))")
         return Answer(text: text, stopReason: nil)
@@ -345,6 +353,29 @@ struct ClaudeClient: Sendable {
       if kept.count < text.count { await onRestartLine() }
       text = kept
     }
+  }
+
+  /// Sends one request, in fast mode if `fast` and standard speed if fast mode is turned
+  /// down (it's a research preview with its own rate limit), and logs the tokens used.
+  private func send(
+    _ messages: [[String: Any]], fast: inout Bool, continuing: Bool,
+    onText: @escaping @MainActor @Sendable (String) -> Void
+  ) async throws -> AnswerStream {
+    if fast {
+      do {
+        let part = try await stream(try Self.request(apiKey: apiKey, messages: messages, fast: true), continuing: continuing, onText: onText)
+        diag("claude", "fast mode, \(part.usageDescription)")
+        return part
+      } catch ClaudeError.http(let status, let message) where [400, 403, 404, 429].contains(status) {
+        diag("claude", "fast mode wasn't accepted (HTTP \(status): \(message)); using standard speed")
+        let aboutSpeed = message.lowercased().contains("speed") || message.lowercased().contains("fast")
+        if status == 403 || status == 404 || (status == 400 && aboutSpeed) { Self.fastModeRefused.set(true) }
+        fast = false
+      }
+    }
+    let part = try await stream(try Self.request(apiKey: apiKey, messages: messages, fast: false), continuing: continuing, onText: onText)
+    diag("claude", "standard speed, \(part.usageDescription)")
+    return part
   }
 
   /// True for an answer that ended early in a way continuing fixes: out of room, or a
@@ -440,20 +471,31 @@ struct ClaudeClient: Sendable {
     return [["role": "user", "content": [image, ["type": "text", "text": prompt]]]]
   }
 
-  static func body(messages: [[String: Any]]) -> [String: Any] {
-    [
+  /// The system prompt is cached for an hour: it's the same for every photo, so later photos
+  /// skip reading its ~5,000 tokens again, which makes the first words come sooner (and
+  /// costs a twentieth as much for that part).
+  static func body(messages: [[String: Any]], fast: Bool = false) -> [String: Any] {
+    var body: [String: Any] = [
       "model": model,
       "max_tokens": maxTokens,
       "stream": true,
       "fallbacks": "default",
       "output_config": ["effort": "medium"],
-      "system": system,
+      "system": [["type": "text", "text": system, "cache_control": ["type": "ephemeral", "ttl": "1h"]]],
       "messages": messages,
     ]
+    if fast { body["speed"] = "fast" }
+    return body
   }
 
-  /// The streaming request's URL and headers; the body is set by `solve`.
-  private static func request(apiKey: String) throws -> URLRequest {
+  private static func request(apiKey: String, messages: [[String: Any]], fast: Bool) throws -> URLRequest {
+    var request = try request(apiKey: apiKey, fast: fast)
+    request.httpBody = try JSONSerialization.data(withJSONObject: body(messages: messages, fast: fast))
+    return request
+  }
+
+  /// The streaming request's URL and headers.
+  private static func request(apiKey: String, fast: Bool) throws -> URLRequest {
     var request = URLRequest(url: URL(string: "https://api.anthropic.com/v1/messages")!)
     request.httpMethod = "POST"
     // While streaming, this is the longest wait between pieces, not for the whole answer
@@ -463,7 +505,9 @@ struct ClaudeClient: Sendable {
     request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
     request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
     // Retry on Anthropic's recommended model server-side if a safety classifier declines.
-    request.setValue("server-side-fallback-2026-07-01", forHTTPHeaderField: "anthropic-beta")
+    request.setValue(
+      fast ? "server-side-fallback-2026-07-01,fast-mode-2026-02-01" : "server-side-fallback-2026-07-01",
+      forHTTPHeaderField: "anthropic-beta")
     return request
   }
 
@@ -531,20 +575,37 @@ struct ClaudeClient: Sendable {
     return transient.contains(error.code)
   }
 
-  /// Re-encodes the glasses photo (JPEG or HEIC) as a JPEG with its long edge capped,
-  /// keeping the upload small without losing legibility.
+  /// The glasses photo (JPEG or HEIC) as a JPEG with its long edge capped, keeping the
+  /// upload small without losing legibility. A photo that's already a small, upright JPEG
+  /// (the usual one from the glasses' video stream) is sent as it is, and a bigger one is
+  /// scaled while it's decoded (ImageIO), which is much quicker than decoding a 12-megapixel
+  /// still in full and drawing it smaller.
   static func preparedJPEG(from data: Data, maxLongEdge: CGFloat = 1568) -> Data? {
-    guard let image = UIImage(data: data) else { return nil }
-    let longEdge = max(image.size.width, image.size.height)
-    let scale = min(1, maxLongEdge / longEdge)
-    let size = CGSize(width: image.size.width * scale, height: image.size.height * scale)
-    let format = UIGraphicsImageRendererFormat()
-    format.scale = 1
-    let resized = UIGraphicsImageRenderer(size: size, format: format).image { _ in
-      image.draw(in: CGRect(origin: .zero, size: size))
-    }
-    return resized.jpegData(compressionQuality: 0.85)
+    guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+      let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+      let width = properties[kCGImagePropertyPixelWidth] as? Int,
+      let height = properties[kCGImagePropertyPixelHeight] as? Int
+    else { return nil }
+    let longEdge = max(width, height)
+    let upright = (properties[kCGImagePropertyOrientation] as? Int ?? 1) == 1
+    let isJPEG = (CGImageSourceGetType(source) as String?) == UTType.jpeg.identifier
+    if isJPEG, upright, CGFloat(longEdge) <= maxLongEdge, data.count <= maxUnchangedBytes { return data }
+    let options: [CFString: Any] = [
+      kCGImageSourceCreateThumbnailFromImageAlways: true,
+      kCGImageSourceCreateThumbnailWithTransform: true,
+      kCGImageSourceThumbnailMaxPixelSize: min(Int(maxLongEdge), longEdge),
+    ]
+    guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
+    let output = NSMutableData()
+    guard let destination = CGImageDestinationCreateWithData(output, UTType.jpeg.identifier as CFString, 1, nil)
+    else { return nil }
+    CGImageDestinationAddImage(destination, image, [kCGImageDestinationLossyCompressionQuality: 0.85] as CFDictionary)
+    guard CGImageDestinationFinalize(destination) else { return nil }
+    return output as Data
   }
+
+  /// A small JPEG bigger than this is re-encoded anyway, so the upload stays quick.
+  private static let maxUnchangedBytes = 400_000
 }
 
 /// Builds an answer from the Messages API's server-sent events, one line at a time. Only
@@ -556,7 +617,25 @@ struct AnswerStream {
   private(set) var stopReason: String?
   /// An error event from the server, such as an overload.
   private(set) var failure: ClaudeError?
+  /// Token counts reported by the stream (input, cache reads and writes, output).
+  private(set) var usage: [String: Int] = [:]
+  private(set) var speed: String?
   private var startsNewBlock = false
+
+  /// "input 1650, read from cache 5120, written to cache 0, output 2210 tokens".
+  var usageDescription: String {
+    "input \(usage["input_tokens"] ?? 0), read from cache \(usage["cache_read_input_tokens"] ?? 0), "
+      + "written to cache \(usage["cache_creation_input_tokens"] ?? 0), output \(usage["output_tokens"] ?? 0) tokens"
+      + (speed.map { ", speed \($0)" } ?? "")
+  }
+
+  private mutating func addUsage(_ value: Any?) {
+    guard let fields = value as? [String: Any] else { return }
+    for (key, value) in fields {
+      if let count = value as? Int { usage[key] = count }
+    }
+    if let speed = fields["speed"] as? String { self.speed = speed }
+  }
 
   /// Reads one line of the stream and returns the text it adds ("" for most lines).
   mutating func read(line: String) -> String {
@@ -564,6 +643,8 @@ struct AnswerStream {
       let json = try? JSONSerialization.jsonObject(with: Data(line.dropFirst(5).utf8)) as? [String: Any]
     else { return "" }
     switch json["type"] as? String {
+    case "message_start":
+      addUsage((json["message"] as? [String: Any])?["usage"])
     case "content_block_start":
       startsNewBlock = (json["content_block"] as? [String: Any])?["type"] as? String == "text"
     case "content_block_delta":
@@ -576,6 +657,7 @@ struct AnswerStream {
       return added
     case "message_delta":
       if let reason = (json["delta"] as? [String: Any])?["stop_reason"] as? String { stopReason = reason }
+      addUsage(json["usage"])
     case "error":
       let error = json["error"] as? [String: Any]
       let status = error?["type"] as? String == "overloaded_error" ? 529 : 500

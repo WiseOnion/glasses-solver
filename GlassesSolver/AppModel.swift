@@ -19,6 +19,7 @@ final class AppModel {
   /// speed (which made voices sound robotic) starts over at the new default once.
   private static let speechRateDefaultsKey = "speechRate.v2"
   private static let testModeDefaultsKey = "testMode"
+  private static let fastAnswersDefaultsKey = "fastAnswers"
   private static let writingTimeDefaultsKey = "writingTime"
   private static let voiceDefaultsKey = "voiceIdentifier"
   private static let dictateInPartsDefaultsKey = "dictateInParts"
@@ -124,6 +125,12 @@ final class AppModel {
     didSet { UserDefaults.standard.set(testMode, forKey: Self.testModeDefaultsKey) }
   }
   var canSolve: Bool { hasAPIKey || testMode }
+
+  /// Claude's fast mode: the same model and care, about twice as quick to answer, at twice
+  /// the price (a page costs roughly 10 to 20 cents instead of 5 to 10).
+  var fastAnswers: Bool {
+    didSet { UserDefaults.standard.set(fastAnswers, forKey: Self.fastAnswersDefaultsKey) }
+  }
 
   /// How long to wait after each dictated Write line, as a multiple of the estimated
   /// writing time (see `Speaker.writingTimeRange`).
@@ -319,6 +326,7 @@ final class AppModel {
     self.hasAPIKey = Keychain.read(Self.apiKeyAccount) != nil
     self.useHighResPhoto = UserDefaults.standard.bool(forKey: Self.highResDefaultsKey)
     self.testMode = UserDefaults.standard.bool(forKey: Self.testModeDefaultsKey)
+    self.fastAnswers = UserDefaults.standard.object(forKey: Self.fastAnswersDefaultsKey) as? Bool ?? true
     let savedRate = UserDefaults.standard.object(forKey: Self.speechRateDefaultsKey) as? Float
     self.speechRate = savedRate.map { min(max($0, Speaker.rateRange.lowerBound), Speaker.rateRange.upperBound) }
       ?? Speaker.defaultRate
@@ -686,7 +694,7 @@ final class AppModel {
           ? lastAnswer : nil
         let stopNote = previous == nil ? nil : stoppedAt.map(Self.describeStop)
         if previous != nil { diag("solve", "sending as a follow-up to the last answer. \(stopNote ?? "It was heard to the end.")") }
-        reply = try await ClaudeClient(apiKey: apiKey).solve(
+        reply = try await ClaudeClient(apiKey: apiKey, fast: fastAnswers).solve(
           photo: photo, prompt: prompt, previousAnswer: previous, stoppedAt: stopNote,
           onText: { [weak self] piece in self?.answerArrived(piece, runID: runID) },
           onRestartLine: { [weak self] in self?.speaker.discardUnfinishedLine() })
