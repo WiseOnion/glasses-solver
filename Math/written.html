@@ -214,9 +214,9 @@
       table.setAttribute('role', 'presentation');
       problem.lines.forEach(function (line) {
         var more = line.more || [];
-        // The final answer is kept on one line, never split inside its box; if it's wider
-        // than the screen, its row scrolls on its own.
-        if (line.boxed && more.length) {
+        // Every line stays on one row, never folded under itself (that reads like a fraction);
+        // a line wider than the screen scrolls sideways instead.
+        if (more.length) {
           if (line.right !== undefined) line.right += ' ' + more.join(' ');
           else if (line.whole !== undefined) line.whole += ' ' + more.join(' ');
           more = [];
