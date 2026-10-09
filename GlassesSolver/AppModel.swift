@@ -665,6 +665,9 @@ final class AppModel {
     let photo: Data
     do {
       phase = .capturing
+      // The written answer waits for the new one rather than showing the last as if it were it.
+      shownAnswer = ""
+      linePosition = nil
       // A refresh started after the previous photo must finish before this one.
       if let refresh = sessionRefreshTask {
         await refresh.value
@@ -680,6 +683,7 @@ final class AppModel {
     } catch {
       phase = .idle
       scheduleShutterRevive("after a failed photo", force: true)
+      shownAnswer = lastAnswer
       reportSolveFailure(error)
       conversation.add(
         prompt: prompt, photo: nil, answer: nil, error: error.localizedDescription, isTest: testMode,

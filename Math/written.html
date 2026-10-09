@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="only light">
+<!-- The written answer: black on white, one step per row, equals signs lined up, like
+     worked math on a test page. The app passes the steps as data (render). Every piece of
+     math is typeset by KaTeX, which is built into the app (no internet needed), and nothing
+     from an answer is ever inserted as HTML. -->
+<link rel="stylesheet" href="katex/katex.min.css">
+<script src="katex/katex.min.js"></script>
+<style>
+  html, body { margin: 0; background: #fff; color: #000; }
+  body { font: 16px -apple-system, "Helvetica Neue", sans-serif; -webkit-text-size-adjust: 100%; }
+  /* The math starts right at the top, inside the phone's safe area. */
+  #page { padding: 10px max(14px, env(safe-area-inset-right)) 60px max(14px, env(safe-area-inset-left)); }
+  .problem { font-weight: 600; font-size: 15px; margin: 22px 0 6px; padding-bottom: 3px;
+    border-bottom: 1px solid #000; }
+  .problem:first-child { margin-top: 2px; }
+  /* Rare: a line too wide even after Claude breaks it scrolls on its own row, never the page. */
+  .work { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  table { border-collapse: collapse; }
+  /* Baselines, as TeX lines up an aligned block: the equals sign stays level even when one
+     side has a fraction. */
+  td { padding: 9px 0; vertical-align: baseline; white-space: nowrap; }
+  tr.more td { padding-top: 2px; }
+  .katex { font-size: 1.25em; color: #000; }
+  td.number { font-size: 12px; color: #6e6e6e; padding-right: 10px; text-align: right;
+    min-width: 16px; }
+  td.left { text-align: right; padding-right: 0; }
+  td.right { text-align: left; }
+  tr.now td.left, tr.now td.right { background: #ededed; }
+  td.box-left { border: 1.5px solid #000; border-right: none; padding-left: 7px; }
+  td.box-right { border: 1.5px solid #000; border-left: none; padding-right: 7px; }
+  td.box-all { border: 1.5px solid #000; padding-left: 4px; padding-right: 7px; }
+  .words { font-size: 16px; white-space: normal; }
+  .message { color: #6e6e6e; margin: 6px 0; }
+</style>
+</head>
+<body>
+<main id="page" aria-label="Written answer"></main>
+<script>
+  // Typesets one piece of math into element, at full display size. If KaTeX can't read it,
+  // the LaTeX is shown as plain black text rather than in red, or not at all.
+  function math(latex, element) {
+    try {
+      katex.render('\\displaystyle ' + latex, element, {
+        throwOnError: true, trust: false, strict: 'ignore', output: 'htmlAndMathml'
+      });
+    } catch (error) {
+      element.textContent = latex;
+    }
+    return element;
+  }
+
+  function cell(className, text) {
+    var element = document.createElement('td');
+    element.className = className;
+    if (text !== undefined) element.textContent = text;
+    return element;
+  }
+
+  // problems: [{label, lines: [{number, words, boxed, now, left?, right?, whole?, more?}]}]
+  function render(json, message) {
+    var problems = JSON.parse(json);
+    var page = document.getElementById('page');
+    page.textContent = '';
+    if (!problems.length) {
+      var empty = document.createElement('p');
+      empty.className = 'message';
+      empty.textContent = message;
+      page.appendChild(empty);
+      return;
+    }
+    var now = null;
+    problems.forEach(function (problem) {
+      if (problem.label) {
+        var heading = document.createElement('div');
+        heading.className = 'problem';
+        heading.textContent = 'Problem ' + problem.label;
+        page.appendChild(heading);
+      }
+      var work = document.createElement('div');
+      work.className = 'work';
+      var table = document.createElement('table');
+      problem.lines.forEach(function (line) {
+        var row = document.createElement('tr');
+        row.setAttribute('aria-label', 'Line ' + line.number + ': ' + line.words);
+        if (line.now) { row.className = 'now'; now = row; }
+        row.appendChild(cell('number', line.number + '.'));
+        var more = line.more || [];
+        var box = function (latex) { return line.boxed && !more.length ? '\\boxed{' + latex + '}' : latex; };
+        if (line.right !== undefined) {
+          // Split at its equals sign, so the signs line up down the work. "{}" first, as in
+          // an aligned block, so a leading = gets its space on both sides.
+          var left = line.left ? math(line.left, cell('left')) : cell('left');
+          var right = math('{}' + line.right, cell('right'));
+          // The answer's box is drawn around both halves, so its equals sign stays in line.
+          if (line.boxed && !more.length) {
+            if (line.left) {
+              left.classList.add('box-left');
+              right.classList.add('box-right');
+            } else {
+              right.classList.add('box-all');
+            }
+          }
+          row.appendChild(left);
+          row.appendChild(right);
+        } else if (line.whole !== undefined) {
+          var spanning = math(box(line.whole), cell('right'));
+          spanning.colSpan = 2;
+          row.appendChild(spanning);
+        } else {
+          var words = cell('right words', line.words);
+          words.colSpan = 2;
+          row.appendChild(words);
+        }
+        table.appendChild(row);
+        // A long line Claude broke to fit the phone: the rest underneath, indented.
+        more.forEach(function (piece) {
+          var next = document.createElement('tr');
+          next.className = 'more' + (line.now ? ' now' : '');
+          next.appendChild(cell('number'));
+          next.appendChild(cell('left'));
+          next.appendChild(math('\\qquad {}' + piece, cell('right')));
+          table.appendChild(next);
+        });
+      });
+      work.appendChild(table);
+      page.appendChild(work);
+    });
+    // Keep the line being read near the top, where the eye starts.
+    if (now) {
+      var top = now.getBoundingClientRect().top + window.scrollY - 70;
+      window.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+    }
+  }
+</script>
+</body>
+</html>

@@ -30,6 +30,9 @@ targets:
       - path: Voices
         type: folder
         optional: true
+      # The written-answer page and KaTeX (MIT), which typesets its math offline.
+      - path: Math
+        type: folder
     settings:
       base:
         INFOPLIST_FILE: Support/Info.plist

@@ -7,6 +7,7 @@ struct ContentView: View {
   @State private var showSettings = false
   @State private var showStartSession = false
   @State private var showConversation = false
+  @State private var showWritten = false
 
   var body: some View {
     NavigationStack {
@@ -74,19 +75,9 @@ struct ContentView: View {
 
           if !model.shownAnswer.isEmpty || !model.lastAnswer.isEmpty {
             VStack(alignment: .leading, spacing: 12) {
-              // While it arrives, only complete lines, so half-written math isn't shown.
-              let text = model.phase == .thinking ? ClaudeClient.completeLines(model.shownAnswer) : model.shownAnswer
-              let written = WrittenAnswer.parse(text)
-              if written.isEmpty {
-                Text(Self.withoutWrittenMath(text.isEmpty ? model.lastAnswer : text))
-                  .frame(maxWidth: .infinity, alignment: .leading)
-                  .textSelection(.enabled)
-              } else {
-                WrittenAnswerView(
-                  data: written.pageData(now: model.linePosition.map { ($0.problem, $0.line) }))
-                  .frame(height: 440)
-                  .clipShape(RoundedRectangle(cornerRadius: 8))
-              }
+              Text(Self.withoutWrittenMath(model.shownAnswer.isEmpty ? model.lastAnswer : model.shownAnswer))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .textSelection(.enabled)
               HStack {
                 Button("Repeat", systemImage: "speaker.wave.2") { model.repeatAnswer() }
                 Button("Repeat line", systemImage: "pencil.line") { model.repeatWriteLine() }
@@ -112,6 +103,7 @@ struct ContentView: View {
           }
         }
         ToolbarItemGroup(placement: .topBarTrailing) {
+          Button("Written answer", systemImage: "doc.text") { showWritten = true }
           Button("Conversation", systemImage: "bubble.left.and.bubble.right") { showConversation = true }
           Button("Settings", systemImage: "gearshape") { showSettings = true }
         }
@@ -121,6 +113,9 @@ struct ContentView: View {
       }
       .sheet(isPresented: $showConversation) {
         ConversationView(model: model)
+      }
+      .fullScreenCover(isPresented: $showWritten) {
+        WrittenAnswerScreen(model: model)
       }
       .sheet(isPresented: $showStartSession) {
         StartSessionView(model: model)

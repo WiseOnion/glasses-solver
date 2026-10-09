@@ -87,6 +87,25 @@ final class WrittenAnswerTests: XCTestCase {
     XCTAssertEqual(Speaker.spokenPart("Write: x"), "Write: x")
   }
 
+  /// A long line Claude broke with \\ for the phone becomes rows; a \\ inside cases or a
+  /// matrix stays where it is.
+  func testLongLinesBreakIntoRows() {
+    XCTAssertEqual(
+      WrittenAnswer.rows(#"= -3x^2 - 6xh - 3h^2 \\ + 8x + 8h - 2"#), ["= -3x^2 - 6xh - 3h^2", "+ 8x + 8h - 2"])
+    XCTAssertEqual(
+      WrittenAnswer.rows(#"f(x)=\begin{cases}x^2,&x\geq0\\-x,&x<0\end{cases}"#),
+      [#"f(x)=\begin{cases}x^2,&x\geq0\\-x,&x<0\end{cases}"#])
+    XCTAssertEqual(
+      WrittenAnswer.rows(#"A=\begin{bmatrix}1&2\\3&4\end{bmatrix}"#), [#"A=\begin{bmatrix}1&2\\3&4\end{bmatrix}"#])
+    let written = WrittenAnswer.parse(#"Problem: 1"# + "\n" + #"Write: equals, a lot || = a + b \\ + c"#)
+    let data = try? JSONSerialization.jsonObject(with: Data(written.pageData(now: nil).utf8)) as? [[String: Any]]
+    let step = (data?.first?["lines"] as? [[String: Any]])?.first
+    XCTAssertEqual(step?["right"] as? String, "= a + b")
+    XCTAssertEqual(step?["more"] as? [String], ["+ c"])
+    // Step sentences stay in the voice; the page gets only the math.
+    XCTAssertNil(step?["note"])
+  }
+
   func testAnAnswerWithoutWrittenMathShowsWords() {
     XCTAssertTrue(WrittenAnswer.parse("Problem: 3\nWrite: y equals 2").isEmpty)
   }

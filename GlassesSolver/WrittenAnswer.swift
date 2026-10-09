@@ -6,8 +6,8 @@ import WebKit
 /// per line with the equals signs lined up, cross-outs drawn through, the answer boxed, and
 /// the step sentences as short notes in the margin of the work.
 ///
-/// The steps go to the page as data (`pageData`), and the page builds them with plain text
-/// nodes for MathJax to typeset, so nothing in an answer is ever read as HTML.
+/// The steps go to the page as data (`pageData`), and the page builds them as text and
+/// typesets each piece of math with KaTeX, so nothing in an answer is ever read as HTML.
 struct WrittenAnswer: Equatable {
   struct Line: Equatable {
     let number: Int
@@ -148,7 +148,9 @@ struct WrittenAnswer: Equatable {
 
   // MARK: - The page
 
-  /// The steps for the page, as JSON, with the line being said marked.
+  /// The steps for the page, as JSON, with the line being said marked. Only the math goes to
+  /// the page (no step sentences or other prose): a line split at its relation so the signs
+  /// line up, plus any rows it continues onto (`more`), where Claude broke a long line with \\.
   func pageData(now: (problem: String, line: Int)?) -> String {
     let nowProblem = now.flatMap { now in problems.lastIndex { $0.label == now.problem } }
     let data: [[String: Any]] = problems.enumerated().compactMap { index, problem in
@@ -158,14 +160,16 @@ struct WrittenAnswer: Equatable {
           "number": line.number, "words": line.words, "boxed": line.boxed,
           "now": index == nowProblem && line.number == now?.line,
         ]
-        if let note = line.note { step["note"] = note }
         if let math = line.math {
-          if let parts = Self.alignedParts(math) {
+          let rows = Self.rows(math)
+          let first = rows.first ?? math
+          if let parts = Self.alignedParts(first) {
             step["left"] = parts.left
             step["right"] = parts.right
           } else {
-            step["whole"] = math
+            step["whole"] = first
           }
+          if rows.count > 1 { step["more"] = Array(rows.dropFirst()) }
         }
         return step
       }
@@ -175,102 +179,44 @@ struct WrittenAnswer: Equatable {
     return String(decoding: json, as: UTF8.self)
   }
 
-  /// The page the steps are shown on: slightly off-white paper with faint ruling and a margin
-  /// line, dark ink, one step per row, equals signs in one column. Long lines scroll sideways
-  /// rather than shrink. MathJax (with \cancel for cross-outs) typesets the math, keeping its
-  /// own spacing so fractions, roots and matrices get the height they need.
-  static let page = #"""
-    <!DOCTYPE html>
-    <html lang="en"><head><meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <script>
-    MathJax = {
-      tex: { inlineMath: [['\\(', '\\)']], packages: {'[+]': ['cancel']} },
-      loader: { load: ['[tex]/cancel'] },
-      chtml: { scale: 1.1, mtextInheritFont: false }
-    };
-    function tex(latex) { return '\\(\\displaystyle ' + latex + '\\)'; }
-    function cell(className, text) {
-      var element = document.createElement('div');
-      element.className = className;
-      if (text) element.textContent = text;
-      return element;
-    }
-    function render(json) {
-      var problems = JSON.parse(json);
-      var page = document.getElementById('page');
-      page.textContent = '';
-      if (!problems.length) {
-        page.appendChild(cell('empty', 'The written answer shows here as it comes in.'));
-      }
-      problems.forEach(function (problem) {
-        if (problem.label) page.appendChild(cell('problem', 'Problem ' + problem.label));
-        var work = cell('work');
-        work.setAttribute('role', 'list');
-        problem.lines.forEach(function (line) {
-          if (line.note) work.appendChild(cell('note', line.note));
-          var marks = (line.now ? ' now' : '') + (line.boxed ? ' boxed' : '');
-          var number = cell('number' + marks, line.number + '.');
-          number.setAttribute('role', 'listitem');
-          number.setAttribute('aria-label', 'Line ' + line.number + ': ' + line.words);
-          if (line.now) number.id = 'now';
-          work.appendChild(number);
-          if (line.whole !== undefined) {
-            work.appendChild(cell('whole' + marks, tex(line.whole)));
-          } else if (line.right !== undefined) {
-            work.appendChild(cell('left' + marks, line.left ? tex(line.left) : ''));
-            work.appendChild(cell('right' + marks, tex(line.right)));
-          } else {
-            work.appendChild(cell('whole words' + marks, line.words));
+  /// A line of math cut where Claude broke it with \\ to fit a phone, outside any group or
+  /// environment (a \\ inside cases or a matrix is part of it).
+  static func rows(_ latex: String) -> [String] {
+    let characters = Array(latex)
+    var rows: [String] = []
+    var depth = 0
+    var start = 0
+    var index = 0
+    while index < characters.count {
+      let character = characters[index]
+      if character == "\\" {
+        if index + 1 < characters.count, characters[index + 1] == "\\" {
+          if depth == 0 {
+            rows.append(String(characters[start..<index]))
+            start = index + 2
           }
-        });
-        page.appendChild(work);
-      });
-      var show = function () {
-        var now = document.getElementById('now');
-        if (now) now.scrollIntoView({ block: 'center', behavior: 'smooth' });
-      };
-      if (window.MathJax && MathJax.typesetPromise) {
-        if (MathJax.typesetClear) MathJax.typesetClear([page]);
-        MathJax.typesetPromise([page]).then(show).catch(show);
-      } else {
-        show();
+          index += 2
+          continue
+        }
+        var end = index + 1
+        while end < characters.count, characters[end].isLetter { end += 1 }
+        let name = String(characters[(index + 1)..<end])
+        if name == "left" || name == "begin" { depth += 1 }
+        if name == "right" || name == "end" { depth = max(0, depth - 1) }
+        index = name.isEmpty ? index + 2 : end
+        continue
       }
+      if character == "{" { depth += 1 }
+      if character == "}" { depth = max(0, depth - 1) }
+      index += 1
     }
-    </script>
-    <script defer src="https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-chtml.js"></script>
-    <style>
-    :root { --ink: #1b2233; --faint: #6b7385; --rule: #e3e7ee; --margin: #edc6c6; }
-    body { margin: 0; background: #fffef9; color: var(--ink);
-      font-family: "Noteworthy", "Marker Felt", sans-serif; -webkit-text-size-adjust: none; }
-    #page { padding: 14px 14px 40px 46px; min-height: 100vh; box-sizing: border-box;
-      background-image: linear-gradient(to right, transparent 34px, var(--margin) 34px,
-          var(--margin) 35px, transparent 35px),
-        repeating-linear-gradient(to bottom, transparent 0, transparent 35px, var(--rule) 35px,
-          var(--rule) 36px); }
-    .problem { font-size: 17px; font-weight: bold; margin: 18px 0 6px; }
-    .problem:first-child { margin-top: 0; }
-    .work { display: grid; grid-template-columns: max-content max-content max-content;
-      align-items: center; column-gap: 0; row-gap: 6px; overflow-x: auto;
-      padding-bottom: 4px; }
-    .note { grid-column: 1 / -1; font-size: 14px; color: var(--faint); margin-top: 6px; }
-    .number { font-size: 12px; color: var(--faint); padding-right: 8px;
-      font-family: -apple-system, sans-serif; justify-self: end; margin-left: -34px; width: 26px;
-      text-align: right; }
-    .left { justify-self: end; text-align: right; padding: 3px 0 3px 4px; }
-    .right { justify-self: start; padding: 3px 4px 3px 0.25em; }
-    .whole { grid-column: 2 / -1; justify-self: start; padding: 3px 4px; }
-    .words { font-size: 18px; }
-    .now:not(.number) { background: #f4f1e4; }
-    .left.boxed, .right.boxed, .whole.boxed { border-top: 1.5px solid var(--ink);
-      border-bottom: 1.5px solid var(--ink); }
-    .left.boxed { border-left: 1.5px solid var(--ink); padding-left: 8px; }
-    .right.boxed, .whole.boxed { border-right: 1.5px solid var(--ink); padding-right: 8px; }
-    .whole.boxed { border-left: 1.5px solid var(--ink); padding-left: 8px; }
-    .empty { color: var(--faint); padding-top: 8px; }
-    </style></head>
-    <body><main id="page" aria-label="Written answer"></main></body></html>
-    """#
+    rows.append(String(characters[start...]))
+    return rows.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+  }
+
+  /// The page the steps are shown on (Math/written.html, with KaTeX beside it), loaded from
+  /// the app itself so it works offline and the math fonts load from the phone.
+  static var pageURL: URL? { Bundle.main.url(forResource: "written", withExtension: "html", subdirectory: "Math") }
 }
 
 /// Shows a `WrittenAnswer` on the phone. The page is loaded once; new lines replace its
@@ -278,21 +224,31 @@ struct WrittenAnswer: Equatable {
 struct WrittenAnswerView: UIViewRepresentable {
   /// The steps, from `WrittenAnswer.pageData`.
   let data: String
+  /// Shown instead when there are no steps ("Working on it...").
+  var emptyMessage = "No written answer yet."
 
   func makeCoordinator() -> Coordinator { Coordinator() }
 
   func makeUIView(context: Context) -> WKWebView {
     let view = WKWebView()
     view.navigationDelegate = context.coordinator
-    view.isOpaque = false
-    view.backgroundColor = .clear
+    view.isOpaque = true
+    view.backgroundColor = .white
+    view.scrollView.backgroundColor = .white
+    view.underPageBackgroundColor = .white
+    view.overrideUserInterfaceStyle = .light
     context.coordinator.view = view
-    view.loadHTMLString(WrittenAnswer.page, baseURL: nil)
+    if let page = WrittenAnswer.pageURL {
+      // Read access to the whole folder, so KaTeX's script, style and fonts load from the app.
+      view.loadFileURL(page, allowingReadAccessTo: page.deletingLastPathComponent())
+    } else {
+      diag("written", "the written-answer page is missing from the app")
+    }
     return view
   }
 
   func updateUIView(_ view: WKWebView, context: Context) {
-    context.coordinator.show(data)
+    context.coordinator.show(data, emptyMessage: emptyMessage)
   }
 
   @MainActor
@@ -302,9 +258,10 @@ struct WrittenAnswerView: UIViewRepresentable {
     private var shown: String?
     private var pending: String?
 
-    func show(_ data: String) {
-      guard data != shown else { return }
-      pending = data
+    func show(_ data: String, emptyMessage: String) {
+      let call = "render(\(Self.javaScriptString(data)), \(Self.javaScriptString(emptyMessage)))"
+      guard call != shown else { return }
+      pending = call
       flush()
     }
 
@@ -312,15 +269,72 @@ struct WrittenAnswerView: UIViewRepresentable {
       guard loaded, let view, let pending else { return }
       shown = pending
       self.pending = nil
-      // Passed as a JavaScript string, then parsed on the page.
-      let argument = (try? JSONSerialization.data(withJSONObject: pending, options: .fragmentsAllowed))
-        .map { String(decoding: $0, as: UTF8.self) } ?? "\"[]\""
-      view.evaluateJavaScript("render(\(argument))", completionHandler: nil)
+      view.evaluateJavaScript(pending) { _, error in
+        if let error { diag("written", "the page couldn't show the answer: \(ErrorDetail.describe(error))") }
+      }
+    }
+
+    /// A string as a JavaScript string literal (JSON's quoting is valid JavaScript).
+    private static func javaScriptString(_ text: String) -> String {
+      (try? JSONSerialization.data(withJSONObject: text, options: .fragmentsAllowed))
+        .map { String(decoding: $0, as: UTF8.self) } ?? "\"\""
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
       loaded = true
       flush()
     }
+  }
+}
+
+/// The written answer and nothing else, full screen in black and white: the math the listener
+/// copies, for the current answer (or one from the chats). A single Done button returns.
+struct WrittenAnswerScreen: View {
+  private let model: AppModel?
+  private let answer: String?
+  @Environment(\.dismiss) private var dismiss
+
+  /// The current answer, following along as it arrives and as it's read.
+  init(model: AppModel) {
+    self.model = model
+    answer = nil
+  }
+
+  /// A saved answer.
+  init(answer: String) {
+    model = nil
+    self.answer = answer
+  }
+
+  var body: some View {
+    NavigationStack {
+      WrittenAnswerView(data: data, emptyMessage: emptyMessage)
+        .ignoresSafeArea(edges: .bottom)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbarBackground(.white, for: .navigationBar)
+        .toolbarBackground(.visible, for: .navigationBar)
+        .toolbar {
+          ToolbarItem(placement: .topBarTrailing) {
+            Button("Done") { dismiss() }
+              .foregroundStyle(.black)
+          }
+        }
+    }
+    .preferredColorScheme(.light)
+    .tint(.black)
+  }
+
+  /// The steps to show. While an answer arrives, only its complete lines; while a new photo is
+  /// being worked on, none (so the old answer isn't shown as if it were the new one).
+  private var data: String {
+    guard let model else { return WrittenAnswer.parse(answer ?? "").pageData(now: nil) }
+    let text = model.phase == .thinking ? ClaudeClient.completeLines(model.shownAnswer) : model.shownAnswer
+    return WrittenAnswer.parse(text).pageData(now: model.linePosition.map { ($0.problem, $0.line) })
+  }
+
+  private var emptyMessage: String {
+    guard let model else { return "This answer has no written math." }
+    if model.phase != .idle { return "Working on it\u{2026}" }
+    return model.shownAnswer.isEmpty ? "No answer yet. Take a photo of a problem." : "This answer has no written math."
   }
 }

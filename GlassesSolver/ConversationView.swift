@@ -178,6 +178,7 @@ private struct ChatView: View {
 
 private struct EntryView: View {
   let entry: ConversationEntry
+  @State private var showWritten = false
   let photoURL: URL?
   let onReplay: () -> Void
   let onPhotoTap: () -> Void
@@ -217,15 +218,16 @@ private struct EntryView: View {
             .foregroundStyle(.orange)
         }
         if let answer = entry.answer {
-          let written = WrittenAnswer.parse(answer)
-          if written.isEmpty {
-            ForEach(Array(answer.components(separatedBy: "\n").enumerated()), id: \.offset) { _, line in
-              AnswerLine(line: Speaker.spokenPart(line))
-            }
-          } else {
-            WrittenAnswerView(data: written.pageData(now: nil))
-              .frame(height: 380)
-              .clipShape(RoundedRectangle(cornerRadius: 8))
+          ForEach(Array(answer.components(separatedBy: "\n").enumerated()), id: \.offset) { _, line in
+            AnswerLine(line: Speaker.spokenPart(line))
+          }
+          if !WrittenAnswer.parse(answer).isEmpty {
+            Button("Written answer", systemImage: "doc.text") { showWritten = true }
+              .font(.caption)
+              .buttonStyle(.bordered)
+              .fullScreenCover(isPresented: $showWritten) {
+                WrittenAnswerScreen(answer: answer)
+              }
           }
           Button("Play again", systemImage: "speaker.wave.2", action: onReplay)
             .font(.caption)
