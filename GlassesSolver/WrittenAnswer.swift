@@ -233,10 +233,10 @@ struct WrittenAnswerView: UIViewRepresentable {
     let view = WKWebView()
     view.navigationDelegate = context.coordinator
     view.isOpaque = true
-    view.backgroundColor = .white
-    view.scrollView.backgroundColor = .white
-    view.underPageBackgroundColor = .white
-    view.overrideUserInterfaceStyle = .light
+    view.backgroundColor = .black
+    view.scrollView.backgroundColor = .black
+    view.underPageBackgroundColor = .black
+    view.overrideUserInterfaceStyle = .dark
     context.coordinator.view = view
     if let page = WrittenAnswer.pageURL {
       // Read access to the whole folder, so KaTeX's script, style and fonts load from the app.
@@ -287,7 +287,7 @@ struct WrittenAnswerView: UIViewRepresentable {
   }
 }
 
-/// The written answer and nothing else, full screen in black and white: the math the listener
+/// The written answer and nothing else, full screen, white on black: the math the listener
 /// copies, for the current answer (or one from the chats). A single Done button returns.
 struct WrittenAnswerScreen: View {
   private let model: AppModel?
@@ -311,17 +311,18 @@ struct WrittenAnswerScreen: View {
       WrittenAnswerView(data: data, emptyMessage: emptyMessage)
         .ignoresSafeArea(edges: .bottom)
         .navigationBarTitleDisplayMode(.inline)
-        .toolbarBackground(.white, for: .navigationBar)
+        .toolbarBackground(.black, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
         .toolbar {
           ToolbarItem(placement: .topBarTrailing) {
             Button("Done") { dismiss() }
-              .foregroundStyle(.black)
+              .foregroundStyle(.white)
           }
         }
     }
-    .preferredColorScheme(.light)
-    .tint(.black)
+    .preferredColorScheme(.dark)
+    .tint(.white)
+    .background(Color.black)
   }
 
   /// The steps to show. While an answer arrives, only its complete lines; while a new photo is

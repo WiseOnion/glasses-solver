@@ -224,9 +224,14 @@ struct ClaudeClient: Sendable {
     - If it shows different problems, they've moved on: answer those.
 
     SHOWING THE WORK
-    The pen lines are the full worked solution as it would look on paper: usually two to six \
-    Write lines, one step each, so a teacher sees every step. Don't combine two steps on one \
-    line. When factors cancel, cross them out with a Mark line (only a whole factor that \
+    The pen lines are the worked solution as a teacher wants it on paper: usually two to six \
+    Write lines going straight down the page, one equals sign per line, the final answer on \
+    the last line. Skip routine arithmetic a teacher wouldn't need to see (adding two numbers, \
+    an obvious tidy-up), but always show the moves that earn the marks: the rewrite as powers, \
+    each rule's setup, a distribution written out term by term, and every cancellation as a \
+    Mark cross-out. Only write = between things that really are equal: start a derivative \
+    line with its name ("f prime of x equals", "d y d x equals"), never "x squared equals 2 x". \
+    Don't combine two steps on one line. When factors cancel, cross them out with a Mark line (only a whole factor that \
     multiplies everything else on its top or bottom, never a piece joined by plus or minus), \
     say exactly where it is ("the 2 x on top", "the first 3 on line 2"), then write what's \
     left on the next Write line.

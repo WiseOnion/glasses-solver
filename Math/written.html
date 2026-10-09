@@ -3,20 +3,20 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="color-scheme" content="only light">
-<!-- The written answer: black on white, one step per row, equals signs lined up, like
+<meta name="color-scheme" content="only dark">
+<!-- The written answer: white on black, one step per row, equals signs lined up, like
      worked math on a test page. The app passes the steps as data (render). Every piece of
      math is typeset by KaTeX, which is built into the app (no internet needed), and nothing
      from an answer is ever inserted as HTML. -->
 <link rel="stylesheet" href="katex/katex.min.css">
 <script src="katex/katex.min.js"></script>
 <style>
-  html, body { margin: 0; background: #fff; color: #000; }
+  html, body { margin: 0; background: #000; color: #fff; }
   body { font: 16px -apple-system, "Helvetica Neue", sans-serif; -webkit-text-size-adjust: 100%; }
   /* The math starts right at the top, inside the phone's safe area. */
   #page { padding: 10px max(14px, env(safe-area-inset-right)) 60px max(14px, env(safe-area-inset-left)); }
   .problem { font-weight: 600; font-size: 15px; margin: 22px 0 6px; padding-bottom: 3px;
-    border-bottom: 1px solid #000; }
+    border-bottom: 1px solid #fff; }
   .problem:first-child { margin-top: 2px; }
   /* Rare: a line too wide even after Claude breaks it scrolls on its own row, never the page. */
   .work { overflow-x: auto; -webkit-overflow-scrolling: touch; }
@@ -25,24 +25,26 @@
      side has a fraction. */
   td { padding: 9px 0; vertical-align: baseline; white-space: nowrap; }
   tr.more td { padding-top: 2px; }
-  .katex { font-size: 1.25em; color: #000; }
-  td.number { font-size: 12px; color: #6e6e6e; padding-right: 10px; text-align: right;
+  .katex { font-size: 1.25em; color: #fff; }
+  td.number { font-size: 12px; color: #8e8e8e; padding-right: 10px; text-align: right;
     min-width: 16px; }
   td.left { text-align: right; padding-right: 0; }
   td.right { text-align: left; }
-  tr.now td.left, tr.now td.right { background: #ededed; }
-  td.box-left { border: 1.5px solid #000; border-right: none; padding-left: 7px; }
-  td.box-right { border: 1.5px solid #000; border-left: none; padding-right: 7px; }
-  td.box-all { border: 1.5px solid #000; padding-left: 4px; padding-right: 7px; }
+  tr.now td.left, tr.now td.right { background: #262626; }
+  .katex.box-left, .katex.box-right, .katex.box-all { display: inline-block; border: 1.5px solid #fff;
+    padding-top: 5px; padding-bottom: 5px; }
+  .katex.box-left { border-right: none; padding-left: 7px; }
+  .katex.box-right { border-left: none; padding-right: 7px; }
+  .katex.box-all { padding-left: 7px; padding-right: 7px; }
   .words { font-size: 16px; white-space: normal; }
-  .message { color: #6e6e6e; margin: 6px 0; }
+  .message { color: #8e8e8e; margin: 6px 0; }
 </style>
 </head>
 <body>
 <main id="page" aria-label="Written answer"></main>
 <script>
   // Typesets one piece of math into element, at full display size. If KaTeX can't read it,
-  // the LaTeX is shown as plain black text rather than in red, or not at all.
+  // the LaTeX is shown as plain white text rather than in red, or not at all.
   function math(latex, element) {
     try {
       katex.render('\\displaystyle ' + latex, element, {
@@ -97,12 +99,17 @@
           var left = line.left ? math(line.left, cell('left')) : cell('left');
           var right = math('{}' + line.right, cell('right'));
           // The answer's box is drawn around both halves, so its equals sign stays in line.
+          // Drawn on the math itself, not its cell, so the box hugs the answer.
           if (line.boxed && !more.length) {
+            var mark = function (element, className) {
+              var typeset = element.querySelector('.katex');
+              if (typeset) typeset.classList.add(className);
+            };
             if (line.left) {
-              left.classList.add('box-left');
-              right.classList.add('box-right');
+              mark(left, 'box-left');
+              mark(right, 'box-right');
             } else {
-              right.classList.add('box-all');
+              mark(right, 'box-all');
             }
           }
           row.appendChild(left);
