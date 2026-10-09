@@ -14,7 +14,8 @@
   html, body { margin: 0; background: #000; color: #fff; }
   body { font: 16px -apple-system, "Helvetica Neue", sans-serif; -webkit-text-size-adjust: 100%; }
   /* The math starts right at the top, inside the phone's safe area. */
-  #page { padding: 10px max(14px, env(safe-area-inset-right)) 60px max(14px, env(safe-area-inset-left)); }
+  /* A screen's worth of space after the last line, so it can be scrolled up to the top. */
+  #page { padding: 10px max(14px, env(safe-area-inset-right)) 90vh max(14px, env(safe-area-inset-left)); }
   .problem { font-weight: 600; font-size: 15px; margin: 22px 0 6px; padding-bottom: 3px;
     border-bottom: 1px solid #fff; }
   .problem:first-child { margin-top: 2px; }
