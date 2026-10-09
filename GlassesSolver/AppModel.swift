@@ -94,7 +94,9 @@ final class AppModel {
 
   private(set) var registrationState: RegistrationState
   private(set) var hasActiveDevice = false
-  private(set) var phase: Phase = .idle
+  private(set) var phase: Phase = .idle {
+    didSet { updateActivity() }
+  }
   private(set) var lastPhoto: UIImage?
   private(set) var lastAnswer = ""
   private(set) var hasAPIKey: Bool
@@ -102,7 +104,9 @@ final class AppModel {
   private(set) var speechHeld = false
 
   // Hands-free session (capture button on the glasses)
-  private(set) var sessionActive = false
+  private(set) var sessionActive = false {
+    didSet { updateActivity() }
+  }
   private(set) var isStartingSession = false
   private(set) var sessionPaused = false
   private(set) var sessionPrompt = ClaudeClient.defaultPrompt
@@ -325,6 +329,7 @@ final class AppModel {
     speaker.voiceIdentifier = voiceIdentifier
     speaker.dictateInParts = dictateInParts
     speaker.onHoldChanged = { [weak self] held in self?.speechHeld = held }
+    speaker.onIdle = { [weak self] in self?.updateActivity() }
     applyVoiceEngine()
     if let sdkSetupError {
       errorMessage =
@@ -341,6 +346,20 @@ final class AppModel {
         self?.hasActiveDevice = deviceId != nil
       }
     }
+  }
+
+  /// Records what the app is in the middle of, so if iOS ends it or it crashes, the next
+  /// launch's log says so (see `DiagnosticsLog.reportPreviousRun`).
+  private func updateActivity() {
+    let activity: String? =
+      switch phase {
+      case .capturing: "taking a photo"
+      case .thinking: "answering a photo"
+      case .idle:
+        speaker.isActive
+          ? "speaking" : sessionActive ? "in a hands-free session, waiting for a capture press" : nil
+      }
+    DiagnosticsLog.setActivity(activity)
   }
 
   // MARK: - API key

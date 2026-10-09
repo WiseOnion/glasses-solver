@@ -466,7 +466,7 @@ struct DiagnosticsView: View {
           }
           .buttonStyle(.bordered)
         }
-        Text(log.lines.isEmpty ? "Nothing logged yet." : log.text)
+        Text(log.lines.isEmpty && log.previousRun.isEmpty ? "Nothing logged yet." : log.text)
           .font(.caption.monospaced())
           .textSelection(.enabled)
           .frame(maxWidth: .infinity, alignment: .leading)

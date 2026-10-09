@@ -40,6 +40,18 @@ final class SpeakableTests: XCTestCase {
   }
 }
 
+// MARK: - Diagnostics log
+
+final class DiagnosticsLogTests: XCTestCase {
+  /// Each line reaches the file at once, so it survives the app being ended right after.
+  func testLinesAreWrittenToTheFileAtOnce() throws {
+    let marker = "file check \(UUID().uuidString)"
+    diag("test", marker)
+    let saved = try String(contentsOf: DiagnosticsLog.fileURL, encoding: .utf8)
+    XCTAssertTrue(saved.contains(marker))
+  }
+}
+
 // MARK: - Which camera failures get a fresh session
 
 final class GlassesErrorTests: XCTestCase {

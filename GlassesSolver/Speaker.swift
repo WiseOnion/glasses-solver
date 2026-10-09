@@ -201,6 +201,8 @@ final class Speaker: NSObject {
   }
   /// Called when `heldForRoute` changes.
   var onHoldChanged: ((Bool) -> Void)?
+  /// Called when everything queued has been said.
+  var onIdle: (() -> Void)?
 
   /// True while anything is queued or being said (including a writing pause).
   var isActive: Bool { outstanding > 0 }
@@ -538,7 +540,10 @@ final class Speaker: NSObject {
     }
     if index == currentIndex { currentFinished = true }
     outstanding = max(0, outstanding - 1)
-    if outstanding == 0, stopKeepAliveAfterSpeech { endKeepAlive() }
+    if outstanding == 0 {
+      if stopKeepAliveAfterSpeech { endKeepAlive() }
+      onIdle?()
+    }
   }
 
   /// Logs the speaking speed actually heard, in words per minute, from when the first and

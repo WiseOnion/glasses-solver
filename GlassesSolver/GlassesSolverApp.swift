@@ -6,6 +6,9 @@ struct GlassesSolverApp: App {
   @State private var model: AppModel
 
   init() {
+    // First, so the log shows how the last run ended and everything after this.
+    DiagnosticsLog.reportPreviousRun()
+    AppEventsLog.shared.start()
     // Must run before anything touches `Wearables.shared`.
     var setupError: String?
     do {
