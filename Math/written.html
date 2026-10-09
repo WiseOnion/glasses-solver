@@ -54,9 +54,9 @@
   table { position: relative; z-index: 1; border-collapse: separate; border-spacing: 0; }
   /* Baselines, as TeX lines up an aligned block: the relation stays level even when one side
      has a fraction, and every cell in a row shares the same baseline. */
-  td { padding: 10px 0; vertical-align: baseline; white-space: nowrap; }
+  td { padding: 5px 0; vertical-align: baseline; white-space: nowrap; }
   tr.more td { padding-top: 0; }
-  tr.boxed td { padding-top: 13px; padding-bottom: 13px; }
+  tr.boxed td { padding-top: 8px; padding-bottom: 8px; }
   tr.boxed.continued td { padding-bottom: 0; }
   tr.more.boxed td { padding-top: 2px; }
 
@@ -89,7 +89,7 @@
      any rows it continues onto), over the table so the alignment is untouched. */
   .answer-box {
     position: absolute; z-index: 2; pointer-events: none;
-    border: 1.5px solid var(--ink); border-radius: 2px;
+    border: 1.2px solid var(--ink); border-radius: 0;
   }
 
   .message { color: var(--quiet); margin: 10px 0; font-size: 17px; }
@@ -148,7 +148,7 @@
       var box = document.createElement('div');
       box.className = 'answer-box';
       box.setAttribute('aria-hidden', 'true');
-      var padX = 7, padY = 6;
+      var padX = 5, padY = 4;
       box.style.left = (left - frame.left + answer.work.scrollLeft - padX) + 'px';
       box.style.top = (top - frame.top - padY) + 'px';
       box.style.width = (right - left + 2 * padX) + 'px';
@@ -214,6 +214,13 @@
       table.setAttribute('role', 'presentation');
       problem.lines.forEach(function (line) {
         var more = line.more || [];
+        // The final answer is kept on one line, never split inside its box; if it's wider
+        // than the screen, its row scrolls on its own.
+        if (line.boxed && more.length) {
+          if (line.right !== undefined) line.right += ' ' + more.join(' ');
+          else if (line.whole !== undefined) line.whole += ' ' + more.join(' ');
+          more = [];
+        }
         var aligned = line.right !== undefined;
         var hasMath = aligned || line.whole !== undefined;
         var mathCells = [];

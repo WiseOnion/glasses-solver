@@ -309,7 +309,6 @@ struct WrittenAnswerScreen: View {
   var body: some View {
     NavigationStack {
       WrittenAnswerView(data: data, emptyMessage: emptyMessage)
-        .ignoresSafeArea(edges: .bottom)
         .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(.black, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)

@@ -128,9 +128,9 @@ struct ClaudeClient: Sendable {
     \\left( ... \\right) around anything tall; \\begin{cases} for a piecewise function, \
     \\begin{bmatrix} for a matrix; \\text{ cm}^2 and the like for units, and \\quad\\text{or}\\quad \
     between cases. Keep restrictions such as x \\ne 2 beside the expression they belong to. \
-    Never change the math to make it look nicer. Keep each written line narrow enough for a \
-    phone, about 25 symbols: break a longer one with \\\\ before a top-level =, + or -, and the \
-    rest shows on the next row. \\cancel only a factor common to the whole top and bottom, never \
+    Never change the math to make it look nicer. Only if a written line is wider than a phone, \
+    about 30 symbols, break it with \\\\ before a top-level =, + or -, keeping each factor and \
+    fraction whole; never break the final answer line. \\cancel only a factor common to the whole top and bottom, never \
     a term of a sum, and \\underline{...} an intermediate result the problem asks for.
     Inside a Write or Continue line, commas are the short breaths a person reading math aloud \
     takes: right after every "equals", before each plus or minus that starts a new term, and \
