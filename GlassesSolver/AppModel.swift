@@ -233,10 +233,13 @@ final class AppModel {
     }
   }
 
-  /// Set the moment a solve is requested (before any await), so a second press or tap
-  /// can't start a second photo while the first is still getting going.
+  /// Set the moment a solve is requested (before any await), and until it's done, so the
+  /// Solve button can't start a second one. A capture press while busy replaces it instead
+  /// (see `startSolve`).
   private(set) var solveInFlight = false
-  var isBusy: Bool { phase != .idle || solveInFlight }
+  /// True while the Solve button is checking camera permission, before the solve starts.
+  private var checkingPermission = false
+  var isBusy: Bool { phase != .idle || solveInFlight || checkingPermission }
   var isRegistered: Bool { registrationState == .registered }
 
   var statusText: String {
@@ -290,7 +293,15 @@ final class AppModel {
   @ObservationIgnored private var lastSeenPressTimestampMs: Int64?
   @ObservationIgnored private var lastLateNotice: Date?
   private static let latePressThresholdMs: Int64 = 5000
-  @ObservationIgnored private var saidStillWorking = false
+  /// The solve running now, if any. Every solve goes through `startSolve`, so a new one
+  /// first stops this one and waits for it to finish: there's never more than one.
+  @ObservationIgnored private var solveTask: Task<Void, Never>?
+  /// Bumped by each `startSolve`, so a replaced solve that was still waiting doesn't run.
+  @ObservationIgnored private var solveGeneration = 0
+  /// Identifies the run whose answer is being spoken; pieces from a stopped run are dropped.
+  @ObservationIgnored private var currentRunID = UUID()
+  /// The answer text received so far in the current run.
+  @ObservationIgnored private var receivedText = ""
   @ObservationIgnored private var registrationTask: Task<Void, Never>?
   @ObservationIgnored private var deviceTask: Task<Void, Never>?
 
@@ -418,8 +429,8 @@ final class AppModel {
 
   func solve() async {
     guard !isBusy else { return }
-    solveInFlight = true
-    defer { solveInFlight = false }
+    checkingPermission = true
+    defer { checkingPermission = false }
     guard canSolve else {
       errorMessage = "Add your Anthropic API key in Settings first, or turn on Test mode."
       return
@@ -434,7 +445,8 @@ final class AppModel {
     }
     do {
       if try await wearables.checkPermissionStatus(.camera) == .granted {
-        await run()
+        checkingPermission = false
+        await startSolve(reason: "Solve tapped").value
       } else {
         // Requesting permission jumps to the Meta AI app, so confirm first.
         showCameraPermissionPrompt = true
@@ -450,9 +462,9 @@ final class AppModel {
     pendingSessionPrompt = nil
     if pendingPrompt == nil {
       guard !isBusy else { return }
-      solveInFlight = true
+      checkingPermission = true
     }
-    defer { if pendingPrompt == nil { solveInFlight = false } }
+    defer { if pendingPrompt == nil { checkingPermission = false } }
     do {
       let status = try await wearables.requestPermission(.camera)
       diag("permission", "requestPermission(.camera) -> \(status)")
@@ -463,7 +475,8 @@ final class AppModel {
       if let pendingPrompt {
         await beginSession(prompt: pendingPrompt)
       } else {
-        await run()
+        checkingPermission = false
+        await startSolve(reason: "camera permission granted").value
       }
     } catch {
       diag("permission", "requestPermission(.camera) FAILED: \(ErrorDetail.describe(error))")
@@ -581,7 +594,9 @@ final class AppModel {
     let backgroundActivity = BackgroundActivity(name: "Solve") { [weak self] in
       self?.camera.abortCapture()
     }
-    saidStillWorking = false
+    let runID = UUID()
+    currentRunID = runID
+    receivedText = ""
     // Where the last answer was, if this photo cut it short (or Stop did), before stopping it.
     // Kept until a new answer arrives, so a photo that fails doesn't lose it.
     if let progress = speaker.progress { lastAnswerStoppedAt = progress }
@@ -605,7 +620,11 @@ final class AppModel {
       // A refresh started after the previous photo must finish before this one.
       await sessionRefreshTask?.value
       photo = try await captureWithRecovery()
+      try Task.checkCancellation()
       diag("solve", "photo received, \(photo.count) bytes; calling Claude")
+    } catch where Task.isCancelled {
+      diag("solve", "the photo was stopped for a newer one")
+      return
     } catch {
       phase = .idle
       scheduleShutterRevive("after a failed photo", force: true)
@@ -658,13 +677,14 @@ final class AppModel {
         if previous != nil { diag("solve", "sending as a follow-up to the last answer. \(stopNote ?? "It was heard to the end.")") }
         reply = try await ClaudeClient(apiKey: apiKey).solve(
           photo: photo, prompt: prompt, previousAnswer: previous, stoppedAt: stopNote,
-          onText: { [weak self] piece in self?.answerArrived(piece) },
+          onText: { [weak self] piece in self?.answerArrived(piece, runID: runID) },
           onRestartLine: { [weak self] in self?.speaker.discardUnfinishedLine() })
       } else {
         let text = try await simulatedAnswer(photo: photo)
-        answerArrived(text)
+        answerArrived(text, runID: runID)
         reply = ClaudeClient.Answer(text: text, stopReason: "end_turn")
       }
+      try Task.checkCancellation()
       // An answer that ended early says so, and where, rather than sounding complete.
       let cutOff: Speaker.CutOff? =
         switch reply.stopReason {
@@ -687,6 +707,9 @@ final class AppModel {
           + "(app \(Self.appStateDescription))")
       conversation.add(
         prompt: prompt, photo: photo, answer: answer, error: nil, isTest: testMode, sessionID: chatSessionID)
+    } catch where Task.isCancelled {
+      stoppedForNewPhoto(prompt: prompt, photo: photo, sessionID: chatSessionID)
+      return
     } catch {
       reportSolveFailure(error)
       conversation.add(
@@ -694,6 +717,49 @@ final class AppModel {
         sessionID: chatSessionID)
     }
     speaker.endKeepAliveAfterSpeech()
+  }
+
+  /// Starts answering a new photo. One already in progress (taking its photo, waiting for
+  /// Claude, or receiving the answer) is stopped first, silently and at once, and the new one
+  /// starts when it has finished cleaning up. Its place in the answer is kept, so the new
+  /// photo goes to Claude as a follow-up that says how far the listener got.
+  @discardableResult
+  private func startSolve(reason: String) -> Task<Void, Never> {
+    let previous = solveTask
+    if let previous {
+      diag("solve", "\(reason) while still working on the last photo: stopping that answer to answer the new photo")
+      previous.cancel()
+      speaker.stop("a new photo was taken")
+    }
+    solveInFlight = true
+    solveGeneration += 1
+    let generation = solveGeneration
+    let task = Task { [weak self] in
+      await previous?.value
+      guard let self, self.solveGeneration == generation else { return }
+      await self.run()
+      if self.solveGeneration == generation {
+        self.solveInFlight = false
+        self.solveTask = nil
+      }
+    }
+    solveTask = task
+    return task
+  }
+
+  /// A run stopped for a newer photo: files what arrived, and keeps it as the answer to
+  /// follow up on if any of it was heard (the next run reads where from `speaker.progress`).
+  private func stoppedForNewPhoto(prompt: String, photo: Data, sessionID: UUID?) {
+    let text = receivedText.trimmingCharacters(in: .whitespacesAndNewlines)
+    diag("solve", "stopped for a newer photo, \(text.count) characters into the answer")
+    if !text.isEmpty, speaker.progress != nil {
+      lastAnswer = text
+      lastAnswerStoppedAt = nil
+      lastAnswerTime = testMode ? nil : .now
+    }
+    conversation.add(
+      prompt: prompt, photo: photo, answer: text.isEmpty ? nil : text + "\n(Stopped for a new photo.)",
+      error: text.isEmpty ? "Stopped for a new photo." : nil, isTest: testMode, sessionID: sessionID)
   }
 
   /// Tells Claude how much of its last answer was heard before a new photo cut it short.
@@ -709,8 +775,11 @@ final class AppModel {
     return "Your dictation was cut short when I took this photo: \(heard), and nothing after that."
   }
 
-  /// Speaks the next piece of an answer, starting the answer with the first piece.
-  private func answerArrived(_ piece: String) {
+  /// Speaks the next piece of an answer, starting the answer with the first piece. Pieces
+  /// from a run that was stopped for a newer photo are dropped.
+  private func answerArrived(_ piece: String, runID: UUID) {
+    guard runID == currentRunID, !Task.isCancelled else { return }
+    receivedText += piece
     if !answerStarted {
       answerStarted = true
       speaker.beginAnswer()
@@ -740,11 +809,14 @@ final class AppModel {
     }
   }
 
+  /// Test mode's wait with the app in the foreground. A variable so tests can lengthen it.
+  static var testModeWait: Duration = .seconds(2)
+
   /// Test mode's stand-in for Claude. Locked, it waits longer than iOS's ~30-second
   /// background allowance, so hearing the answer means the keep-alive worked.
   private func simulatedAnswer(photo: Data) async throws -> String {
     let inBackground = UIApplication.shared.applicationState != .active
-    let wait: Duration = inBackground ? .seconds(35) : .seconds(2)
+    let wait: Duration = inBackground ? .seconds(35) : Self.testModeWait
     diag("solve", "test mode: waiting \(wait) instead of calling Claude (app \(Self.appStateDescription))")
     try await Task.sleep(for: wait)
     diag("solve", "test mode: wait finished (app \(Self.appStateDescription))")
@@ -1044,23 +1116,13 @@ final class AppModel {
       return
     }
     lastPressTimestampMs = timestampMs
-    guard !isBusy else {
-      // Once per solve, so repeated presses don't keep cutting off the speech.
-      if !saidStillWorking {
-        saidStillWorking = true
-        speaker.announce("Still working on the last one.", ifBusy: .skip)
-      }
-      return
-    }
     guard !sessionPaused else {
       speaker.announce("The session is paused. Tap the touchpad once to resume.", ifBusy: .skip)
       return
     }
-    solveInFlight = true
-    Task {
-      await run()
-      solveInFlight = false
-    }
+    // A press while it's still working means a new photo: the current answer stops and the
+    // new photo is answered.
+    startSolve(reason: "capture press")
   }
 
   private func resetSessionState() {
