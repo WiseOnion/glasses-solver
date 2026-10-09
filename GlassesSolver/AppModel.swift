@@ -877,13 +877,18 @@ final class AppModel {
     do {
       return try await camera.capturePhoto(highResolution: useHighResPhoto, keepSession: sessionActive)
     } catch let error as GlassesError where error.isFixedByFreshSession {
-      diag("solve", "photo failed (\(ErrorDetail.describe(error))); retrying once with a fresh glasses session")
+      // The retry is always a normal photo: the high-resolution still is experimental, and on
+      // the user's glasses it failed every time ("Capture failed") while the normal one works.
+      diag(
+        "solve",
+        "photo failed (\(ErrorDetail.describe(error))); retrying once with a fresh glasses session"
+          + (useHighResPhoto ? " and a normal-resolution photo" : ""))
       if sessionActive {
         try await refreshHandsFreeSession(reason: "photo failed")
       } else {
         camera.endSession()
       }
-      return try await camera.capturePhoto(highResolution: useHighResPhoto, keepSession: sessionActive)
+      return try await camera.capturePhoto(highResolution: false, keepSession: sessionActive)
     }
   }
 
