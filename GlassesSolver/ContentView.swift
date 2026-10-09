@@ -72,11 +72,21 @@ struct ContentView: View {
               .clipShape(RoundedRectangle(cornerRadius: 12))
           }
 
-          if !model.lastAnswer.isEmpty {
+          if !model.shownAnswer.isEmpty || !model.lastAnswer.isEmpty {
             VStack(alignment: .leading, spacing: 12) {
-              Text(model.lastAnswer)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .textSelection(.enabled)
+              // While it arrives, only complete lines, so half-written math isn't shown.
+              let text = model.phase == .thinking ? ClaudeClient.completeLines(model.shownAnswer) : model.shownAnswer
+              let written = WrittenAnswer.parse(text)
+              if written.isEmpty {
+                Text(Self.withoutWrittenMath(text.isEmpty ? model.lastAnswer : text))
+                  .frame(maxWidth: .infinity, alignment: .leading)
+                  .textSelection(.enabled)
+              } else {
+                WrittenAnswerView(
+                  html: written.html(now: model.linePosition.map { ($0.problem, $0.line) }))
+                  .frame(height: 440)
+                  .clipShape(RoundedRectangle(cornerRadius: 8))
+              }
               HStack {
                 Button("Repeat", systemImage: "speaker.wave.2") { model.repeatAnswer() }
                 Button("Repeat line", systemImage: "pencil.line") { model.repeatWriteLine() }
@@ -140,6 +150,11 @@ struct ContentView: View {
         Text(model.errorMessage ?? "")
       }
     }
+  }
+
+  /// An answer's text without the written math after "||" on its lines.
+  static func withoutWrittenMath(_ text: String) -> String {
+    text.components(separatedBy: "\n").map(Speaker.spokenPart).joined(separator: "\n")
   }
 
   @ViewBuilder

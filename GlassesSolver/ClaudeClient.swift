@@ -111,6 +111,17 @@ struct ClaudeClient: Sendable {
     line 5, cross out both h's, the h on top in front of the parentheses and the h on the \
     bottom." For a picture, one Mark line per shape: "Mark: Draw a square. Label each side \
     x."
+    WRITTEN MATH FOR THE PHONE
+    The phone also shows the solution as written math, the way it would look on the paper. So \
+    each Write and Sentence line ends with " || " and that whole line in LaTeX, including what \
+    its Continue lines add: "Write: u prime equals, secant squared w || u' = \\sec^2 w". A Mark \
+    line that crosses something out ends with " || line N: " and that line again in LaTeX with \
+    each crossed-out part in \\cancel{...}: "Mark: On line 5, cross out both h's, the h on top \
+    in front of the parentheses and the h on the bottom. || line 5: = \\lim_{h \\to 0} \
+    \\frac{\\cancel{h}(-6x - 3h + 8)}{\\cancel{h}}". To cross out a whole line, put all of it in \
+    \\cancel{...}. Continue, Check and box Mark lines get nothing after them. What follows || is \
+    only shown, never spoken. Write every fraction with \\frac so it's stacked, top over bottom, \
+    never with a slash, including a fraction in a power: w^{\\frac{4}{9}}.
     Inside a Write or Continue line, commas are the short breaths a person reading math aloud \
     takes: right after every "equals", before each plus or minus that starts a new term, and \
     around anything in parentheses, such as "u equals, 1, plus tangent w" or "g prime of w \
@@ -159,17 +170,17 @@ struct ClaudeClient: Sendable {
     This is the derivative of x squared over x plus 1, by the quotient rule.
     You'll write six lines.
     First, write down u, v and their derivatives.
-    Write: u equals, x squared
-    Write: u prime equals, 2 x
-    Write: v equals, x, plus 1
-    Write: v prime equals, 1
+    Write: u equals, x squared || u = x^2
+    Write: u prime equals, 2 x || u' = 2x
+    Write: v equals, x, plus 1 || v = x + 1
+    Write: v prime equals, 1 || v' = 1
     Now put them into the quotient rule.
-    Write: f prime of x equals, a fraction
+    Write: f prime of x equals, a fraction || f'(x) = \\frac{2x(x + 1) - x^2 \\cdot 1}{(x + 1)^2}
     Continue: on top, you have 2 x, times open parenthesis, x plus 1, close parenthesis, minus x squared, times 1
     Continue: on the bottom, you have open parenthesis, x plus 1, close parenthesis, squared
     Check: Just to make sure you got all that, line 5 should look like f prime of x equals a fraction, on top, 2 x times open parenthesis, x plus 1, close parenthesis, minus x squared times 1, and on the bottom, open parenthesis, x plus 1, close parenthesis, squared.
     Now simplify the top. This is the answer.
-    Write: f prime of x equals, a fraction
+    Write: f prime of x equals, a fraction || f'(x) = \\frac{x^2 + 2x}{(x + 1)^2}
     Continue: on top, you have x squared, plus 2 x
     Continue: on the bottom, you have open parenthesis, x plus 1, close parenthesis, squared
     Check: So line 6 reads f prime of x equals a fraction, x squared plus 2 x on top, and open parenthesis, x plus 1, close parenthesis, squared, on the bottom.
@@ -266,7 +277,8 @@ struct ClaudeClient: Sendable {
     line with the answer and its units.
 
     The voice reads text literally, so write plain words only: no Markdown, bullets, LaTeX, \
-    code, or symbols like ^, *, /, =, or parentheses. Keep the problem's own variable names.
+    code, or symbols like ^, *, /, =, or parentheses, except in the written math after ||. \
+    Keep the problem's own variable names.
     """
 
   let apiKey: String

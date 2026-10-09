@@ -36,18 +36,18 @@ final class AppModel {
     This is the derivative of g of w, equals, 1 plus tangent w, over 6 minus w cubed, by the quotient rule.
     You'll write six lines.
     First, write down u, v and their derivatives.
-    Write: u equals, 1, plus tangent w
-    Write: u prime equals, secant squared w
-    Write: v equals, 6, minus w cubed
-    Write: v prime equals, negative 3 w squared
+    Write: u equals, 1, plus tangent w || u = 1 + \\tan w
+    Write: u prime equals, secant squared w || u' = \\sec^2 w
+    Write: v equals, 6, minus w cubed || v = 6 - w^3
+    Write: v prime equals, negative 3 w squared || v' = -3w^2
     Now put them into the quotient rule.
-    Write: g prime of w equals, a fraction
+    Write: g prime of w equals, a fraction || g'(w) = \\frac{(\\sec^2 w)(6 - w^3) - (1 + \\tan w)(-3w^2)}{(6 - w^3)^2}
     Continue: on top, you have open parenthesis, secant squared w, close parenthesis, times open parenthesis, 6 minus w cubed, close parenthesis
     Continue: minus, open parenthesis, 1 plus tangent w, close parenthesis, times open parenthesis, negative 3 w squared, close parenthesis
     Continue: on the bottom, you have open parenthesis, 6 minus w cubed, close parenthesis, squared
     Check: Just to make sure you got all that, line 5 should look like g prime of w equals a fraction, with secant squared w in parentheses, times 6 minus w cubed in parentheses, minus 1 plus tangent w in parentheses, times negative 3 w squared in parentheses, all on top, and 6 minus w cubed in parentheses, squared, on the bottom.
     Now simplify the top. This is the answer.
-    Write: g prime of w equals, a fraction
+    Write: g prime of w equals, a fraction || g'(w) = \\frac{(6 - w^3)\\sec^2 w + 3w^2(1 + \\tan w)}{(6 - w^3)^2}
     Continue: on top, you have open parenthesis, 6 minus w cubed, close parenthesis, times secant squared w
     Continue: plus 3 w squared, times open parenthesis, 1 plus tangent w, close parenthesis
     Continue: on the bottom, you have open parenthesis, 6 minus w cubed, close parenthesis, squared
@@ -63,32 +63,32 @@ final class AppModel {
     This is the derivative of f of x, equals, negative 3 x squared plus 8 x minus 2, using the limit definition.
     You'll write seven lines.
     First, write the limit definition.
-    Write: f prime of x equals, the limit as h approaches 0, of a fraction
+    Write: f prime of x equals, the limit as h approaches 0, of a fraction || f'(x) = \\lim_{h \\to 0} \\frac{f(x + h) - f(x)}{h}
     Continue: on top, you have f of, open parenthesis, x plus h, close parenthesis, minus f of x
     Continue: on the bottom, you have h
     Now put in f of x plus h and f of x.
-    Write: equals, the limit as h approaches 0, of a fraction
+    Write: equals, the limit as h approaches 0, of a fraction || = \\lim_{h \\to 0} \\frac{\\left(-3(x + h)^2 + 8(x + h) - 2\\right) - \\left(-3x^2 + 8x - 2\\right)}{h}
     Continue: on top, you have open parenthesis, negative 3, times open parenthesis, x plus h, close parenthesis, squared, plus 8, times open parenthesis, x plus h, close parenthesis, minus 2, close parenthesis
     Continue: minus, open parenthesis, negative 3 x squared, plus 8 x, minus 2, close parenthesis
     Continue: on the bottom, you have h
     Now expand, and distribute the minus sign.
-    Write: equals, the limit as h approaches 0, of a fraction
+    Write: equals, the limit as h approaches 0, of a fraction || = \\lim_{h \\to 0} \\frac{-3x^2 - 6xh - 3h^2 + 8x + 8h - 2 + 3x^2 - 8x + 2}{h}
     Continue: on top, you have negative 3 x squared, minus 6 x h, minus 3 h squared, plus 8 x, plus 8 h, minus 2
     Continue: plus 3 x squared, minus 8 x, plus 2
     Continue: on the bottom, you have h
     Now combine like terms.
-    Write: equals, the limit as h approaches 0, of a fraction
+    Write: equals, the limit as h approaches 0, of a fraction || = \\lim_{h \\to 0} \\frac{-6xh - 3h^2 + 8h}{h}
     Continue: on top, you have negative 6 x h, minus 3 h squared, plus 8 h
     Continue: on the bottom, you have h
     Now factor out h.
-    Write: equals, the limit as h approaches 0, of a fraction
+    Write: equals, the limit as h approaches 0, of a fraction || = \\lim_{h \\to 0} \\frac{h(-6x - 3h + 8)}{h}
     Continue: on top, you have h, times open parenthesis, negative 6 x, minus 3 h, plus 8, close parenthesis
     Continue: on the bottom, you have h
     Now cancel the h.
-    Mark: On line 5, cross out both h's, the h on top in front of the parentheses and the h on the bottom.
-    Write: equals, the limit as h approaches 0, of negative 6 x, minus 3 h, plus 8
+    Mark: On line 5, cross out both h's, the h on top in front of the parentheses and the h on the bottom. || line 5: = \\lim_{h \\to 0} \\frac{\\cancel{h}(-6x - 3h + 8)}{\\cancel{h}}
+    Write: equals, the limit as h approaches 0, of negative 6 x, minus 3 h, plus 8 || = \\lim_{h \\to 0} (-6x - 3h + 8)
     Now plug in 0 for h. This is the answer.
-    Write: equals negative 6 x, plus 8
+    Write: equals negative 6 x, plus 8 || = -6x + 8
     Mark: Draw a box around line 7.
     Done.
     """
@@ -103,6 +103,15 @@ final class AppModel {
   }
   private(set) var lastPhoto: UIImage?
   private(set) var lastAnswer = ""
+  /// The answer shown on the phone: the one arriving now (as it comes), or the last one.
+  private(set) var shownAnswer = ""
+  /// The problem and line being said now, to mark it in the written answer.
+  private(set) var linePosition: LinePosition?
+
+  struct LinePosition: Equatable {
+    let problem: String
+    let line: Int
+  }
   private(set) var hasAPIKey: Bool
   /// True while speech is paused because the glasses' audio disconnected (see `Speaker.heldForRoute`).
   private(set) var speechHeld = false
@@ -357,6 +366,9 @@ final class AppModel {
     speaker.onHoldChanged = { [weak self] held in self?.speechHeld = held }
     speaker.onIdle = { [weak self] in self?.updateActivity() }
     speaker.onAnswerAudio = { [weak self] in self?.firstWordsHeard() }
+    speaker.onLineStarted = { [weak self] problem, line in
+      self?.linePosition = LinePosition(problem: problem, line: line)
+    }
     applyVoiceEngine()
     if let sdkSetupError {
       errorMessage =
@@ -507,6 +519,7 @@ final class AppModel {
 
   func repeatAnswer() {
     guard !lastAnswer.isEmpty else { return }
+    shownAnswer = lastAnswer
     speaker.speak(lastAnswer, isAnswer: true)
   }
 
@@ -528,11 +541,13 @@ final class AppModel {
 
   /// A sample in the style the system prompt asks for, to judge speed and voice.
   func testVoice() {
+    shownAnswer = Self.sampleAnswer
     speaker.speak(Self.sampleAnswer)
   }
 
   /// The limit definition worked in full, to practice copying a long answer.
   func testLimitDefinition() {
+    shownAnswer = Self.limitSampleAnswer
     speaker.speak(Self.limitSampleAnswer)
   }
 
@@ -609,6 +624,7 @@ final class AppModel {
   /// Speaks a past answer again from the Conversation screen.
   func replay(_ entry: ConversationEntry) {
     guard let answer = entry.answer else { return }
+    shownAnswer = answer
     speaker.speak(answer)
   }
 
@@ -734,6 +750,7 @@ final class AppModel {
       let answer = [reply.text.trimmingCharacters(in: .whitespacesAndNewlines), notice]
         .compactMap { $0 }.joined(separator: "\n")
       lastAnswer = answer
+      shownAnswer = answer
       lastAnswerStoppedAt = nil
       // A Test mode sample isn't a real answer, so it's never sent as one to follow up on.
       lastAnswerTime = testMode ? nil : .now
@@ -824,6 +841,11 @@ final class AppModel {
   private func answerArrived(_ piece: String, runID: UUID) {
     guard runID == currentRunID, !Task.isCancelled else { return }
     receivedText += piece
+    if !answerStarted {
+      shownAnswer = ""
+      linePosition = nil
+    }
+    shownAnswer += piece
     if !answerStarted {
       answerStarted = true
       timing.mark("Claude's first words arrived")

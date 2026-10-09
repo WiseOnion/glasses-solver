@@ -35,6 +35,8 @@ final class Speaker: NSObject {
   /// before a Write line.
   private static let dictationRateFactor: Float = 1
   private static let beforeWritePause: TimeInterval = 0.4
+  /// After "Start line 1.", before the math.
+  private static let afterCuePause: TimeInterval = 0.5
   /// Each repeat of the same line in a row is this much slower, at most twice.
   private static let repeatRateFactor: Float = 0.9
   /// Whole pieces of math are joined into one dictated part while it puts at most this many
@@ -236,6 +238,9 @@ final class Speaker: NSObject {
   var onHoldChanged: ((Bool) -> Void)?
   /// Called when everything queued has been said.
   var onIdle: (() -> Void)?
+  /// Called with the problem and line number as each pen line of an answer is said, so the
+  /// phone can show where the listener is.
+  var onLineStarted: ((String, Int) -> Void)?
   /// Called when the first words of an answer begin playing (for timing).
   var onAnswerAudio: (() -> Void)?
   private var answerAudioStarted = true
@@ -783,6 +788,7 @@ final class Speaker: NSObject {
       if line != lastPenLine { repeatCount = 0 }
       lastPenLine = line
       if segment.problem != nil, line.number > heardLine { heardLine = line.number }
+      if let problem = segment.problem { onLineStarted?(problem, line.number) }
     }
   }
 
@@ -935,7 +941,7 @@ final class Speaker: NSObject {
   }
 
   private func untaggedSegments(forParagraph raw: String) -> [Segment] {
-    let paragraph = Self.speakable(raw)
+    let paragraph = Self.speakable(Self.spokenPart(raw))
     if let label = Self.problemLabel(in: paragraph) {
       // "Problem: 3, line 4" continues a problem from line 4 (after checking their work).
       lineNumber = (Self.startingLine(in: label) ?? 1) - 1
@@ -988,6 +994,11 @@ final class Speaker: NSObject {
     let lead = cue.isEmpty ? "" : cue + " "
     nextLineID += 1
     let lineID = nextLineID
+    // "Start line 1." is said on its own, then a short pause, so the line number doesn't run
+    // into the math ("line 1, 1 plus tangent w" was heard as one thing).
+    let cuePart =
+      cue.isEmpty
+      ? [] : [Segment(text: cue, rate: speed, pauseAfter: Self.afterCuePause, penLine: line, lineID: lineID)]
     if line.kind == .mark {
       return [
         Segment(
@@ -1000,16 +1011,16 @@ final class Speaker: NSObject {
     let writingTime = line.kind == .sentence ? Self.sentenceWritingTime : Self.writingTime
     guard inParts, !groups.isEmpty else {
       let pause = min(groups.map(writingTime).reduce(0, +), Self.maxLinePause)
-      return [
+      return cuePart + [
         Segment(
-          text: lead + line.text, rate: speed, pauseAfter: pause * writingTimeScale + Self.afterLinePause,
+          text: line.text, rate: speed, pauseAfter: pause * writingTimeScale + Self.afterLinePause,
           penLine: line, lineID: lineID)
       ]
     }
-    return groups.enumerated().map { (index, group) -> Segment in
+    return cuePart + groups.enumerated().map { (index, group) -> Segment in
       let isLast = index == groups.count - 1
       return Segment(
-        text: (index == 0 ? lead : "") + group + (isLast ? "." : ","), rate: speed,
+        text: group + (isLast ? "." : ","), rate: speed,
         pauseAfter: writingTime(group) * writingTimeScale + (isLast ? Self.afterLinePause : 0),
         penLine: line, lineID: lineID)
     }
@@ -1029,6 +1040,12 @@ final class Speaker: NSObject {
     let text = trimmed.dropFirst("check:".count).trimmingCharacters(in: .whitespacesAndNewlines)
     guard !text.isEmpty else { return nil }
     return text.last.map { ".!?".contains($0) } == true ? text : text + "."
+  }
+
+  /// A line without the written math after "||", which is shown on the phone, not said.
+  nonisolated static func spokenPart(_ line: String) -> String {
+    guard let marker = line.range(of: "||") else { return line }
+    return String(line[..<marker.lowerBound]).trimmingCharacters(in: .whitespaces)
   }
 
   /// The line a problem continues from, for a label like "3, line 4".

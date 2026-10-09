@@ -153,7 +153,7 @@ final class DictationTests: XCTestCase {
     let speaker = Speaker()
     defer { speaker.stop() }
     speaker.speak("Problem: 1\nWrite: u equals, 1, plus tangent w")
-    XCTAssertEqual(speaker.queued.map(\.text), ["Problem 1.", "Start line 1. u equals, 1, plus tangent w."])
+    XCTAssertEqual(speaker.queued.map(\.text), ["Problem 1.", "Start line 1.", "u equals, 1, plus tangent w."])
   }
 
   func testWrittenCharacters() {
@@ -219,7 +219,7 @@ final class DictationTests: XCTestCase {
     speaker.speak("You're on problem 3, line 4.\nProblem: 3, line 4\nWrite: y equals 2\nWrite: y equals 3")
     XCTAssertEqual(
       speaker.queued.map(\.text),
-      ["You're on problem 3, line 4.", "Problem 3, line 4.", "Start line 4. y equals 2.", "Start line 5. y equals 3."])
+      ["You're on problem 3, line 4.", "Problem 3, line 4.", "Start line 4.", "y equals 2.", "Start line 5.", "y equals 3."])
   }
 
   // MARK: - The built-in voice
@@ -301,8 +301,8 @@ final class DictationTests: XCTestCase {
     // as a line: the next Write is line 2.
     XCTAssertEqual(
       speaker.queued.map(\.text),
-      ["Problem 3.", "Start line 1. y equals, 2.", "So line 1 reads y equals 2.", "Start line 2. y prime equals, 0."])
-    XCTAssertEqual(speaker.queued[2].pause, 0.8, accuracy: 0.001)
+      ["Problem 3.", "Start line 1.", "y equals, 2.", "So line 1 reads y equals 2.", "Start line 2.", "y prime equals, 0."])
+    XCTAssertEqual(speaker.queued[3].pause, 0.8, accuracy: 0.001)
   }
 
   // MARK: - An answer arriving in pieces
@@ -348,7 +348,7 @@ final class DictationTests: XCTestCase {
     speaker.continueAnswer("Problem: 3\nWrite: y, equals")
     XCTAssertEqual(speaker.queued.map(\.text), ["Problem 3."])
     speaker.continueAnswer(" sign, 2\n")
-    XCTAssertEqual(speaker.queued.map(\.text), ["Problem 3.", "Start line 1. y, equals sign, 2."])
+    XCTAssertEqual(speaker.queued.map(\.text), ["Problem 3.", "Start line 1.", "y, equals sign, 2."])
   }
 
   func testStoppingEndsTheAnswer() {
@@ -368,7 +368,7 @@ final class DictationTests: XCTestCase {
     speaker.continueAnswer("Problem: 3\nThis is a sum.\nWrite: x, plus")
     speaker.finishAnswer(notice: "Stop. Cut off.")
     XCTAssertEqual(
-      speaker.queued.map(\.text), ["Problem 3.", "This is a sum.", "Start line 1. x, plus.", "Stop. Cut off."])
+      speaker.queued.map(\.text), ["Problem 3.", "This is a sum.", "Start line 1.", "x, plus.", "Stop. Cut off."])
   }
 
   func testANoticeDuringAnAnswerWaitsForTheEnd() {
@@ -382,7 +382,7 @@ final class DictationTests: XCTestCase {
     speaker.announce("Still working on the last one.", ifBusy: .skip)
     speaker.continueAnswer("Write: x\n")
     speaker.finishAnswer()
-    XCTAssertEqual(speaker.queued.map(\.text), ["Problem 3.", "Start line 1. x.", "Glasses session ended."])
+    XCTAssertEqual(speaker.queued.map(\.text), ["Problem 3.", "Start line 1.", "x.", "Glasses session ended."])
   }
 
   func testANoticeWithNothingBeingSaidIsSpokenRightAway() {

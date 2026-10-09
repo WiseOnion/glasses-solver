@@ -217,8 +217,15 @@ private struct EntryView: View {
             .foregroundStyle(.orange)
         }
         if let answer = entry.answer {
-          ForEach(Array(answer.components(separatedBy: "\n").enumerated()), id: \.offset) { _, line in
-            AnswerLine(line: line)
+          let written = WrittenAnswer.parse(answer)
+          if written.isEmpty {
+            ForEach(Array(answer.components(separatedBy: "\n").enumerated()), id: \.offset) { _, line in
+              AnswerLine(line: Speaker.spokenPart(line))
+            }
+          } else {
+            WrittenAnswerView(html: written.html(now: nil))
+              .frame(height: 380)
+              .clipShape(RoundedRectangle(cornerRadius: 8))
           }
           Button("Play again", systemImage: "speaker.wave.2", action: onReplay)
             .font(.caption)
