@@ -52,6 +52,31 @@ final class ReliabilityTests: XCTestCase {
     XCTAssertTrue(logged)
   }
 
+  func testTheAudioDropDuringAPhotoDoesntHoldSpeech() {
+    let speaker = Speaker()
+    defer { speaker.stop() }
+    speaker.beginKeepAlive()
+    speaker.photoInProgress = true
+    speaker.simulateRouteLossForTesting()
+    XCTAssertFalse(speaker.heldForRoute, "the brief drop while the glasses take a photo held the answer")
+    // After the photo, a real drop with nothing being said still holds what comes next.
+    speaker.photoInProgress = false
+    speaker.simulateRouteLossForTesting()
+    XCTAssertTrue(speaker.heldForRoute)
+  }
+
+  func testEachNewSpeechStartsOnAFreshSynthesizer() async {
+    // Stopping speech partway and speaking again is what left the voice silent for 47 s.
+    let speaker = Speaker()
+    defer { speaker.stop() }
+    for _ in 0..<5 {
+      speaker.speak("Got it. Working on it.")
+      speaker.speak("Problem: 3\nWrite: y equals, 2")
+    }
+    let started = await waitUntil(10) { !speaker.isActive || DiagnosticsLog.shared.text.contains("measured") || speaker.lastPenLine != nil }
+    XCTAssertTrue(started, "speech never started after being stopped and restarted")
+  }
+
   func testStoppingAnAnswerLogsWhy() async {
     let speaker = Speaker()
     speaker.beginAnswer()

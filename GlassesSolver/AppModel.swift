@@ -96,7 +96,10 @@ final class AppModel {
   private(set) var registrationState: RegistrationState
   private(set) var hasActiveDevice = false
   private(set) var phase: Phase = .idle {
-    didSet { updateActivity() }
+    didSet {
+      speaker.photoInProgress = phase == .capturing
+      updateActivity()
+    }
   }
   private(set) var lastPhoto: UIImage?
   private(set) var lastAnswer = ""

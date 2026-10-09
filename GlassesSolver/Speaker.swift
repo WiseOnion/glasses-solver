@@ -228,6 +228,9 @@ final class Speaker: NSObject {
       onHoldChanged?(heldForRoute)
     }
   }
+  /// True while the glasses take a photo, which briefly drops their audio.
+  var photoInProgress = false
+
   /// Called when `heldForRoute` changes.
   var onHoldChanged: ((Bool) -> Void)?
   /// Called when everything queued has been said.
@@ -301,6 +304,10 @@ final class Speaker: NSObject {
         diag("audio", "the glasses' audio is back; carrying on")
         endHold()
       }
+    } else if lostDevice, wasPrivate, !heldForRoute, photoInProgress, !isActive, !answerOpen {
+      // Taking a photo makes the glasses' Bluetooth audio drop for a moment; only the silent
+      // keep-alive is playing, so there's nothing to hold.
+      diag("audio", "the glasses' audio dropped during the photo (normal); not holding")
     } else if lostDevice, wasPrivate, !heldForRoute, isActive || answerOpen || keepAlivePlayer != nil {
       diag(
         "audio",
@@ -371,7 +378,7 @@ final class Speaker: NSObject {
   /// speech again from where it stopped if it hasn't moved for longer than it could take.
   /// Returns false when there's nothing left to watch.
   private func checkSpeech() -> Bool {
-    guard isActive || answerOpen else {
+    guard isActive || answerOpen || heldForRoute else {
       watchdog = nil
       return false
     }
@@ -408,12 +415,27 @@ final class Speaker: NSObject {
       return true
     }
     let stuckFor = now.timeIntervalSince(lastProgress)
-    if stallForTesting || stuckFor > expectedTimeForCurrentPiece() + Self.stallGrace {
+    if stallForTesting || stuckFor > allowedQuiet() {
       stallForTesting = false
       restartSpeech("nothing moved for \(Int(stuckFor)) s", stuck: true)
     }
     return true
   }
+
+  /// How long speech may go without moving before it counts as stuck. A piece playing gets
+  /// its expected length plus `stallGrace`. One waiting to start in Apple's voice should
+  /// start right after the pause before it, so it gets a few seconds; the natural voices may
+  /// first have to make the clip (a network request, or loading Heart), so they get
+  /// `stallGrace`.
+  private func allowedQuiet() -> TimeInterval {
+    let playing = currentIndex != nil && !currentFinished
+    if playing { return expectedTimeForCurrentPiece() + Self.stallGrace }
+    let pauseBefore = currentIndex.map { $0 < script.count ? script[$0].pauseAfter : 0 } ?? 0
+    return pauseBefore + (neuralVoiceActive ? Self.stallGrace : Self.startGrace)
+  }
+
+  /// The longest an Apple-voice piece may take to start (after the pause before it).
+  static let startGrace: TimeInterval = 6
 
   /// About how long the piece being said (all of its line, for a natural voice that says a
   /// line in one go) can take: generously, a word every 0.7 s, plus its pauses.
@@ -450,9 +472,7 @@ final class Speaker: NSObject {
       }
     }
     reset()
-    synthesizer.delegate = nil
-    synthesizer = AVSpeechSynthesizer()
-    synthesizer.delegate = self
+    replaceSynthesizer()
     activateSession()
     if let player = keepAlivePlayer, !player.isPlaying { player.play() }
     enqueue(rest, voice: resolvedVoice)
@@ -655,6 +675,7 @@ final class Speaker: NSObject {
   // MARK: - Queue
 
   private func reset() {
+    if !utterances.isEmpty { replaceSynthesizer() }
     // Kept a while, so a late callback can't match a new utterance at a reused address.
     retiredUtterances = Array((retiredUtterances + utterances).suffix(300))
     utterances.removeAll()
@@ -667,6 +688,16 @@ final class Speaker: NSObject {
     measurementHandler = nil
     synthesizer.stopSpeaking(at: .immediate)
     neural.stop()
+  }
+
+  /// A synthesizer stopped partway sometimes never starts the next utterance (on the phone
+  /// it sat silent for 47 seconds before the watchdog restarted it), so after anything was
+  /// queued on one, the next speech gets a fresh one.
+  private func replaceSynthesizer() {
+    synthesizer.delegate = nil
+    synthesizer.stopSpeaking(at: .immediate)
+    synthesizer = AVSpeechSynthesizer()
+    synthesizer.delegate = self
   }
 
   /// Loads the neural voice ahead of time, so the first answer doesn't wait for it. Not
