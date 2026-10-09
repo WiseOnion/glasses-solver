@@ -118,6 +118,12 @@ final class NeuralVoice {
       return true
     }
 
+    func unload() {
+      lock.lock()
+      defer { lock.unlock() }
+      tts = nil
+    }
+
     func synthesize(_ text: String, speed: Float) -> Audio {
       lock.lock()
       defer { lock.unlock() }
@@ -146,8 +152,8 @@ final class NeuralVoice {
   private var readySignal: Waiter?
   /// Bumped by `stop`, so work from before it is dropped.
   private var generation = 0
-  private let audioEngine = AVAudioEngine()
-  private let player = AVAudioPlayerNode()
+  private var audioEngine = AVAudioEngine()
+  private var player = AVAudioPlayerNode()
   private var connectedRate = 0
   /// Ends the wait for the clip playing now.
   private var finishPlaying: Waiter?
@@ -170,12 +176,41 @@ final class NeuralVoice {
   private var configurationObserver: NSObjectProtocol?
 
   init() {
+    setUpAudio()
+  }
+
+  private func setUpAudio() {
     audioEngine.attach(player)
     // A route change (glasses connecting, for example) stops the engine; start it again.
     configurationObserver = NotificationCenter.default.addObserver(
       forName: .AVAudioEngineConfigurationChange, object: audioEngine, queue: .main
     ) { [weak self] _ in
       Task { @MainActor in self?.restartAfterRouteChange() }
+    }
+  }
+
+  /// After iOS resets its audio services, the old engine and player no longer work: stops
+  /// everything and makes new ones. The owner says what's left again.
+  func rebuildAudio() {
+    stop()
+    if let configurationObserver { NotificationCenter.default.removeObserver(configurationObserver) }
+    audioEngine = AVAudioEngine()
+    player = AVAudioPlayerNode()
+    connectedRate = 0
+    setUpAudio()
+    diag("neural", "audio engine rebuilt")
+  }
+
+  /// Frees Heart's memory (a few hundred MB) when Azure is doing the speaking. It's loaded
+  /// again if Azure fails.
+  func releaseHeartIfUnused() {
+    guard activeAzure != nil, let loading else { return }
+    self.loading = nil
+    let engine = self.engine
+    Task.detached {
+      _ = await loading.value
+      engine.unload()
+      diag("neural", "Heart unloaded to free memory (Azure is speaking)")
     }
   }
 
@@ -406,12 +441,17 @@ final class NeuralVoice {
     let status = (response as? HTTPURLResponse)?.statusCode ?? 0
     guard status == 200 else { throw AzureError.http(status) }
     guard data.count >= 2 else { throw AzureError.badAudio }
-    // 16-bit little-endian samples.
-    let samples = data.withUnsafeBytes { raw -> [Float] in
-      let values = raw.bindMemory(to: Int16.self)
-      return values.map { Float(Int16(littleEndian: $0)) / 32768 }
+    return Audio(samples: pcmSamples(data), sampleRate: 24000)
+  }
+
+  /// 16-bit little-endian samples as floats. Read byte by byte, since the data's start
+  /// needn't be aligned for 16-bit values.
+  nonisolated static func pcmSamples(_ data: Data) -> [Float] {
+    data.withUnsafeBytes { raw -> [Float] in
+      stride(from: 0, to: raw.count - 1, by: 2).map { offset in
+        Float(Int16(littleEndian: raw.loadUnaligned(fromByteOffset: offset, as: Int16.self))) / 32768
+      }
     }
-    return Audio(samples: samples, sampleRate: 24000)
   }
 
   // MARK: - Playing
@@ -436,15 +476,47 @@ final class NeuralVoice {
     }
     guard startEngine(format: format) else { return }
     var waiterForThisClip: Waiter?
+    var watchdog: Task<Void, Never>?
+    let seconds = Double(frames) / Double(audio.sampleRate)
     await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
       let waiter = Waiter(continuation)
       waiterForThisClip = waiter
       finishPlaying = waiter
       player.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { _ in waiter.finish() }
-      if !player.isPlaying && !held { player.play() }
+      if !held { playIfRunning() }
+      watchdog = Task { [weak self] in await self?.watch(waiter, seconds: seconds) }
     }
+    watchdog?.cancel()
     // Only its own wait: a `stop` and a new clip may have replaced it meanwhile.
     if finishPlaying === waiterForThisClip { finishPlaying = nil }
+  }
+
+  /// Keeps a clip from waiting forever: while not held, makes sure the engine and player are
+  /// running (a route change can stop them without telling), and if the clip still hasn't
+  /// finished well after its length, gives up on it so the rest of the answer goes on.
+  private func watch(_ waiter: Waiter, seconds: TimeInterval) async {
+    var played: TimeInterval = 0
+    while played < seconds + Self.clipGrace {
+      try? await Task.sleep(for: .milliseconds(500))
+      if Task.isCancelled { return }
+      guard !held else { continue }
+      played += 0.5
+      if !audioEngine.isRunning || !player.isPlaying {
+        diag("neural", "the voice had stopped (engine running \(audioEngine.isRunning)); starting it again")
+        resumePlayback()
+      }
+    }
+    diag("neural", "a clip of \(String(format: "%.1f", seconds)) s didn't finish playing; going on to the next")
+    waiter.finish()
+  }
+
+  /// How much longer than its length a clip may take before it's given up on.
+  private static let clipGrace: TimeInterval = 8
+
+  /// `player.play()` raises an exception (a crash) if the engine isn't running, which a route
+  /// change can cause at any moment, so it's only called after checking.
+  private func playIfRunning() {
+    if audioEngine.isRunning, !player.isPlaying { player.play() }
   }
 
   private func startEngine(format: AVAudioFormat) -> Bool {
@@ -473,7 +545,7 @@ final class NeuralVoice {
   private func resumePlayback() {
     do {
       if !audioEngine.isRunning { try audioEngine.start() }
-      player.play()
+      playIfRunning()
     } catch {
       diag("neural", "audio engine couldn't restart: \(ErrorDetail.describe(error))")
       finishPlaying?.finish()
@@ -485,7 +557,7 @@ final class NeuralVoice {
     diag("neural", "audio route changed; starting the voice again\(held ? " (held, so not playing yet)" : "")")
     do {
       try audioEngine.start()
-      if !held { player.play() }
+      if !held { playIfRunning() }
     } catch {
       diag("neural", "audio engine couldn't restart: \(ErrorDetail.describe(error))")
       // Let the current clip finish so the rest isn't stuck waiting.

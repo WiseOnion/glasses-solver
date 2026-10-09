@@ -482,7 +482,7 @@ final class AppModel {
   }
 
   func stopSpeaking() {
-    speaker.stop()
+    speaker.stop("Stop was tapped")
   }
 
   /// Plays speech held for the glasses' audio through the phone instead.
@@ -586,7 +586,10 @@ final class AppModel {
     // Kept until a new answer arrives, so a photo that fails doesn't lose it.
     if let progress = speaker.progress { lastAnswerStoppedAt = progress }
     let stoppedAt = lastAnswerStoppedAt
-    speaker.stop()
+    speaker.stop("a new photo was taken")
+    // Silent audio from the start, not just while Claude works: with the phone locked, a
+    // press gives the app about 30 seconds, and the photo plus a reconnect can take longer.
+    speaker.beginKeepAlive()
     defer {
       phase = .idle
       backgroundActivity.end()
@@ -624,18 +627,21 @@ final class AppModel {
       camera.endSession()
     }
 
-    // Claude can take longer than iOS's background allowance. Playing (silent) audio keeps
-    // the app running until the spoken answer, which keeps it running to the end.
-    speaker.beginKeepAlive()
+    // Claude can take longer than iOS's background allowance. Playing (silent) audio (started
+    // above) keeps the app running until the spoken answer, which keeps it running to the end.
     answerStarted = false
     speaker.speak("Got it. Working on it.")
-    // Claude can think for a minute before the first words; say so now and then, so the
-    // silence doesn't sound like the app stopped.
+    // Claude can think for a minute before the first words, or pause partway; say so now and
+    // then, so the silence doesn't sound like the app stopped.
     let waitingCue = Task { [weak self] in
       while true {
         try? await Task.sleep(for: Self.stillWorkingInterval)
-        guard !Task.isCancelled, let self, !self.answerStarted else { return }
-        self.speaker.announce("Still working.", ifBusy: .skip)
+        guard !Task.isCancelled, let self else { return }
+        if !self.answerStarted {
+          self.speaker.announce("Still working.", ifBusy: .skip)
+        } else if self.speaker.sayWhileWaiting("Still working.") {
+          diag("solve", "the answer paused while Claude was still writing; said \"Still working.\"")
+        }
       }
     }
     defer { waitingCue.cancel() }

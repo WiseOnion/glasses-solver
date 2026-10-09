@@ -1,4 +1,5 @@
 import AVFoundation
+import UIKit
 
 /// Speaks text through the current audio route. When the glasses are connected to the
 /// phone as Bluetooth audio (their normal state), that route is the glasses' speakers.
@@ -77,8 +78,14 @@ final class Speaker: NSObject {
   private var neuralFailed = false
   private let neural = NeuralVoice()
 
-  /// True when a natural voice can run: Azure is set up, or this build has Heart.
-  var neuralVoiceAvailable: Bool { !neuralFailed && (azureVoice != nil || NeuralVoice.isBundled) }
+  /// True when a natural voice can run: Azure is set up, or this build has Heart. Not while
+  /// it's set aside after getting stuck (`neuralSetAsideUntil`).
+  var neuralVoiceAvailable: Bool {
+    !neuralFailed && (azureVoice != nil || NeuralVoice.isBundled)
+      && (neuralSetAsideUntil.map { Date() > $0 } ?? true)
+  }
+  /// After the natural voice got stuck twice in a row, Apple's voice is used until then.
+  private var neuralSetAsideUntil: Date?
   /// True when speech goes to a natural voice.
   var neuralVoiceActive: Bool { useNeuralVoice && neuralVoiceAvailable }
   /// The natural voice's name, for the log and Settings.
@@ -171,7 +178,7 @@ final class Speaker: NSObject {
   /// after `speak` or `compareVoices`, once; used to match a voice to a target speed.
   var measurementHandler: (@MainActor (Int) -> Void)?
 
-  private let synthesizer = AVSpeechSynthesizer()
+  private var synthesizer = AVSpeechSynthesizer()
   /// What's queued now, in order, and which utterance is which segment.
   private var script: [Segment] = []
   private var utteranceIndex: [ObjectIdentifier: Int] = [:]
@@ -188,6 +195,28 @@ final class Speaker: NSObject {
   private var stopKeepAliveAfterSpeech = false
   private var interruptionObserver: NSObjectProtocol?
   private var routeObserver: NSObjectProtocol?
+  private var resetObserver: NSObjectProtocol?
+  private var memoryObserver: NSObjectProtocol?
+
+  /// Checks every second that speech is moving (see `checkSpeech`).
+  private var watchdog: Task<Void, Never>?
+  /// When speech last moved on: a piece started, a word was said, or a piece ended.
+  private var lastProgress = Date()
+  /// When speech got stuck lately, for choosing how to recover.
+  private var stalls: [Date] = []
+  /// True from when iOS interrupts the app's audio (a call, Siri) until it says it's over,
+  /// or the audio can be started again (iOS doesn't always say).
+  private var interrupted = false
+  private var lastInterruptionRetry = Date.distantPast
+  /// When the current hold started.
+  private var heldSince: Date?
+  /// The longest speech is held for the glasses' audio to come back. After that it carries
+  /// on through whatever is connected (the phone), rather than going silent for good.
+  /// A variable only so tests can shorten it.
+  static var maxHold: TimeInterval = 30
+  /// Extra time a piece may take beyond its expected length before speech counts as stuck.
+  /// Covers making a clip (Azure's 15-second limit, then Heart loading).
+  static let stallGrace: TimeInterval = 25
 
   /// True while speech is paused because the glasses' audio disconnected: iOS would
   /// otherwise switch to the phone's speaker and read the answer out loud. It carries on when
@@ -203,6 +232,9 @@ final class Speaker: NSObject {
   var onHoldChanged: ((Bool) -> Void)?
   /// Called when everything queued has been said.
   var onIdle: (() -> Void)?
+
+  /// When the last piece finished being said.
+  private var lastSpokeAt = Date()
 
   /// True while anything is queued or being said (including a writing pause).
   var isActive: Bool { outstanding > 0 }
@@ -223,9 +255,20 @@ final class Speaker: NSObject {
       let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
       let type = raw.flatMap(AVAudioSession.InterruptionType.init(rawValue:))
       diag("audio", "interruption \(type == .began ? "began" : type == .ended ? "ended" : "unknown")")
-      if type == .ended {
-        MainActor.assumeIsolated { self?.interruptionEnded() }
+      MainActor.assumeIsolated {
+        if type == .began { self?.interrupted = true }
+        if type == .ended { self?.interruptionEnded() }
       }
+    }
+    resetObserver = NotificationCenter.default.addObserver(
+      forName: AVAudioSession.mediaServicesWereResetNotification, object: nil, queue: .main
+    ) { [weak self] _ in
+      MainActor.assumeIsolated { self?.mediaServicesReset() }
+    }
+    memoryObserver = NotificationCenter.default.addObserver(
+      forName: UIApplication.didReceiveMemoryWarningNotification, object: nil, queue: .main
+    ) { [weak self] _ in
+      MainActor.assumeIsolated { self?.neural.releaseHeartIfUnused() }
     }
     routeObserver = NotificationCenter.default.addObserver(
       forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main
@@ -253,19 +296,44 @@ final class Speaker: NSObject {
     if nowPrivate {
       if heldForRoute {
         diag("audio", "the glasses' audio is back; carrying on")
-        heldForRoute = false
-        synthesizer.continueSpeaking()
+        endHold()
       }
     } else if lostDevice, wasPrivate, !heldForRoute, isActive || answerOpen || keepAlivePlayer != nil {
-      diag("audio", "the glasses' audio disconnected; holding speech so it isn't played out loud")
+      diag(
+        "audio",
+        "the glasses' audio disconnected; holding speech so it isn't played out loud "
+          + "(for up to \(Int(Self.maxHold)) s)")
       heldForRoute = true
+      heldSince = Date()
       synthesizer.pauseSpeaking(at: .immediate)
+      // Nothing is heard during a hold, so the silent loop keeps iOS from suspending the app.
+      keepRunningDuringHold()
+      startWatchdog()
+    }
+  }
+
+  private func endHold() {
+    heldForRoute = false
+    heldSince = nil
+    lastProgress = Date()
+    synthesizer.continueSpeaking()
+  }
+
+  private func keepRunningDuringHold() {
+    if keepAlivePlayer == nil {
+      beginKeepAlive()
+      stopKeepAliveAfterSpeech = true
+    } else if let player = keepAlivePlayer, !player.isPlaying {
+      let started = player.play()
+      diag("audio", "keep-alive \(started ? "restarted" : "FAILED to restart") during the hold")
     }
   }
 
   /// After a call or Siri, iOS leaves the app's audio stopped: start it again, or with the
   /// phone locked the app can be suspended partway through a solve.
   private func interruptionEnded() {
+    interrupted = false
+    lastProgress = Date()
     guard isActive || answerOpen || keepAlivePlayer != nil else { return }
     activateSession()
     if let player = keepAlivePlayer, !player.isPlaying {
@@ -280,12 +348,134 @@ final class Speaker: NSObject {
   func playOnPhone() {
     guard heldForRoute else { return }
     diag("audio", "playing on the phone, as asked")
-    heldForRoute = false
-    synthesizer.continueSpeaking()
+    endHold()
+  }
+
+  // MARK: - Keeping speech going
+
+  private func startWatchdog() {
+    guard watchdog == nil else { return }
+    watchdog = Task { [weak self] in
+      while !Task.isCancelled {
+        try? await Task.sleep(for: .seconds(1))
+        guard let self, self.checkSpeech() else { return }
+      }
+    }
+  }
+
+  /// Once a second while anything is being said or an answer is arriving: ends a hold that
+  /// has gone on too long, restarts audio iOS interrupted and never gave back, and starts
+  /// speech again from where it stopped if it hasn't moved for longer than it could take.
+  /// Returns false when there's nothing left to watch.
+  private func checkSpeech() -> Bool {
+    guard isActive || answerOpen else {
+      watchdog = nil
+      return false
+    }
+    let now = Date()
+    if heldForRoute {
+      lastProgress = now  // waiting on purpose
+      if Self.isPrivate(AVAudioSession.sharedInstance().currentRoute) {
+        diag("audio", "the glasses' audio is back (found by checking); carrying on")
+        endHold()
+      } else if let since = heldSince, now.timeIntervalSince(since) > Self.maxHold {
+        diag(
+          "audio",
+          "held \(Int(Self.maxHold)) s and the glasses' audio hasn't come back; carrying on through "
+            + Self.routeDescription)
+        endHold()
+      }
+      return true
+    }
+    if interrupted {
+      lastProgress = now
+      // iOS doesn't always say when an interruption is over. Every few seconds, try to take
+      // the audio back; while a call is on, that fails and nothing changes.
+      if now.timeIntervalSince(lastInterruptionRetry) > 5 {
+        lastInterruptionRetry = now
+        if (try? AVAudioSession.sharedInstance().setActive(true)) != nil {
+          diag("audio", "the interruption is over (iOS didn't say); starting the audio again")
+          interruptionEnded()
+        }
+      }
+      return true
+    }
+    guard isActive else {
+      lastProgress = now  // waiting for more of the answer
+      return true
+    }
+    let stuckFor = now.timeIntervalSince(lastProgress)
+    if stallForTesting || stuckFor > expectedTimeForCurrentPiece() + Self.stallGrace {
+      stallForTesting = false
+      restartSpeech("nothing moved for \(Int(stuckFor)) s", stuck: true)
+    }
+    return true
+  }
+
+  /// About how long the piece being said (all of its line, for a natural voice that says a
+  /// line in one go) can take: generously, a word every 0.7 s, plus its pauses.
+  private func expectedTimeForCurrentPiece() -> TimeInterval {
+    let first = script.count - outstanding
+    guard first >= 0, first < script.count else { return 0 }
+    var pieces = [script[first]]
+    if let lineID = script[first].lineID {
+      pieces += script[(first + 1)...].prefix { $0.lineID == lineID }
+    }
+    return pieces.reduce(0) { total, piece in
+      total + Double(piece.text.split(whereSeparator: \.isWhitespace).count) * 0.7 + piece.pauseAfter
+    }
+  }
+
+  /// Says everything not yet finished again, from the start of the piece that was being
+  /// said, with a fresh synthesizer and audio. If the natural voice got stuck twice within
+  /// two minutes, Apple's voice says the rest for the next two minutes.
+  private func restartSpeech(_ reason: String, stuck: Bool) {
+    let first = script.count - outstanding
+    guard first >= 0, first < script.count else { return }
+    let rest = Array(script[first...])
+    let now = Date()
+    let voice = neuralVoiceActive ? neuralVoiceName : "Apple's voice"
+    diag(
+      "audio",
+      "SPEECH STUCK: \(reason) at \"\(rest[0].text.prefix(60))\" (\(voice), via \(Self.routeDescription)); "
+        + "saying it again from there")
+    if stuck {
+      stalls = stalls.filter { now.timeIntervalSince($0) < 120 } + [now]
+      if stalls.count >= 2, neuralVoiceActive {
+        neuralSetAsideUntil = now.addingTimeInterval(120)
+        diag("audio", "the natural voice got stuck twice; using Apple's voice for 2 minutes")
+      }
+    }
+    reset()
+    synthesizer.delegate = nil
+    synthesizer = AVSpeechSynthesizer()
+    synthesizer.delegate = self
+    activateSession()
+    if let player = keepAlivePlayer, !player.isPlaying { player.play() }
+    enqueue(rest, voice: resolvedVoice)
+  }
+
+  /// iOS restarted its audio services (rare, but everything playing stops for good): makes
+  /// the audio objects again and carries on from where speech was.
+  private func mediaServicesReset() {
+    diag("audio", "iOS reset its audio services; making the app's audio again")
+    let hadKeepAlive = keepAlivePlayer != nil
+    let stopAfter = stopKeepAliveAfterSpeech
+    keepAlivePlayer?.stop()
+    keepAlivePlayer = nil
+    neural.rebuildAudio()
+    if hadKeepAlive {
+      beginKeepAlive()
+      stopKeepAliveAfterSpeech = stopAfter
+    }
+    if isActive { restartSpeech("iOS reset its audio", stuck: false) }
   }
 
   /// Says `text` from the start. `isAnswer` marks it as an answer, so `progress` follows it.
   func speak(_ text: String, isAnswer: Bool = false) {
+    if sayingAnswer, isActive || answerOpen {
+      diag("audio", "the answer being said was replaced by: \"\(text.prefix(50))\" \(progressDescription)")
+    }
     reset()
     activateSession()
     answerOpen = false
@@ -367,7 +557,12 @@ final class Speaker: NSObject {
     }
   }
 
-  func stop() {
+  /// Stops at once. `reason` goes in the log when an answer was being said, so an answer
+  /// that ends early always says why.
+  func stop(_ reason: String = "stopped") {
+    if sayingAnswer, isActive || answerOpen {
+      diag("audio", "answer stopped before the end: \(reason) \(progressDescription)")
+    }
     // Kept so a photo taken next can say where the answer was stopped.
     if let current = progress { progressWhenStopped = current }
     answerOpen = false
@@ -379,6 +574,31 @@ final class Speaker: NSObject {
     heldForRoute = false
     if stopKeepAliveAfterSpeech { endKeepAlive() }
   }
+
+  /// Where the answer is, for the log.
+  private var progressDescription: String {
+    guard let progress else { return "(before the first problem)" }
+    return "(problem \(progress.problem), line \(progress.line)\(progress.lineFinished ? ", finished" : ""))"
+  }
+
+  /// While an answer is arriving but everything so far has been said and nothing has been
+  /// for a while, says a short line ("Still working.") so the silence doesn't sound like
+  /// the app stopped. Returns false (and says nothing) otherwise.
+  @discardableResult
+  func sayWhileWaiting(_ text: String, after quiet: TimeInterval = 15) -> Bool {
+    guard answerOpen, !isActive, Date().timeIntervalSince(lastSpokeAt) > quiet else { return false }
+    enqueue([Segment(text: text, rate: rate, pauseAfter: 0, penLine: nil)], voice: resolvedVoice)
+    return true
+  }
+
+  // MARK: - Test hooks
+
+  /// For tests: as if speech had stopped moving long ago.
+  func simulateStallForTesting() { stallForTesting = true }
+  private var stallForTesting = false
+
+  /// For tests: as if the glasses' audio had just disconnected.
+  func simulateRouteLossForTesting() { routeChanged(lostDevice: true, wasPrivate: true) }
 
   // MARK: - Choosing a voice
 
@@ -432,7 +652,8 @@ final class Speaker: NSObject {
   // MARK: - Queue
 
   private func reset() {
-    retiredUtterances = utterances
+    // Kept a while, so a late callback can't match a new utterance at a reused address.
+    retiredUtterances = Array((retiredUtterances + utterances).suffix(300))
     utterances.removeAll()
     utteranceIndex.removeAll()
     script.removeAll()
@@ -445,15 +666,18 @@ final class Speaker: NSObject {
     neural.stop()
   }
 
-  /// Loads the neural voice ahead of time, so the first answer doesn't wait for it.
+  /// Loads the neural voice ahead of time, so the first answer doesn't wait for it. Not
+  /// with Azure: Heart takes a few hundred MB, and is loaded only if Azure fails.
   func preloadNeuralVoice() {
-    guard neuralVoiceActive, NeuralVoice.isBundled else { return }
+    guard neuralVoiceActive, azureVoice == nil, NeuralVoice.isBundled else { return }
     neural.preload()
   }
 
   /// Queues segments in the neural voice when it's on (or the segment asks for it), and in
   /// Apple's voice otherwise. Either way each segment is tracked by its place in `script`.
   private func enqueue(_ segments: [Segment], voice: AVSpeechSynthesisVoice?) {
+    if outstanding == 0 { lastProgress = Date() }
+    if !segments.isEmpty { startWatchdog() }
     var neuralItems: [NeuralVoice.Item] = []
     for segment in segments {
       script.append(segment)
@@ -502,6 +726,7 @@ final class Speaker: NSObject {
 
   private func segmentStarted(_ index: Int) {
     guard index < script.count else { return }
+    lastProgress = Date()
     currentIndex = index
     currentFinished = false
     let segment = script[index]
@@ -519,6 +744,7 @@ final class Speaker: NSObject {
 
   private func wordStarted(_ id: ObjectIdentifier, at time: Date) {
     guard utteranceIndex[id] != nil else { return }
+    lastProgress = time
     let first = min(wordTimes[id]?.first ?? time, time)
     let last = max(wordTimes[id]?.last ?? time, time)
     wordTimes[id] = (first, last)
@@ -531,6 +757,8 @@ final class Speaker: NSObject {
 
   private func segmentEnded(_ index: Int, times: (first: Date, last: Date)?) {
     guard index < script.count else { return }
+    lastProgress = Date()
+    lastSpokeAt = Date()
     logMeasuredRate(script[index], times: times)
     // A line's dictation ends with its last part (a Continue line keeps the same number).
     if let line = script[index].penLine, script[index].problem != nil,
@@ -541,6 +769,7 @@ final class Speaker: NSObject {
     if index == currentIndex { currentFinished = true }
     outstanding = max(0, outstanding - 1)
     if outstanding == 0 {
+      if sayingAnswer, !answerOpen { diag("audio", "the answer was said to the end") }
       if stopKeepAliveAfterSpeech { endKeepAlive() }
       onIdle?()
     }
