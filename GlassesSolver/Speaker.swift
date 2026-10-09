@@ -197,6 +197,7 @@ final class Speaker: NSObject {
   private var routeObserver: NSObjectProtocol?
   private var resetObserver: NSObjectProtocol?
   private var memoryObserver: NSObjectProtocol?
+  private var voicesObserver: NSObjectProtocol?
 
   /// Checks every second that speech is moving (see `checkSpeech`).
   private var watchdog: Task<Void, Never>?
@@ -270,6 +271,11 @@ final class Speaker: NSObject {
       forName: AVAudioSession.mediaServicesWereResetNotification, object: nil, queue: .main
     ) { [weak self] _ in
       MainActor.assumeIsolated { self?.mediaServicesReset() }
+    }
+    voicesObserver = NotificationCenter.default.addObserver(
+      forName: AVSpeechSynthesizer.availableVoicesDidChangeNotification, object: nil, queue: .main
+    ) { _ in
+      MainActor.assumeIsolated { Speaker.voicesChanged() }
     }
     memoryObserver = NotificationCenter.default.addObserver(
       forName: UIApplication.didReceiveMemoryWarningNotification, object: nil, queue: .main
@@ -1267,16 +1273,35 @@ final class Speaker: NSObject {
   /// language first, then best quality, then by name. Voices from other apps (such as
   /// Piper) are included: they can report languages like "en" or "en_US", so nothing is
   /// filtered out by language.
+  ///
+  /// Read once and kept until iOS says the installed voices changed: a phone can have
+  /// over a thousand (another app added 905), and listing and sorting them each time speech
+  /// started slowed it down.
   static func availableVoices() -> [AVSpeechSynthesisVoice] {
-    AVSpeechSynthesisVoice.speechVoices()
+    if let cachedVoices { return cachedVoices }
+    let started = Date()
+    let phone = String(AVSpeechSynthesisVoice.currentLanguageCode().prefix(2)).lowercased()
+    let voices = AVSpeechSynthesisVoice.speechVoices()
       .filter { !$0.voiceTraits.contains(.isNoveltyVoice) && !$0.voiceTraits.contains(.isPersonalVoice) }
+      .map { (voice: $0, local: $0.language.lowercased().hasPrefix(phone)) }
       .sorted { a, b in
-        let aLocal = isPhoneLanguage(a.language)
-        let bLocal = isPhoneLanguage(b.language)
-        if aLocal != bLocal { return aLocal }
-        if a.quality.rawValue != b.quality.rawValue { return a.quality.rawValue > b.quality.rawValue }
-        return a.name < b.name
+        if a.local != b.local { return a.local }
+        if a.voice.quality.rawValue != b.voice.quality.rawValue { return a.voice.quality.rawValue > b.voice.quality.rawValue }
+        return a.voice.name < b.voice.name
       }
+      .map(\.voice)
+    cachedVoices = voices
+    diag("voices", "listed \(voices.count) voices in \(SolveTiming.seconds(Date().timeIntervalSince(started)))")
+    return voices
+  }
+
+  private static var cachedVoices: [AVSpeechSynthesisVoice]?
+  private static var cachedBestVoice: AVSpeechSynthesisVoice??
+
+  /// Forgets the voice list, so it's read again (iOS added or removed a voice).
+  static func voicesChanged() {
+    cachedVoices = nil
+    cachedBestVoice = nil
   }
 
   /// "en", "en-US", "en_GB" all count as English on an English phone.
@@ -1292,6 +1317,13 @@ final class Speaker: NSObject {
 
   /// The best installed voice for the phone's exact language (e.g. en-US), then any variant.
   static var bestVoice: AVSpeechSynthesisVoice? {
+    if let cachedBestVoice { return cachedBestVoice }
+    let best = findBestVoice()
+    cachedBestVoice = .some(best)
+    return best
+  }
+
+  private static func findBestVoice() -> AVSpeechSynthesisVoice? {
     let code = AVSpeechSynthesisVoice.currentLanguageCode()
     let voices = availableVoices()
     return voices.first { $0.language == code }
@@ -1309,7 +1341,7 @@ final class Speaker: NSObject {
   private var chosenVoice: AVSpeechSynthesisVoice? {
     guard let id = voiceIdentifier else { return nil }
     return AVSpeechSynthesisVoice(identifier: id)
-      ?? AVSpeechSynthesisVoice.speechVoices().first { $0.identifier == id }
+      ?? Self.availableVoices().first { $0.identifier == id }
   }
 
   /// True when a voice was picked but iOS can't find it, so the automatic voice is used.

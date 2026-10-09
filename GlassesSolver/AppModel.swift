@@ -547,13 +547,20 @@ final class AppModel {
   }
 
   /// Installed voices for the Settings picker: (identifier, label), best quality first.
+  /// Made once per voice list rather than on every redraw of Settings (there can be over a
+  /// thousand voices).
   var availableVoices: [(id: String, label: String)] {
-    Speaker.availableVoices().map { voice in
+    let voices = Speaker.availableVoices()
+    if let voiceLabels, voiceLabels.count == voices.count { return voiceLabels }
+    let labels = voices.map { voice in
       let region = Locale.current.localizedString(forIdentifier: voice.language) ?? voice.language
       let source = Speaker.isFromOtherApp(voice) ? " · other app" : ""
-      return (voice.identifier, "\(voice.name) · \(Speaker.qualityName(voice.quality)) · \(region)\(source)")
+      return (id: voice.identifier, label: "\(voice.name) · \(Speaker.qualityName(voice.quality)) · \(region)\(source)")
     }
+    voiceLabels = labels
+    return labels
   }
+  @ObservationIgnored private var voiceLabels: [(id: String, label: String)]?
 
   /// Writes every voice iOS reports to the diagnostics log, so a voice that doesn't show
   /// up in the picker can be traced (is iOS giving it to apps at all, and how is it labeled).
