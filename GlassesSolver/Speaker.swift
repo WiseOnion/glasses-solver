@@ -159,6 +159,8 @@ final class Speaker: NSObject {
       case continueLine
       /// "Mark:" crosses out, draws a box, and so on.
       case mark
+      /// "Answer:" on a multiple-choice test: the letter and the choice, to fill in a bubble.
+      case choice
     }
 
     let kind: Kind
@@ -564,7 +566,12 @@ final class Speaker: NSObject {
     activateSession()
     diag("audio", "repeating the last pen line (\(repeatCount) in a row)")
     let again = repeatCount > 1 ? "Again, slower" : "Again"
-    let cue = line.kind == .mark ? again + "." : again + ", line \(line.number)."
+    let cue =
+      switch line.kind {
+      case .mark: again + "."
+      case .choice: again + ", \(itemWord.lowercased()) \(heardProblem ?? "")."
+      default: again + ", line \(line.number)."
+      }
     var repeated = dictation(line, cue: cue, slowdown: slowdown, inParts: true)
     for index in repeated.indices { repeated[index].problem = heardProblem }
     enqueue(repeated + remaining, voice: resolvedVoice)
@@ -959,9 +966,11 @@ final class Speaker: NSObject {
       return prose + [Segment(text: "\(itemWord) \(label).", rate: rate, pauseAfter: pause, penLine: nil)]
     }
     if let answer = Self.answerLine(in: paragraph) {
-      // A multiple-choice answer: said once, then time to fill in the bubble.
-      return flushProse(beforeWrite: true)
-        + [Segment(text: answer, rate: rate, pauseAfter: Self.answerPause, penLine: nil)]
+      // A multiple-choice answer: said once, then time to fill in the bubble. It counts as the
+      // question's line, so a double-tap repeats it and the written page follows it.
+      lineNumber += 1
+      let line = PenLine(kind: .choice, text: answer, number: lineNumber)
+      return flushProse(beforeWrite: true) + dictation(line, cue: "", inParts: false)
     }
     if let check = Self.checkLine(in: paragraph) {
       // A read-back of the line just dictated: smooth, at the normal pace, with a beat after
@@ -995,7 +1004,7 @@ final class Speaker: NSObject {
     case .continueLine:
       line.text.lowercased().hasPrefix("on the bottom") || line.text.lowercased().hasPrefix("on top")
         ? "" : "Same line."
-    case .mark: ""
+    case .mark, .choice: ""
     }
   }
 
@@ -1013,6 +1022,11 @@ final class Speaker: NSObject {
     let cuePart =
       cue.isEmpty
       ? [] : [Segment(text: cue, rate: speed, pauseAfter: Self.afterCuePause, penLine: line, lineID: lineID)]
+    if line.kind == .choice {
+      return cuePart + [
+        Segment(text: line.text, rate: rate * slowdown, pauseAfter: Self.answerPause, penLine: line, lineID: lineID)
+      ]
+    }
     if line.kind == .mark {
       return [
         Segment(

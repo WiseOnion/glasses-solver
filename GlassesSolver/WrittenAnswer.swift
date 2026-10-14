@@ -344,6 +344,6 @@ struct WrittenAnswerScreen: View {
   private var emptyMessage: String {
     guard let model else { return "This answer has no written math." }
     if model.phase != .idle { return "Working on it\u{2026}" }
-    return model.shownAnswer.isEmpty ? "No answer yet. Take a photo of a problem." : "This answer has no written math."
+    return model.shownAnswer.isEmpty ? "No answer yet. Take a photo of the page." : "This answer has no written math."
   }
 }

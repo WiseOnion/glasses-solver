@@ -166,6 +166,8 @@ final class AppModel {
     didSet {
       UserDefaults.standard.set(subject.rawValue, forKey: Self.subjectDefaultsKey)
       speaker.itemWord = subject.itemWord
+      // A session started with the old subject's usual prompt takes the new one's.
+      if sessionPrompt == oldValue.defaultPrompt { sessionPrompt = subject.defaultPrompt }
       // A photo after switching is never a follow-up to an answer in the other subject.
       lastAnswerTime = nil
     }
@@ -291,17 +293,17 @@ final class AppModel {
   var statusText: String {
     switch phase {
     case .capturing: return "Taking a photo with your glasses…"
-    case .thinking: return "Claude is solving it…"
+    case .thinking: return "Claude is working it out…"
     case .idle:
       if sessionActive {
         return sessionPaused
           ? "Session paused. Tap the glasses' touchpad once to resume."
-          : "Session active. Look at the problem and press the capture button."
+          : "Session active. Look at the page and press the capture button."
       }
       if !canSolve { return "Add your Anthropic API key in Settings, or turn on Test mode." }
       if !isRegistered { return "Connect your glasses to get started." }
       if !hasActiveDevice { return "Put on your glasses (hinges open)." }
-      return "Ready. Look at the problem and tap Solve."
+      return "Ready. Look at the page and tap Solve."
     }
   }
 
@@ -629,8 +631,11 @@ final class AppModel {
 
   /// Says one sentence in the current voice and speed.
   func previewVoice() {
-    // A real piece of dictation, with its pauses, rather than a sentence of ordinary speech.
-    speaker.speak("Write: cosine of, open parenthesis, 3 x squared, close parenthesis, times secant squared x")
+    // A real piece of an answer, with its pauses, rather than a sentence of ordinary speech.
+    speaker.speak(
+      subject == .chemistry
+        ? "Problem: 7\nAnswer: B, as in boy. Krypton core, 5 ess 2, 4 dee 10, 5 pee 5."
+        : "Write: cosine of, open parenthesis, 3 x squared, close parenthesis, times secant squared x")
   }
 
   /// The same real line of dictation in each of the best voices, one after another.
@@ -759,7 +764,7 @@ final class AppModel {
         // listener's own work can be checked and continued from where they stopped.
         let previous = lastAnswerTime.map { Date.now.timeIntervalSince($0) < Self.followUpWindow } == true
           ? lastAnswer : nil
-        let stopNote = previous == nil ? nil : stoppedAt.map(Self.describeStop)
+        let stopNote = previous == nil ? nil : stoppedAt.map { Self.describeStop($0, subject: subject) }
         if previous != nil { diag("solve", "sending as a follow-up to the last answer. \(stopNote ?? "It was heard to the end.")") }
         reply = try await ClaudeClient(apiKey: apiKey, subject: subject, fast: fastAnswers).solve(
           photo: photo, prompt: prompt, previousAnswer: previous, stoppedAt: stopNote,
@@ -858,7 +863,19 @@ final class AppModel {
   }
 
   /// Tells Claude how much of its last answer was heard before a new photo cut it short.
-  nonisolated static func describeStop(_ progress: Speaker.Progress) -> String {
+  nonisolated static func describeStop(_ progress: Speaker.Progress, subject: ClaudeClient.Subject = .math) -> String {
+    if subject == .chemistry {
+      // Each question has one line: its answer.
+      let heard =
+        if progress.line == 0 {
+          "I'd heard you start problem \(progress.problem), but not its answer"
+        } else if progress.lineFinished {
+          "I'd heard the answer to problem \(progress.problem)"
+        } else {
+          "I'd heard only part of the answer to problem \(progress.problem)"
+        }
+      return "Your answers were cut short when I took this photo: \(heard), and nothing after that."
+    }
     let heard =
       if progress.line == 0 {
         "I'd heard you start problem \(progress.problem), but none of its lines yet"

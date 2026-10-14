@@ -245,18 +245,20 @@ private struct EntryView: View {
   }
 }
 
-/// One line of an answer. "Write:" lines are shown as the line to copy.
+/// One line of an answer. "Write:" lines are shown as the line to copy, and a multiple-choice
+/// "Answer:" as the bubble to fill in.
 private struct AnswerLine: View {
   let line: String
 
   var body: some View {
     let trimmed = line.trimmingCharacters(in: .whitespaces)
-    if trimmed.lowercased().hasPrefix("write:") {
+    let tag = ["write:", "answer:"].first { trimmed.lowercased().hasPrefix($0) }
+    if let tag {
       Label {
-        Text(trimmed.dropFirst("write:".count).trimmingCharacters(in: .whitespaces))
+        Text(Speaker.spokenPart(String(trimmed.dropFirst(tag.count))).trimmingCharacters(in: .whitespaces))
           .font(.body.monospaced().weight(.semibold))
       } icon: {
-        Image(systemName: "pencil.line")
+        Image(systemName: tag == "write:" ? "pencil.line" : "checkmark.circle")
       }
       .padding(8)
       .frame(maxWidth: .infinity, alignment: .leading)

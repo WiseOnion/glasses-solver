@@ -228,8 +228,10 @@
 
         var row = document.createElement('tr');
         row.className = (marks + (more.length ? ' continued' : '')).trim();
-        row.setAttribute('aria-label', 'Line ' + line.number + ': ' + line.words);
-        row.appendChild(cell('number', String(line.number)));
+        // A multiple-choice question has one line, its answer, so it isn't numbered.
+        var question = problem.word === 'Question';
+        row.setAttribute('aria-label', (question ? 'Answer: ' : 'Line ' + line.number + ': ') + line.words);
+        row.appendChild(cell('number', question ? '' : String(line.number)));
         if (aligned) {
           // Split at its relation, so the relations line up down the work. "{}" first, as
           // in an aligned block, so a leading = gets its space on both sides.

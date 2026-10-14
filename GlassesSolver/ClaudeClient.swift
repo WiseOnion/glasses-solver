@@ -351,7 +351,8 @@ struct ClaudeClient: Sendable {
     diag(
       "timing",
       "image ready to send: \(jpeg.count / 1024) KB in \(SolveTiming.seconds(Date().timeIntervalSince(preparing)))")
-    let messages = Self.messages(jpeg: jpeg, prompt: prompt, previousAnswer: previousAnswer, stoppedAt: stoppedAt)
+    let messages = Self.messages(
+      jpeg: jpeg, prompt: prompt, previousAnswer: previousAnswer, stoppedAt: stoppedAt, subject: subject)
     var text = ""
     var stopReason: String?
     var continuations = 0
@@ -482,16 +483,19 @@ struct ClaudeClient: Sendable {
     jpeg: Data, prompt: String, previousAnswer: String?, stoppedAt: String? = nil, subject: Subject = .math
   ) -> [String: Any] {
     body(
-      messages: messages(jpeg: jpeg, prompt: prompt, previousAnswer: previousAnswer, stoppedAt: stoppedAt),
+      messages: messages(
+        jpeg: jpeg, prompt: prompt, previousAnswer: previousAnswer, stoppedAt: stoppedAt, subject: subject),
       subject: subject)
   }
 
   /// The conversation sent for a photo (see `body(jpeg:prompt:previousAnswer:stoppedAt:)`).
-  static func messages(jpeg: Data, prompt: String, previousAnswer: String?, stoppedAt: String?) -> [[String: Any]] {
+  static func messages(
+    jpeg: Data, prompt: String, previousAnswer: String?, stoppedAt: String?, subject: Subject = .math
+  ) -> [[String: Any]] {
     let image: [String: Any] = [
       "type": "image", "source": ["type": "base64", "media_type": "image/jpeg", "data": jpeg.base64EncodedString()],
     ]
-    let followUpText: String = [stoppedAt, Self.followUpPrompt].compactMap { $0 }.joined(separator: " ")
+    let followUpText: String = [stoppedAt, subject.followUpPrompt].compactMap { $0 }.joined(separator: " ")
     if let previousAnswer, !previousAnswer.isEmpty {
       return [
         ["role": "user", "content": [["type": "text", "text": prompt + " (That photo isn't included again.)"]]],
@@ -724,6 +728,13 @@ extension ClaudeClient {
         ? ClaudeClient.defaultPrompt
         : "Give me the answer to every complete question in this photo, with the choice read back."
     }
+    /// Sent with a photo taken soon after an answer (see each system prompt's last section).
+    var followUpPrompt: String {
+      self == .math
+        ? ClaudeClient.followUpPrompt
+        : "Here's a new photo. If it shows my filled-in answer sheet, check it against your answers. "
+          + "If it shows new questions, answer them."
+    }
     /// What the app calls each one out loud: "Problem 4." or "Question 4."
     var itemWord: String { self == .math ? "Problem" : "Question" }
     /// Chemistry answers are short and one wrong letter loses the whole question, so Claude
@@ -854,7 +865,8 @@ extension ClaudeClient {
     answer them as usual. If it shows their filled-in answer sheet, compare each bubble with \
     your answers and say only the ones that differ, as "Problem: 7" then "Answer: B, as in \
     boy. You filled in C." If all match, say "Everything you filled in matches." and \
-    "Done." If the message says your answer was cut short ("I'd heard you start problem 9") \
-    and the photo shows the same questions, don't start over: go on from that question.
+    "Done." If the message says your answers were cut short ("I'd heard the answer to \
+    problem 9") and the photo shows the same questions, don't start over: go on from the \
+    first question whose answer they didn't hear in full.
     """
 }

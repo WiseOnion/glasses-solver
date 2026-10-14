@@ -80,7 +80,10 @@ struct ContentView: View {
                 .textSelection(.enabled)
               HStack {
                 Button("Repeat", systemImage: "speaker.wave.2") { model.repeatAnswer() }
-                Button("Repeat line", systemImage: "pencil.line") { model.repeatWriteLine() }
+                Button(
+                  model.subject == .math ? "Repeat line" : "Repeat last",
+                  systemImage: model.subject == .math ? "pencil.line" : "checkmark.circle"
+                ) { model.repeatWriteLine() }
                 Spacer()
                 Button("Stop", systemImage: "stop.fill") { model.stopSpeaking() }
               }
@@ -246,6 +249,19 @@ struct SettingsView: View {
     NavigationStack {
       Form {
         Section {
+          Picker("Subject", selection: $model.subject) {
+            ForEach(ClaudeClient.Subject.allCases, id: \.self) { Text($0.name).tag($0) }
+          }
+        } footer: {
+          Text(
+            model.subject == .math
+              ? "Math: each problem is dictated line by line for you to copy by hand."
+              : "Chemistry: each question gets its letter, said with a word (\"B, as in boy\"), "
+                + "and the choice read back, with a pause to fill in the bubble."
+          )
+        }
+
+        Section {
           SecureField("sk-ant-…", text: $keyDraft)
             .textInputAutocapitalization(.never)
             .autocorrectionDisabled()
@@ -264,23 +280,10 @@ struct SettingsView: View {
         }
 
         Section {
-          Picker("Subject", selection: $model.subject) {
-            ForEach(ClaudeClient.Subject.allCases, id: \.self) { Text($0.name).tag($0) }
-          }
-        } footer: {
-          Text(
-            model.subject == .math
-              ? "Math: each problem is dictated line by line for you to copy."
-              : "Chemistry: each question gets its letter, said with a word (\"B, as in boy\"), "
-                + "and the choice read back, with a pause to fill in the bubble."
-          )
-        }
-
-        Section {
           Toggle("Fast answers", isOn: $model.fastAnswers)
         } footer: {
           Text(
-            "Claude's fast mode: the same model, just as careful with the math, but it thinks and writes "
+            "Claude's fast mode: the same model, just as careful, but it thinks and writes "
               + "about twice as fast, so the first words come sooner. It costs twice as much per answer. "
               + "If your account can't use it, standard speed is used automatically."
           )
@@ -351,24 +354,29 @@ struct SettingsView: View {
               Image(systemName: "hare")
             }
           }
-          VStack(alignment: .leading) {
-            Text("Time to write each line")
-            Slider(value: $model.writingTime, in: Speaker.writingTimeRange) {
+          // Writing time only applies to math, which is copied by hand.
+          if model.subject == .math {
+            VStack(alignment: .leading) {
               Text("Time to write each line")
-            } minimumValueLabel: {
-              Text("Less").font(.caption)
-            } maximumValueLabel: {
-              Text("More").font(.caption)
+              Slider(value: $model.writingTime, in: Speaker.writingTimeRange) {
+                Text("Time to write each line")
+              } minimumValueLabel: {
+                Text("Less").font(.caption)
+              } maximumValueLabel: {
+                Text("More").font(.caption)
+              }
             }
+            Toggle("Pause after each part of a line", isOn: $model.dictateInParts)
           }
-          Toggle("Pause after each part of a line", isOn: $model.dictateInParts)
           Button("Test voice", systemImage: "speaker.wave.2") { model.testVoice() }
-          Button("Test limit definition", systemImage: "function") { model.testLimitDefinition() }
-          Button("Reset speed and writing time") {
+          if model.subject == .math {
+            Button("Test limit definition", systemImage: "function") { model.testLimitDefinition() }
+          }
+          Button(model.subject == .math ? "Reset speed and writing time" : "Reset speed") {
             model.speechRate = Speaker.defaultRate
             model.writingTime = 1
           }
-          .disabled(model.speechRate == Speaker.defaultRate && model.writingTime == 1)
+          .disabled(model.speechRate == Speaker.defaultRate && (model.subject != .math || model.writingTime == 1))
         } header: {
           Text("Voice")
         } footer: {
@@ -380,10 +388,12 @@ struct SettingsView: View {
               + "ones. Download them in iOS Settings → Accessibility → Read & Speak → Voices → English (for "
               + "example Ava, Zoe or Evan, Premium), then come back here and pick one. Compare voices reads "
               + "one real line of dictation in each voice, so you can choose by ear; Match speed sets the "
-              + "current voice to about 150 words a minute. Answers dictate each "
-              + "line to write a few words at a time and pause while you write each part (turn off \"Pause after "
-              + "each part\" to hear the whole line first, then one pause). Double-tap the glasses' touchpad to "
-              + "hear the last line again; double-tap again for slower."
+              + "current voice to about 150 words a minute. "
+              + (model.subject == .math
+                ? "Answers dictate each line to write a few words at a time and pause while you write each part "
+                  + "(turn off \"Pause after each part\" to hear the whole line first, then one pause). "
+                  + "Double-tap the glasses' touchpad to hear the last line again; double-tap again for slower."
+                : "Double-tap the glasses' touchpad to hear the last answer again; double-tap again for slower.")
           )
         }
 
@@ -454,6 +464,9 @@ struct StartSessionView: View {
         Section {
           Label("Press the capture button on the glasses frame to solve.", systemImage: "camera")
           Label("Tap the touchpad once to pause or resume.", systemImage: "hand.tap")
+          Label(
+            model.subject == .math ? "Double-tap to hear the last line again." : "Double-tap to hear the last answer again.",
+            systemImage: "hand.tap.fill")
           Label("Touch and hold the touchpad to end the session.", systemImage: "hand.raised")
           Label("You can leave the app or lock your phone.", systemImage: "lock.iphone")
         } header: {
