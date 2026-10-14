@@ -245,6 +245,16 @@ struct SettingsView: View {
   @State private var voices: [(id: String, label: String)] = []
   @Environment(\.scenePhase) private var scenePhase
 
+  /// The end of the Voice footer: how answers are paced, and what a double-tap repeats.
+  private var subjectVoiceNote: String {
+    if model.subject == .chemistry {
+      return "Double-tap the glasses' touchpad to hear the last answer again; double-tap again for slower."
+    }
+    return "Answers dictate each line to write a few words at a time and pause while you write each part "
+      + "(turn off \"Pause after each part\" to hear the whole line first, then one pause). "
+      + "Double-tap the glasses' touchpad to hear the last line again; double-tap again for slower."
+  }
+
   var body: some View {
     NavigationStack {
       Form {
@@ -388,12 +398,7 @@ struct SettingsView: View {
               + "ones. Download them in iOS Settings → Accessibility → Read & Speak → Voices → English (for "
               + "example Ava, Zoe or Evan, Premium), then come back here and pick one. Compare voices reads "
               + "one real line of dictation in each voice, so you can choose by ear; Match speed sets the "
-              + "current voice to about 150 words a minute. "
-              + (model.subject == .math
-                ? "Answers dictate each line to write a few words at a time and pause while you write each part "
-                  + "(turn off \"Pause after each part\" to hear the whole line first, then one pause). "
-                  + "Double-tap the glasses' touchpad to hear the last line again; double-tap again for slower."
-                : "Double-tap the glasses' touchpad to hear the last answer again; double-tap again for slower.")
+              + "current voice to about 150 words a minute. " + subjectVoiceNote
           )
         }
 
