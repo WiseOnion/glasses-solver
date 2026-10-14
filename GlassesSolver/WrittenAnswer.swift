@@ -23,6 +23,8 @@ struct WrittenAnswer: Equatable {
   struct Problem: Equatable {
     let label: String
     var lines: [Line] = []
+    /// A multiple-choice question (its answer is a letter), headed "Question", not "Problem".
+    var isQuestion = false
   }
 
   var problems: [Problem] = []
@@ -55,6 +57,13 @@ struct WrittenAnswer: Equatable {
         written.problems[index].lines.append(
           Line(number: number, math: math, words: Self.afterTag(spoken), note: note))
         note = nil
+      } else if lower.hasPrefix("answer:") {
+        // A multiple-choice answer: the letter and the choice, boxed like a final answer.
+        number += 1
+        let index = currentProblem()
+        written.problems[index].isQuestion = true
+        written.problems[index].lines.append(
+          Line(number: number, math: math, words: Self.afterTag(spoken), boxed: true))
       } else if lower.hasPrefix("continue:") {
         let index = currentProblem()
         guard let last = written.problems[index].lines.indices.last else { continue }
@@ -173,7 +182,7 @@ struct WrittenAnswer: Equatable {
         }
         return step
       }
-      return ["label": problem.label, "lines": lines]
+      return ["label": problem.label, "word": problem.isQuestion ? "Question" : "Problem", "lines": lines]
     }
     guard let json = try? JSONSerialization.data(withJSONObject: data) else { return "[]" }
     return String(decoding: json, as: UTF8.self)

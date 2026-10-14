@@ -176,7 +176,7 @@
     reading.element = band;
   }
 
-  // problems: [{label, lines: [{number, words, boxed, now, left?, right?, whole?, more?}]}]
+  // problems: [{label, word, lines: [{number, words, boxed, now, left?, right?, whole?, more?}]}]
   function render(json, message) {
     var problems = JSON.parse(json);
     var page = document.getElementById('page');
@@ -199,9 +199,9 @@
       if (problem.label) {
         var heading = document.createElement('h2');
         heading.className = 'problem';
-        heading.setAttribute('aria-label', 'Problem ' + problem.label);
+        heading.setAttribute('aria-label', (problem.word || 'Problem') + ' ' + problem.label);
         var word = document.createElement('span');
-        word.textContent = 'Problem';
+        word.textContent = problem.word || 'Problem';
         var label = document.createElement('b');
         label.textContent = problem.label;
         heading.appendChild(word);

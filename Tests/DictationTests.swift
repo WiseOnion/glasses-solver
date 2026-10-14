@@ -401,5 +401,22 @@ final class DictationTests: XCTestCase {
       Speaker.cutOffNotice(.dropped, answer: "I can see problem 2."),
       "Stop. The connection dropped before the first problem. Take the photo again.")
     XCTAssertTrue(Speaker.cutOffNotice(.stopped, answer: "Problem: 7").hasPrefix("Stop. The answer stopped partway"))
+    XCTAssertTrue(
+      Speaker.cutOffNotice(.dropped, answer: "Problem: 7", itemWord: "Question")
+        .hasSuffix("Take a new photo of question 7 and any after it."))
+  }
+
+  /// A multiple-choice answer: "Question 7.", then the letter and the choice, once, with no
+  /// line cue and nothing from after "||".
+  func testMultipleChoiceAnswer() {
+    XCTAssertEqual(Speaker.answerLine(in: "Answer: B, as in boy. Zinc"), "B, as in boy. Zinc.")
+    XCTAssertNil(Speaker.answerLine(in: "Answer:"))
+    XCTAssertNil(Speaker.answerLine(in: "The answer is B."))
+    let speaker = Speaker()
+    defer { speaker.stop() }
+    speaker.itemWord = "Question"
+    speaker.speak("I can see question 4.\nProblem: 4\nAnswer: E, as in egg. 3 plus. || 3+\nDone.")
+    XCTAssertEqual(
+      speaker.queued.map(\.text), ["I can see question 4.", "Question 4.", "E, as in egg. 3 plus.", "Done."])
   }
 }

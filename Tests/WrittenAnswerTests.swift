@@ -127,4 +127,17 @@ final class WrittenAnswerTests: XCTestCase {
     XCTAssertEqual(NeuralVoice.sentences("Done. That is all for now."), ["Done. That is all for now."])
     XCTAssertEqual(NeuralVoice.sentences("u equals, 1, plus tangent w,"), ["u equals, 1, plus tangent w,"])
   }
+
+  /// A multiple-choice answer is one boxed line under a "Question" heading.
+  func testMultipleChoiceAnswer() {
+    let written = WrittenAnswer.parse(
+      #"Problem: 19"# + "\n" + #"Answer: C, as in cat. N O 2 minus, aqueous. || \mathrm{NO_2^-(aq)}"# + "\nDone.")
+    XCTAssertEqual(written.problems.map(\.label), ["19"])
+    XCTAssertTrue(written.problems[0].isQuestion)
+    let line = written.problems[0].lines[0]
+    XCTAssertEqual(line.math, #"\mathrm{NO_2^-(aq)}"#)
+    XCTAssertEqual(line.words, "C, as in cat. N O 2 minus, aqueous.")
+    XCTAssertTrue(line.boxed)
+    XCTAssertTrue(written.pageData(now: nil).contains(#""word":"Question""#))
+  }
 }

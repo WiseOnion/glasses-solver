@@ -399,6 +399,16 @@ final class ClaudeClientTests: XCTestCase {
     XCTAssertTrue(ClaudeClient.continuation(of: " \n", reason: nil).isEmpty)
   }
 
+  func testChemistryUsesItsOwnPromptAndMoreThought() throws {
+    let jpeg = try XCTUnwrap(ClaudeClient.preparedJPEG(from: TestImages.jpeg()))
+    let math = ClaudeClient.body(jpeg: jpeg, prompt: "Solve", previousAnswer: nil)
+    XCTAssertEqual((math["output_config"] as? [String: Any])?["effort"] as? String, "medium")
+    let body = ClaudeClient.body(jpeg: jpeg, prompt: "Solve", previousAnswer: nil, subject: .chemistry)
+    let system = try XCTUnwrap(body["system"] as? [[String: Any]])
+    XCTAssertEqual(system.first?["text"] as? String, ClaudeClient.chemistrySystem)
+    XCTAssertEqual((body["output_config"] as? [String: Any])?["effort"] as? String, "high")
+  }
+
   func testFollowUpPhotoIncludesTheEarlierAnswer() throws {
     let jpeg = try XCTUnwrap(ClaudeClient.preparedJPEG(from: TestImages.jpeg()))
     // A first photo: just the photo and the prompt.

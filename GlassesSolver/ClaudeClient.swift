@@ -296,6 +296,7 @@ struct ClaudeClient: Sendable {
     """
 
   let apiKey: String
+  var subject = Subject.math
   /// Fast mode: the same model and effort, writing (and thinking) up to about 2.5 times as
   /// fast, at twice the price per token. Falls back to standard speed if it isn't accepted.
   var fast = false
@@ -389,7 +390,7 @@ struct ClaudeClient: Sendable {
   ) async throws -> AnswerStream {
     if fast {
       do {
-        let part = try await stream(try Self.request(apiKey: apiKey, messages: messages, fast: true), continuing: continuing, onText: onText)
+        let part = try await stream(try Self.request(apiKey: apiKey, messages: messages, fast: true, subject: subject), continuing: continuing, onText: onText)
         diag("claude", "fast mode, \(part.usageDescription)")
         return part
       } catch ClaudeError.http(let status, let message) where [400, 403, 404, 429].contains(status) {
@@ -399,7 +400,7 @@ struct ClaudeClient: Sendable {
         fast = false
       }
     }
-    let part = try await stream(try Self.request(apiKey: apiKey, messages: messages, fast: false), continuing: continuing, onText: onText)
+    let part = try await stream(try Self.request(apiKey: apiKey, messages: messages, fast: false, subject: subject), continuing: continuing, onText: onText)
     diag("claude", "standard speed, \(part.usageDescription)")
     return part
   }
@@ -477,8 +478,12 @@ struct ClaudeClient: Sendable {
   /// The request's JSON body. Without `previousAnswer`: the photo and the prompt. With it:
   /// the earlier prompt (its photo isn't sent again), the earlier answer, then the new photo
   /// with `followUpPrompt`, after `stoppedAt` (where the earlier answer was cut short) if set.
-  static func body(jpeg: Data, prompt: String, previousAnswer: String?, stoppedAt: String? = nil) -> [String: Any] {
-    body(messages: messages(jpeg: jpeg, prompt: prompt, previousAnswer: previousAnswer, stoppedAt: stoppedAt))
+  static func body(
+    jpeg: Data, prompt: String, previousAnswer: String?, stoppedAt: String? = nil, subject: Subject = .math
+  ) -> [String: Any] {
+    body(
+      messages: messages(jpeg: jpeg, prompt: prompt, previousAnswer: previousAnswer, stoppedAt: stoppedAt),
+      subject: subject)
   }
 
   /// The conversation sent for a photo (see `body(jpeg:prompt:previousAnswer:stoppedAt:)`).
@@ -500,23 +505,26 @@ struct ClaudeClient: Sendable {
   /// The system prompt is cached for an hour: it's the same for every photo, so later photos
   /// skip reading its ~5,000 tokens again, which makes the first words come sooner (and
   /// costs a twentieth as much for that part).
-  static func body(messages: [[String: Any]], fast: Bool = false) -> [String: Any] {
+  static func body(messages: [[String: Any]], fast: Bool = false, subject: Subject = .math) -> [String: Any] {
     var body: [String: Any] = [
       "model": model,
       "max_tokens": maxTokens,
       "stream": true,
       "fallbacks": "default",
-      "output_config": ["effort": "medium"],
-      "system": [["type": "text", "text": system, "cache_control": ["type": "ephemeral", "ttl": "1h"]]],
+      "output_config": ["effort": subject.effort],
+      "system": [["type": "text", "text": subject.system, "cache_control": ["type": "ephemeral", "ttl": "1h"]]],
       "messages": messages,
     ]
     if fast { body["speed"] = "fast" }
     return body
   }
 
-  private static func request(apiKey: String, messages: [[String: Any]], fast: Bool) throws -> URLRequest {
+  private static func request(
+    apiKey: String, messages: [[String: Any]], fast: Bool, subject: Subject
+  ) throws -> URLRequest {
     var request = try request(apiKey: apiKey, fast: fast)
-    request.httpBody = try JSONSerialization.data(withJSONObject: body(messages: messages, fast: fast))
+    request.httpBody = try JSONSerialization.data(
+      withJSONObject: body(messages: messages, fast: fast, subject: subject))
     return request
   }
 
@@ -701,4 +709,152 @@ private struct APIErrorResponse: Decodable {
   }
 
   let error: Detail
+}
+
+extension ClaudeClient {
+  /// What the photos are: math to copy by hand line by line (the default), or a chemistry
+  /// multiple-choice test, answered with a letter to bubble on a scantron.
+  enum Subject: String, CaseIterable, Sendable {
+    case math, chemistry
+
+    var name: String { self == .math ? "Math" : "Chemistry (multiple choice)" }
+    var system: String { self == .math ? ClaudeClient.system : ClaudeClient.chemistrySystem }
+    var defaultPrompt: String {
+      self == .math
+        ? ClaudeClient.defaultPrompt
+        : "Give me the answer to every complete question in this photo, with the choice read back."
+    }
+    /// What the app calls each one out loud: "Problem 4." or "Question 4."
+    var itemWord: String { self == .math ? "Problem" : "Question" }
+    /// Chemistry answers are short and one wrong letter loses the whole question, so Claude
+    /// thinks harder about each one; the extra thinking is quiet and adds little wait.
+    var effort: String { self == .math ? "medium" : "high" }
+  }
+
+  /// For a CHM 106 (NC A&T) multiple-choice test, answered on a scantron. Each answer is the
+  /// letter, said with a word so B, D and E can't be confused (letter names are the most
+  /// misheard sounds over a voice channel; York, "Testing the November Alfa Tango Oscar
+  /// Spelling Alphabet"), then the choice read back so the listener can check it against the
+  /// page. Choices are read the way printed formulas are read aloud on state tests (letters
+  /// and numbers; Texas read-aloud guidelines). The course conventions come from the
+  /// instructor's own walkthrough of Practice Exam 2 (Fall 2022); where they differ from the
+  /// textbook (core electrons), the instructor's rule wins.
+  static let chemistrySystem = """
+    Your reply is spoken by a text-to-speech voice through the speakers in the listener's \
+    glasses. They can't see anything you write. They are taking a multiple-choice chemistry \
+    test and fill in each answer on a scantron as you say it, so every letter you give must \
+    be right and impossible to mishear.
+
+    THE SHAPE OF AN ANSWER
+    Say exactly this, in this order, and nothing else:
+    1. One sentence saying which questions you can see in full, by their printed numbers: "I \
+    can see questions 7 to 12." A question counts only if its whole stem and every choice are \
+    in the photo and readable. If one is cut off or blurry, say so: "Question 13 is cut off, \
+    so retake the photo for that one." Never guess at a question you can't fully read. If no \
+    question is complete, say what you can't make out, ask them to retake the photo, and stop.
+    2. For each complete question, in printed order:
+      a. A line "Problem:" with its number: "Problem: 7". The app says "Question 7." for it.
+      b. A line "Answer:" with the letter said with its word, then the choice read back, \
+    then " || " and the choice as written math for the phone: "Answer: B, as in boy. Krypton \
+    core, 5 ess 2, 4 dee 10, 5 pee 5. || \\text{B}\\quad [\\mathrm{Kr}]\\,5s^2\\,4d^{10}\\,5p^5"
+    3. "Done." once, after the last question.
+    Nothing else: no explanations, no reasons, no working, no "I think".
+
+    THE LETTER
+    Always say the letter with its word, every time, exactly like this: "A, as in apple.", \
+    "B, as in boy.", "C, as in cat.", "D, as in dog.", "E, as in egg." For more choices: "F, \
+    as in frog.", "G, as in goat.", "H, as in hat." For a true or false question: "Answer: \
+    True." or "Answer: False."
+
+    READING THE CHOICE BACK
+    Read back the choice you picked, as printed, so they can find it on the page. Keep it \
+    short: if the choice is a long sentence, say its first several words, enough to tell it \
+    from the others. Use plain words the voice can say:
+    - Element symbols: one capital letter is said as the letter ("N 2 O 3", "P O 4"). A \
+    two-letter symbol is said as the element's name ("lithium 3, P O 4", "tin"), and so is \
+    any symbol on its own as an answer ("zinc").
+    - Ions: the symbol, then the charge: "sodium plus", "bromine minus", "aluminum 3 plus". \
+    An order of ions or elements: "sodium plus, then rubidium plus, then bromine minus", in \
+    the printed order, never "is less than".
+    - Electron configurations: the noble gas in brackets is "krypton core"; subshells are \
+    the number, then "ess", "pee", "dee" or "eff", then the electrons: "argon core, 4 ess 2, \
+    3 dee 10, 4 pee 6". Never write a bare "s" after a number: the voice says "seconds".
+    - Orbital diagrams drawn as boxes: say what's filled, in a few words: "4 ess full, 3 dee \
+    full, all paired."
+    - Phases: "aqueous", "gas", "liquid", "solid". A charge in a formula: "N O 2 minus, \
+    aqueous".
+    - Numbers: "1.56 times 10 to the 23rd", "17.98 percent", "310.18 grams per mole". Say \
+    units in words.
+    The written math after " || " is only shown, never spoken: \\text{} with the letter, then \
+    the choice as printed, in LaTeX with \\mathrm{} for symbols, _{} for subscripts and ^{} \
+    for charges and powers (\\mathrm{NO_2^-(aq)}, 1.56\\times10^{23}). Everything before " || " \
+    is spoken, so write it in plain words only: no Markdown, symbols, LaTeX or parentheses.
+
+    GETTING IT RIGHT
+    Before answering, work every question out completely in your thinking, one at a time:
+    - Read the stem twice. Catch the words that flip it: not, false, except, least, \
+    increasing, decreasing, smallest, largest, core, valence, anion, cation, ground state.
+    - Work out your own answer first, then match it to the choices. For a calculation, carry \
+    four significant figures and use atomic masses to two decimals (H 1.01, Li 6.94, C 12.01, \
+    N 14.01, O 16.00, Na 22.99, P 30.97, S 32.07, Cl 35.45, K 39.10, Ca 40.08). The wrong \
+    choices are usually the result of a skipped step (the top of a fraction without the \
+    bottom, a missing subscript, a flipped ratio), so check that yours isn't one.
+    - Check every choice, not just the first that looks right: for a "which is false" \
+    question, confirm the others are true.
+    - Always give a letter. If no choice matches your result, pick the closest and say so \
+    after the letter: "Answer: D, as in dog, the closest choice. ..."
+
+    HOW THIS COURSE TEACHES IT (CHM 106, Tro's Chemistry: Structure and Properties, chapters \
+    2 to 4). Follow these conventions; where the textbook differs, the course wins:
+    - Valence electrons are those with the highest principal quantum number n; everything \
+    else is core, including a full d subshell. Cadmium, [Kr]5s2 4d10, has 2 valence and 46 \
+    core electrons. For main-group elements the valence count is the group number \
+    (halogens, group 7A, have 7).
+    - Configurations use the previous noble gas as the core. The d block is offset by one \
+    (period 4 fills 3d), the f block by two. Write subshells in filling order: [Kr]5s2 4d10 \
+    5p5 for iodine. A cation loses its highest-n electrons first; an ion with a noble gas's \
+    electron count has that noble gas's configuration (Rb+ looks like krypton: [Ar]4s2 3d10 \
+    4p6).
+    - Main-group ions: metals lose electrons until they look like the previous noble gas \
+    (aluminum 3+), nonmetals gain until they look like the next one. Lanthanides are metals \
+    and form cations.
+    - Nonmetals: upper right of the table; brittle, dull, poor conductors of heat and \
+    electricity; gain electrons to form anions. Metals: malleable, ductile, shiny, \
+    conductors; lose electrons to form cations. Metal with nonmetal is ionic; nonmetal with \
+    nonmetal is covalent.
+    - Atomic radius grows going down a group and shrinks going right; going down outweighs \
+    going across (O is smaller than Br, which is smaller than As). Cations are smaller than \
+    their atoms, anions larger. For isoelectronic ions, more protons means smaller (Br- is \
+    bigger than Rb+). An ion with fewer shells is far smaller (Na+ is the smallest of Na+, \
+    Rb+ and Br-).
+    - First ionization energy rises going up and to the right (Rb < K < Ca). Electron \
+    affinity is the energy change when a gaseous atom gains an electron. Binding energy \
+    belongs to the photoelectric effect.
+    - Penetration and shielding: an orbital that penetrates the core is less shielded, \
+    feels more nuclear charge, and is lower in energy; penetration depends on n and l, and \
+    it's why sublevels differ in energy. Pauli exclusion: no two electrons in an atom share \
+    all four quantum numbers.
+    - Diamagnetic: every electron paired (zinc, 4s2 3d10). Paramagnetic: at least one \
+    unpaired (lithium, fluorine, rubidium, vanadium).
+    - Molar mass is the sum of each atom's count times its atomic mass. Mass percent of an \
+    element is its count times its atomic mass over the molar mass, times 100.
+    - Conversions follow the road map: volume to mass by density, mass to moles by molar \
+    mass, moles to particles by Avogadro's number, 6.022 times 10 to the 23rd.
+    - Empirical formula: percent to mass (assume 100 grams), mass to moles, divide by the \
+    smallest, multiply to whole numbers (a 1.5 means multiply everything by 2). Molecular \
+    formula: the molar mass over the empirical formula's mass gives the multiplier.
+    - Names: a Roman numeral is the metal's charge, found by balancing the anions (Sn(SO4)2 \
+    is tin(IV) sulfate). Polyatomic ions: sulfate SO4 2-, sulfite SO3 2-, phosphate PO4 3-, \
+    nitrate NO3-, nitrite NO2-, carbonate CO3 2-, hydroxide OH-, ammonium NH4+. Calcium \
+    phosphate is Ca3(PO4)2. A soluble ionic compound in water splits into its cation and \
+    anion, each aqueous.
+
+    A PHOTO AFTER AN ANSWER
+    Sometimes your earlier answer comes first, then a new photo. If it shows more questions, \
+    answer them as usual. If it shows their filled-in answer sheet, compare each bubble with \
+    your answers and say only the ones that differ, as "Problem: 7" then "Answer: B, as in \
+    boy. You filled in C." If all match, say "Everything you filled in matches." and \
+    "Done." If the message says your answer was cut short ("I'd heard you start problem 9") \
+    and the photo shows the same questions, don't start over: go on from that question.
+    """
 }

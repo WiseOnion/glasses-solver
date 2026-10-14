@@ -62,9 +62,16 @@ final class Speaker: NSObject {
   private static let checkPause: TimeInterval = 0.8
   /// After "Problem 4.": time to find the spot on the paper and write the number.
   private static let problemPause: TimeInterval = 2
+  /// After "Question 4." on a multiple-choice test: time to find the row on the answer sheet.
+  private static let questionPause: TimeInterval = 0.8
+  /// After a multiple-choice "Answer:" line: time to fill in the bubble.
+  private static let answerPause: TimeInterval = 2
 
   var rate: Float = Speaker.defaultRate
   var writingTimeScale: Double = 1
+  /// What each "Problem:" line is called out loud: "Problem" for math, "Question" for a
+  /// multiple-choice test.
+  var itemWord = "Problem"
   /// Pause to write after each part of a pen line (true), or after the whole line.
   var dictateInParts = true
   /// The chosen voice; nil means the best installed voice for the phone's language.
@@ -901,7 +908,8 @@ final class Speaker: NSObject {
 
   /// What to say after an answer that ended early: that it did, where (the last problem
   /// started), and what to retake. The last line said may be unfinished.
-  static func cutOffNotice(_ reason: CutOff, answer: String) -> String {
+  static func cutOffNotice(_ reason: CutOff, answer: String, itemWord: String = "Problem") -> String {
+    let item = itemWord.lowercased()
     let what =
       switch reason {
       case .ranOut: "The answer ran out of room"
@@ -910,10 +918,10 @@ final class Speaker: NSObject {
       }
     let lastProblem = answer.components(separatedBy: "\n").compactMap(problemLabel(in:)).last
     guard let lastProblem else {
-      return "Stop. \(what) before the first problem. Take the photo again."
+      return "Stop. \(what) before the first \(item). Take the photo again."
     }
-    return "Stop. \(what) partway through problem \(lastProblem), so its last line may be unfinished. "
-      + "Take a new photo of problem \(lastProblem) and any after it."
+    return "Stop. \(what) partway through \(item) \(lastProblem), so its last line may be unfinished. "
+      + "Take a new photo of \(item) \(lastProblem) and any after it."
   }
 
   // MARK: - Turning an answer into speech
@@ -947,7 +955,13 @@ final class Speaker: NSObject {
       lineNumber = (Self.startingLine(in: label) ?? 1) - 1
       let prose = flushProse(beforeWrite: true)
       buildingProblem = label
-      return prose + [Segment(text: "Problem \(label).", rate: rate, pauseAfter: Self.problemPause, penLine: nil)]
+      let pause = itemWord == "Problem" ? Self.problemPause : Self.questionPause
+      return prose + [Segment(text: "\(itemWord) \(label).", rate: rate, pauseAfter: pause, penLine: nil)]
+    }
+    if let answer = Self.answerLine(in: paragraph) {
+      // A multiple-choice answer: said once, then time to fill in the bubble.
+      return flushProse(beforeWrite: true)
+        + [Segment(text: answer, rate: rate, pauseAfter: Self.answerPause, penLine: nil)]
     }
     if let check = Self.checkLine(in: paragraph) {
       // A read-back of the line just dictated: smooth, at the normal pace, with a beat after
@@ -1031,6 +1045,16 @@ final class Speaker: NSObject {
   static func markPause(_ text: String) -> TimeInterval {
     let items = text.lowercased().components(separatedBy: " and ").count
     return min(markItemPause * Double(items), maxMarkPause)
+  }
+
+  /// The words of a multiple-choice "Answer:" line ("B, as in boy. ..."), if this paragraph
+  /// is one.
+  static func answerLine(in paragraph: String) -> String? {
+    let trimmed = paragraph.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard trimmed.lowercased().hasPrefix("answer:") else { return nil }
+    let text = trimmed.dropFirst("answer:".count).trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !text.isEmpty else { return nil }
+    return text.last.map { ".!?".contains($0) } == true ? text : text + "."
   }
 
   /// The words of a "Check:" line (Claude reading a long line back), if this paragraph is one.

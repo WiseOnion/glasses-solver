@@ -20,6 +20,7 @@ final class AppModel {
   private static let speechRateDefaultsKey = "speechRate.v2"
   private static let testModeDefaultsKey = "testMode"
   private static let fastAnswersDefaultsKey = "fastAnswers"
+  private static let subjectDefaultsKey = "subject"
   private static let writingTimeDefaultsKey = "writingTime"
   private static let voiceDefaultsKey = "voiceIdentifier"
   private static let dictateInPartsDefaultsKey = "dictateInParts"
@@ -55,6 +56,22 @@ final class AppModel {
     Mark: Draw a box around line 6.
     Done.
     """
+
+  /// A multiple-choice chemistry answer in the style its system prompt asks for: questions 7,
+  /// 10 and 13 of the CHM 106 practice exam.
+  private static let chemistrySampleAnswer = """
+    I can see questions 7, 10 and 13.
+    Problem: 7
+    Answer: B, as in boy. Krypton core, 5 ess 2, 4 dee 10, 5 pee 5. || \\text{B}\\quad [\\mathrm{Kr}]\\,5s^2\\,4d^{10}\\,5p^5
+    Problem: 10
+    Answer: B, as in boy. Sodium plus, then rubidium plus, then bromine minus. || \\text{B}\\quad \\mathrm{Na^+ < Rb^+ < Br^-}
+    Problem: 13
+    Answer: D, as in dog. 1.56 times 10 to the 23rd. || \\text{D}\\quad 1.56\\times10^{23}
+    Done.
+    """
+
+  /// The sample for the subject in use.
+  private var subjectSample: String { subject == .chemistry ? Self.chemistrySampleAnswer : Self.sampleAnswer }
 
   /// The limit definition, worked the way the course wants it: problem 4 of the practice test.
   private static let limitSampleAnswer = """
@@ -142,6 +159,16 @@ final class AppModel {
   /// the price (a page costs roughly 10 to 20 cents instead of 5 to 10).
   var fastAnswers: Bool {
     didSet { UserDefaults.standard.set(fastAnswers, forKey: Self.fastAnswersDefaultsKey) }
+  }
+
+  /// What the photos are: math to copy line by line, or a chemistry multiple-choice test.
+  var subject: ClaudeClient.Subject {
+    didSet {
+      UserDefaults.standard.set(subject.rawValue, forKey: Self.subjectDefaultsKey)
+      speaker.itemWord = subject.itemWord
+      // A photo after switching is never a follow-up to an answer in the other subject.
+      lastAnswerTime = nil
+    }
   }
 
   /// How long to wait after each dictated Write line, as a multiple of the estimated
@@ -339,6 +366,8 @@ final class AppModel {
     self.useHighResPhoto = UserDefaults.standard.bool(forKey: Self.highResDefaultsKey)
     self.testMode = UserDefaults.standard.bool(forKey: Self.testModeDefaultsKey)
     self.fastAnswers = UserDefaults.standard.object(forKey: Self.fastAnswersDefaultsKey) as? Bool ?? true
+    self.subject = UserDefaults.standard.string(forKey: Self.subjectDefaultsKey).flatMap(ClaudeClient.Subject.init)
+      ?? .math
     let savedRate = UserDefaults.standard.object(forKey: Self.speechRateDefaultsKey) as? Float
     self.speechRate = savedRate.map { min(max($0, Speaker.rateRange.lowerBound), Speaker.rateRange.upperBound) }
       ?? Speaker.defaultRate
@@ -363,6 +392,7 @@ final class AppModel {
     speaker.writingTimeScale = writingTime
     speaker.voiceIdentifier = voiceIdentifier
     speaker.dictateInParts = dictateInParts
+    speaker.itemWord = subject.itemWord
     speaker.onHoldChanged = { [weak self] held in self?.speechHeld = held }
     speaker.onIdle = { [weak self] in self?.updateActivity() }
     speaker.onAnswerAudio = { [weak self] in self?.firstWordsHeard() }
@@ -541,8 +571,8 @@ final class AppModel {
 
   /// A sample in the style the system prompt asks for, to judge speed and voice.
   func testVoice() {
-    shownAnswer = Self.sampleAnswer
-    speaker.speak(Self.sampleAnswer)
+    shownAnswer = subjectSample
+    speaker.speak(subjectSample)
   }
 
   /// The limit definition worked in full, to practice copying a long answer.
@@ -657,7 +687,7 @@ final class AppModel {
       phase = .idle
       backgroundActivity.end()
     }
-    let prompt = sessionActive ? sessionPrompt : ClaudeClient.defaultPrompt
+    let prompt = sessionActive ? sessionPrompt : subject.defaultPrompt
     // Captured now, so an answer that arrives after the session ends still files under it.
     let chatSessionID = conversation.currentSessionID
     diag("solve", "start (app \(Self.appStateDescription), hands-free \(sessionActive), test mode \(testMode))")
@@ -731,7 +761,7 @@ final class AppModel {
           ? lastAnswer : nil
         let stopNote = previous == nil ? nil : stoppedAt.map(Self.describeStop)
         if previous != nil { diag("solve", "sending as a follow-up to the last answer. \(stopNote ?? "It was heard to the end.")") }
-        reply = try await ClaudeClient(apiKey: apiKey, fast: fastAnswers).solve(
+        reply = try await ClaudeClient(apiKey: apiKey, subject: subject, fast: fastAnswers).solve(
           photo: photo, prompt: prompt, previousAnswer: previous, stoppedAt: stopNote,
           onText: { [weak self] piece in self?.answerArrived(piece, runID: runID) },
           onRestartLine: { [weak self] in self?.speaker.discardUnfinishedLine() })
@@ -749,7 +779,7 @@ final class AppModel {
         case nil: .dropped
         default: .stopped
         }
-      let notice = cutOff.map { Speaker.cutOffNotice($0, answer: reply.text) }
+      let notice = cutOff.map { Speaker.cutOffNotice($0, answer: reply.text, itemWord: subject.itemWord) }
       speaker.finishAnswer(notice: notice)
       let answer = [reply.text.trimmingCharacters(in: .whitespacesAndNewlines), notice]
         .compactMap { $0 }.joined(separator: "\n")
@@ -894,7 +924,7 @@ final class AppModel {
     let kilobytes = photo.count / 1024
     return "Test mode. The photo arrived, \(kilobytes) kilobytes"
       + (inBackground ? ", and the app stayed running with the phone locked. " : ". ")
-      + Self.sampleAnswer
+      + subjectSample
   }
 
   /// Takes the photo; if the camera fails in a way a fresh glasses session fixes, starts one
@@ -1210,7 +1240,7 @@ final class AppModel {
     lastPressTimestampMs = nil
     lastSeenPressTimestampMs = nil
     pressOffsetBaselineMs = nil
-    sessionPrompt = ClaudeClient.defaultPrompt
+    sessionPrompt = subject.defaultPrompt
   }
 }
 

@@ -264,6 +264,19 @@ struct SettingsView: View {
         }
 
         Section {
+          Picker("Subject", selection: $model.subject) {
+            ForEach(ClaudeClient.Subject.allCases, id: \.self) { Text($0.name).tag($0) }
+          }
+        } footer: {
+          Text(
+            model.subject == .math
+              ? "Math: each problem is dictated line by line for you to copy."
+              : "Chemistry: each question gets its letter, said with a word (\"B, as in boy\"), "
+                + "and the choice read back, with a pause to fill in the bubble."
+          )
+        }
+
+        Section {
           Toggle("Fast answers", isOn: $model.fastAnswers)
         } footer: {
           Text(
@@ -417,7 +430,7 @@ struct SettingsView: View {
 struct StartSessionView: View {
   @Bindable var model: AppModel
   @Environment(\.dismiss) private var dismiss
-  @State private var prompt = ClaudeClient.defaultPrompt
+  @State private var prompt = ""
 
   private var trimmedPrompt: String {
     prompt.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -429,8 +442,8 @@ struct StartSessionView: View {
         Section {
           TextField("Prompt", text: $prompt, axis: .vertical)
             .lineLimit(3...10)
-          if prompt != ClaudeClient.defaultPrompt {
-            Button("Reset to default") { prompt = ClaudeClient.defaultPrompt }
+          if prompt != model.subject.defaultPrompt {
+            Button("Reset to default") { prompt = model.subject.defaultPrompt }
           }
         } header: {
           Text("Prompt for this session")
@@ -463,6 +476,7 @@ struct StartSessionView: View {
           .disabled(trimmedPrompt.isEmpty)
         }
       }
+      .onAppear { if prompt.isEmpty { prompt = model.subject.defaultPrompt } }
     }
   }
 }
