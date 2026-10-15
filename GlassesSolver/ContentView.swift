@@ -254,7 +254,7 @@ struct SettingsView: View {
           Text(
             model.subject == .math
               ? "Each problem is dictated line by line for you to copy."
-              : "Each answer is a letter (\"B, as in boy\") and the choice, with time to fill in the bubble."
+              : "Multiple choice is a letter (\"B, as in boy\") and the choice, with time to fill in the bubble. Work-shown problems are dictated line by line, units and all."
           )
         }
 
@@ -285,10 +285,7 @@ struct SettingsView: View {
               Image(systemName: "hare")
             }
           }
-          // Copying by hand only happens in math.
-          if model.subject == .math {
-            NavigationLink("Writing pauses") { WritingSettingsView(model: model) }
-          }
+          NavigationLink("Writing pauses") { WritingSettingsView(model: model) }
           Button("Test voice", systemImage: "speaker.wave.2") { model.testVoice() }
         } header: {
           Text("Voice")
@@ -296,7 +293,7 @@ struct SettingsView: View {
           Text(
             model.subject == .math
               ? "Double-tap the glasses' touchpad to hear the last line again."
-              : "Double-tap the glasses' touchpad to hear the last answer again.")
+              : "Double-tap the glasses' touchpad to hear the last answer or line again.")
         }
 
         Section {
@@ -453,10 +450,13 @@ private struct WritingSettingsView: View {
         Text("Each line is read a few words at a time, pausing while you write each part. Turn off part pauses to hear the whole line, then one pause.")
       }
 
-      Section {
-        Button("Test limit definition", systemImage: "function") { model.testLimitDefinition() }
-      } footer: {
-        Text("A long worked answer (about 7 minutes) to practice copying.")
+      // The practice answer is calculus; chemistry's Test voice already has a worked part.
+      if model.subject == .math {
+        Section {
+          Button("Test limit definition", systemImage: "function") { model.testLimitDefinition() }
+        } footer: {
+          Text("A long worked answer (about 7 minutes) to practice copying.")
+        }
       }
     }
     .navigationTitle("Writing pauses")
@@ -552,7 +552,8 @@ struct StartSessionView: View {
           Label("Press the capture button on the glasses frame to solve.", systemImage: "camera")
           Label("Tap the touchpad once to pause or resume.", systemImage: "hand.tap")
           Label(
-            model.subject == .math ? "Double-tap to hear the last line again." : "Double-tap to hear the last answer again.",
+            model.subject == .math
+              ? "Double-tap to hear the last line again." : "Double-tap to hear the last answer or line again.",
             systemImage: "hand.tap.fill")
           Label("Touch and hold the touchpad to end the session.", systemImage: "hand.raised")
           Label("You can leave the app or lock your phone.", systemImage: "lock.iphone")

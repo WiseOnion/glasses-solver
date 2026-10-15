@@ -3,7 +3,7 @@
 A small iPhone app. Tap **Solve**, and it takes a photo with your Ray-Ban Meta glasses, sends it to Claude (`claude-opus-5-5`), and speaks the answer through the glasses. **Settings → Subject** picks what the photos are:
 
 - **Math:** each problem's worked solution is dictated line by line, with time to copy it by hand (see "How the voice dictates").
-- **Chemistry** (multiple choice): each question gets its letter, said with a word so B, D and E can't be confused, and the choice read back, with a pause to fill in the bubble (see "Chemistry multiple choice").
+- **Chemistry:** a multiple-choice question gets its letter, said with a word so B, D and E can't be confused, and the choice read back, with a pause to fill in the bubble; a question that needs work shown (the dimensional analysis quiz) is dictated line by line like math, with units, unit cancellations and significant figures (see "Chemistry").
 
 You can also tap **Start Session** for hands-free use: the session stays open in the background, and each press of the **capture button** on the glasses frame does the same thing as Solve, with a prompt you can edit for that session.
 
@@ -169,9 +169,9 @@ Example: *"Write: u prime equals secant squared w"* as line 2 is heard as
 - **What the test covers (from the student).** The limit definition of the derivative will be on the test, along with the chain rule and all the log rules, so the prompt spells out how each must be answered: the limit definition step by step with the limit symbol kept until h is replaced and no shortcuts allowed (shortcuts earn no credit on those problems); the chain rule never stopping after the outside function; every log rule, expanded one rule per line before differentiating; and the derivatives of trig, exponential and log functions, including that a number like natural log of 7 differentiates to 0. It also covers evaluating a derivative at a point (a slope is f prime of the number, and the derivative of f of 3 is 0, which is not f prime of 3), implicit differentiation and related rates. Sources: common errors from [calculus misconception research](https://appspenang.uitm.edu.my/sigcs/2024-2/Articles/20244_ChainRuleErrorsInCompositeFunctionDifferentiation.pdf) (forgetting the inner derivative is the most common chain-rule error), [UBC's list of first-year calculus errors](https://personal.math.ubc.ca/~feldman/m100/warnings.pdf), and [Purdue's log-differentiation notes](https://www.math.purdue.edu/~msunkula/MA161/F25/Lesson17.html). **Settings → Writing pauses → Test limit definition** plays the practice test's problem 4 worked from the definition (about 7 minutes).
 These rules were checked in Python while being written, and `Tests/DictationTests.swift` runs the same cases on every push.
 
-## Chemistry multiple choice
+## Chemistry
 
-For CHM 106 (NC A&T) scantron tests. The answer to each question is one tagged line, `Answer:`, which plays the part a pen line plays in math: the app says "Question 7.", then the line once, then waits 2 s to fill in the bubble. A double-tap on the touchpad repeats it ("Again, question 7."), the written page shows it boxed under the question, and a photo taken partway through tells Claude which answers were heard. Its system prompt is `ClaudeClient.chemistrySystem`, run at high effort (math uses medium), since one wrong letter loses the whole question and the answers are short. It holds only what the course does its own way (the instructor's rules, tables and worked answers for chapters 2 to 6), not chemistry Claude already knows, so it stays about 5,000 tokens. It's cached for an hour, and the app writes it into the cache when it opens and when the subject changes, so the first photo of a test doesn't wait for it.
+For CHM 106 (NC A&T) tests and quizzes. The answer to each question is one tagged line, `Answer:`, which plays the part a pen line plays in math: the app says "Question 7.", then the line once, then waits 2 s to fill in the bubble. A double-tap on the touchpad repeats it ("Again, question 7."), the written page shows it boxed under the question, and a photo taken partway through tells Claude which answers were heard. Its system prompt is `ClaudeClient.chemistrySystem`, run at high effort (math uses medium), since one wrong letter loses the whole question and the answers are short. It holds only what the course does its own way (the instructor's rules, tables and worked answers for chapters 2 to 6), not chemistry Claude already knows, so it stays about 7,500 tokens with the pen-line rules it shares with math. It's cached for an hour, and the app writes it into the cache when it opens and when the subject changes, so the first photo of a test doesn't wait for it.
 
 | Finding | Setting |
 |---|---|
@@ -180,8 +180,28 @@ For CHM 106 (NC A&T) scantron tests. The answer to each question is one tagged l
 | The instructor's walkthrough of Practice Exam 2 (Fall 2022) counts only the highest-n electrons as valence (cadmium has 46 core electrons), unlike Tro's *Chemistry: Structure and Properties*, which counts d electrons as valence for transition metals. | The prompt follows the instructor, and lists the course's other methods from that walkthrough: periodic trends, ion charges, the conversion road map, empirical and molecular formulas, naming with Roman numerals and polyatomic ions, diamagnetism. |
 | LLMs do worst on multistep general chemistry (stoichiometry, configurations) ([ChemPro](https://arxiv.org/abs/2602.03108v1)), and multiple-choice distractors are usually the result of a skipped step. | Claude works out each answer before looking at the choices, checks every choice, and gives the closest one, saying so, when none matches. |
 
-**Settings → Test voice** plays questions 7, 10 and 13 of that practice exam in chemistry mode.
+### Worked chemistry problems
+
+A question with no choices (a blank to fill in, "work must be shown for credit") is dictated with the same pen lines as math: `ClaudeClient.penLineRules` is shared by both prompts, so step sentences, "Start line N", writing pauses, Check read-backs, Mark cross-outs, the box, double-tap repeat, the written page and checking a photo of your own work all work the same way. What chemistry adds:
+
+- Each conversion is one line: the given quantity, times each conversion factor as a stacked fraction, equals the result. A Mark line then crosses out the units that cancel, and the written page shows them struck through.
+- Decimals are said digit by digit with every zero ("0 point 2 9 0 meters"), since the zeros are significant figures.
+- Nothing is rounded in the middle. A part that starts from an earlier part's answer writes it with one extra digit, and only each part's answer line is rounded. Rounding each answer and reusing it changes the last digit of later parts.
+- A lettered part with no number is "Part A" out loud and on the written page, and a last Mark line says what goes in the printed blank.
+
+The dimensional analysis quiz (Fall 2023, a 0.290 m helium balloon at 1.786 × 10⁻⁴ g/cm³), checked in Python:
+
+| Part | Work | Answer |
+|---|---|---|
+| A | 0.290 m × 100 cm/1 m = 29.0 cm; r = 14.5 cm; V = 4/3 π (14.5 cm)³ = 12,770 cm³ | 1.28 × 10⁴ cm³ |
+| B | 1.277 × 10⁴ cm³ × 1.786 × 10⁻⁴ g/cm³ = 2.2807 g | 2.28 g |
+| C | 2.2807 g × 1 mol/4.003 g = 0.56975 mol | 0.570 mol |
+| D | 0.56975 mol × 6.022 × 10²³ atoms/mol = 3.431 × 10²³ | 3.43 × 10²³ atoms |
+
+Rounding each part before reusing it gives 2.29 g, 0.572 mol and 3.44 × 10²³, which the prompt steers away from. Using 4.00 g/mol for helium gives the same answers.
+
+**Settings → Test voice** plays questions 7 and 13 of the practice exam and part B of the quiz in chemistry mode.
 
 ## Settings layout
 
-Organized the usual way ([Nielsen Norman Group, progressive disclosure](https://www.nngroup.com/articles/progressive-disclosure/); [Android settings guidelines](https://source.android.com/docs/core/settings/settings-guidelines)): the first screen holds only what's changed often (Subject, Fast answers, Sharper photos, the voice and its speed, Test voice), each row showing its current value; details are one level down (Voice, Writing pauses for math, the API key) and never deeper; rarely used options sit under **Advanced** (Test mode, Diagnostics log, Disconnect). Footers are one or two sentences.
+Organized the usual way ([Nielsen Norman Group, progressive disclosure](https://www.nngroup.com/articles/progressive-disclosure/); [Android settings guidelines](https://source.android.com/docs/core/settings/settings-guidelines)): the first screen holds only what's changed often (Subject, Fast answers, Sharper photos, the voice and its speed, Test voice), each row showing its current value; details are one level down (Voice, Writing pauses, the API key) and never deeper; rarely used options sit under **Advanced** (Test mode, Diagnostics log, Disconnect). Footers are one or two sentences.

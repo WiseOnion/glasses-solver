@@ -182,7 +182,12 @@ struct WrittenAnswer: Equatable {
         }
         return step
       }
-      return ["label": problem.label, "word": problem.isQuestion ? "Question" : "Problem", "lines": lines]
+      // "part A" is headed "Part A", not "Problem part A".
+      let isPart = problem.label.lowercased().hasPrefix("part ")
+      return [
+        "label": isPart ? String(problem.label.dropFirst(5)) : problem.label,
+        "word": isPart ? "Part" : problem.isQuestion ? "Question" : "Problem", "lines": lines,
+      ]
     }
     guard let json = try? JSONSerialization.data(withJSONObject: data) else { return "[]" }
     return String(decoding: json, as: UTF8.self)

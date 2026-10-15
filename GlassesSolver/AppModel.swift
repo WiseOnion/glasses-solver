@@ -57,16 +57,25 @@ final class AppModel {
     Done.
     """
 
-  /// A multiple-choice chemistry answer in the style its system prompt asks for: questions 7,
-  /// 10 and 13 of the CHM 106 practice exam.
+  /// A chemistry answer in the style its system prompt asks for: questions 7 and 13 of the
+  /// CHM 106 practice exam (multiple choice), then part B of the dimensional analysis quiz
+  /// (work shown), so both kinds are heard.
   private static let chemistrySampleAnswer = """
-    I can see questions 7, 10 and 13.
+    I can see questions 7 and 13, and part B.
     Problem: 7
     Answer: B, as in boy. Krypton core, 5 ess 2, 4 dee 10, 5 pee 5. || \\text{B}\\quad [\\mathrm{Kr}]\\,5s^2\\,4d^{10}\\,5p^5
-    Problem: 10
-    Answer: B, as in boy. Sodium plus, then rubidium plus, then bromine minus. || \\text{B}\\quad \\mathrm{Na^+ < Rb^+ < Br^-}
     Problem: 13
     Answer: D, as in dog. 1.56 times 10 to the 23rd. || \\text{D}\\quad 1.56\\times10^{23}
+    Problem: part B
+    This is the mass of helium in the balloon, from its density.
+    You'll write two lines.
+    First, use the density to get grams.
+    Write: mass equals, 1 point 2 7 7 times 10 to the 4th cubic centimeters, times, 1 point 7 8 6 times 10 to the negative 4th grams over 1 cubic centimeter, equals, 2 point 2 8 0 7 grams || m = 1.277\\times10^{4}\\text{ cm}^3 \\times \\frac{1.786\\times10^{-4}\\text{ g}}{1\\text{ cm}^3} = 2.2807\\text{ g}
+    Mark: On line 1, cross out both cubic centimeters, the one after 10 to the 4th and the one on the bottom. || line 1: m = 1.277\\times10^{4}\\,\\cancel{\\text{cm}^3} \\times \\frac{1.786\\times10^{-4}\\text{ g}}{1\\,\\cancel{\\text{cm}^3}} = 2.2807\\text{ g}
+    Now round to three significant figures. This is the answer.
+    Write: mass equals, 2 point 2 8 grams || m = 2.28\\text{ g}
+    Mark: Draw a box around line 2.
+    Mark: In the blank for part B, write 2 point 2 8.
     Done.
     """
 
@@ -783,7 +792,7 @@ final class AppModel {
         // listener's own work can be checked and continued from where they stopped.
         let previous = lastAnswerTime.map { Date.now.timeIntervalSince($0) < Self.followUpWindow } == true
           ? lastAnswer : nil
-        let stopNote = previous == nil ? nil : stoppedAt.map { Self.describeStop($0, subject: subject) }
+        let stopNote = previous == nil ? nil : stoppedAt.map { Self.describeStop($0) }
         if previous != nil { diag("solve", "sending as a follow-up to the last answer. \(stopNote ?? "It was heard to the end.")") }
         reply = try await ClaudeClient(apiKey: apiKey, subject: subject, fast: fastAnswers).solve(
           photo: photo, prompt: prompt, previousAnswer: previous, stoppedAt: stopNote,
@@ -881,20 +890,9 @@ final class AppModel {
     diag("timing", timing.summary)
   }
 
-  /// Tells Claude how much of its last answer was heard before a new photo cut it short.
-  nonisolated static func describeStop(_ progress: Speaker.Progress, subject: ClaudeClient.Subject = .math) -> String {
-    if subject == .chemistry {
-      // Each question has one line: its answer.
-      let heard =
-        if progress.line == 0 {
-          "I'd heard you start problem \(progress.problem), but not its answer"
-        } else if progress.lineFinished {
-          "I'd heard the answer to problem \(progress.problem)"
-        } else {
-          "I'd heard only part of the answer to problem \(progress.problem)"
-        }
-      return "Your answers were cut short when I took this photo: \(heard), and nothing after that."
-    }
+  /// Tells Claude how much of its last answer was heard before a new photo cut it short. A
+  /// multiple-choice question's one line is its answer (the chemistry prompt says so).
+  nonisolated static func describeStop(_ progress: Speaker.Progress) -> String {
     let heard =
       if progress.line == 0 {
         "I'd heard you start problem \(progress.problem), but none of its lines yet"

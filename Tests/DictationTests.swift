@@ -419,4 +419,19 @@ final class DictationTests: XCTestCase {
     XCTAssertEqual(
       speaker.queued.map(\.text), ["I can see question 4.", "Question 4.", "E, as in egg. 3 plus.", "Done."])
   }
+
+  /// A lettered part with no number is "Part A", in any subject, out loud and in notices.
+  func testLetteredPartName() {
+    XCTAssertEqual(Speaker.itemName("part A", itemWord: "Question"), "Part A")
+    XCTAssertEqual(Speaker.itemName("5, part A", itemWord: "Problem"), "Problem 5, part A")
+    XCTAssertEqual(Speaker.itemName("7", itemWord: "Question"), "Question 7")
+    XCTAssertTrue(
+      Speaker.cutOffNotice(.dropped, answer: "Problem: part B", itemWord: "Question")
+        .hasSuffix("Take a new photo of part B and any after it."))
+    let speaker = Speaker()
+    defer { speaker.stop() }
+    speaker.itemWord = "Question"
+    speaker.speak("Problem: part a\nThis is the volume.\nWrite: r equals, 14 point 5 centimeters || r = 14.5\\text{ cm}")
+    XCTAssertEqual(speaker.queued.first?.text, "Part A.")
+  }
 }

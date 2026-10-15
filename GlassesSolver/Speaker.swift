@@ -569,7 +569,7 @@ final class Speaker: NSObject {
     let cue =
       switch line.kind {
       case .mark: again + "."
-      case .choice: again + ", \(itemWord.lowercased()) \(heardProblem ?? "")."
+      case .choice: again + ", \(Self.itemName(heardProblem ?? "", itemWord: itemWord).lowercased())."
       default: again + ", line \(line.number)."
       }
     var repeated = dictation(line, cue: cue, slowdown: slowdown, inParts: true)
@@ -927,8 +927,9 @@ final class Speaker: NSObject {
     guard let lastProblem else {
       return "Stop. \(what) before the first \(item). Take the photo again."
     }
-    return "Stop. \(what) partway through \(item) \(lastProblem), so its last line may be unfinished. "
-      + "Take a new photo of \(item) \(lastProblem) and any after it."
+    let name = itemName(lastProblem, itemWord: itemWord).lowercased()
+    return "Stop. \(what) partway through \(name), so its last line may be unfinished. "
+      + "Take a new photo of \(name) and any after it."
   }
 
   // MARK: - Turning an answer into speech
@@ -963,7 +964,8 @@ final class Speaker: NSObject {
       let prose = flushProse(beforeWrite: true)
       buildingProblem = label
       let pause = itemWord == "Problem" ? Self.problemPause : Self.questionPause
-      return prose + [Segment(text: "\(itemWord) \(label).", rate: rate, pauseAfter: pause, penLine: nil)]
+      let name = Self.itemName(label, itemWord: itemWord)
+      return prose + [Segment(text: "\(name).", rate: rate, pauseAfter: pause, penLine: nil)]
     }
     if let answer = Self.answerLine(in: paragraph) {
       // A multiple-choice answer: said once, then time to fill in the bubble. It counts as the
@@ -1090,6 +1092,12 @@ final class Speaker: NSObject {
   static func startingLine(in label: String) -> Int? {
     guard let range = label.range(of: #"(?<=\bline )\d+$"#, options: .regularExpression) else { return nil }
     return Int(label[range]).map { max($0, 1) }
+  }
+
+  /// What a problem is called out loud: "Problem 4", "Question 7", or just "Part A" for a
+  /// lettered part with no number ("Question part A" would sound wrong).
+  static func itemName(_ label: String, itemWord: String) -> String {
+    label.lowercased().hasPrefix("part ") ? "Part\(label.dropFirst(4))" : "\(itemWord) \(label)"
   }
 
   /// The label after "Problem:" ("4", "number 7") if this paragraph starts a problem.

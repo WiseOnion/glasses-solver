@@ -462,22 +462,24 @@ final class ClaudeClientTests: XCTestCase {
     XCTAssertEqual(text, note + " " + ClaudeClient.followUpPrompt)
   }
 
-  /// On a multiple-choice test each question's one line is its answer, so the note says which
-  /// answers were heard, and the follow-up asks about the answer sheet, not handwritten work.
-  func testChemistryStopNoteAndFollowUp() throws {
+  /// A chemistry photo can show the answer sheet or handwritten work on a worked problem, so
+  /// the follow-up asks about both.
+  func testChemistryFollowUp() throws {
     let jpeg = try XCTUnwrap(ClaudeClient.preparedJPEG(from: TestImages.jpeg()))
-    XCTAssertEqual(
-      AppModel.describeStop(.init(problem: "9", line: 1, lineFinished: true), subject: .chemistry),
-      "Your answers were cut short when I took this photo: I'd heard the answer to problem 9, and nothing after that.")
-    XCTAssertTrue(
-      AppModel.describeStop(.init(problem: "9", line: 0, lineFinished: false), subject: .chemistry)
-        .contains("but not its answer"))
     let body = ClaudeClient.body(
       jpeg: jpeg, prompt: "Answer", previousAnswer: "Problem: 9\nAnswer: A, as in apple.", subject: .chemistry)
     let messages = try XCTUnwrap(body["messages"] as? [[String: Any]])
     let text = (messages[2]["content"] as? [[String: Any]])?.last?["text"] as? String
     XCTAssertEqual(text, ClaudeClient.Subject.chemistry.followUpPrompt)
     XCTAssertTrue(text?.contains("answer sheet") == true)
+    XCTAssertTrue(text?.contains("my own work") == true)
+  }
+
+  /// Chemistry shares math's pen-line rules, so worked problems are dictated the same way.
+  func testChemistryPromptHasWorkedProblems() {
+    XCTAssertTrue(ClaudeClient.chemistrySystem.contains(ClaudeClient.penLineRules))
+    XCTAssertTrue(ClaudeClient.system.contains(ClaudeClient.penLineRules))
+    XCTAssertTrue(ClaudeClient.chemistrySystem.contains("DIMENSIONAL ANALYSIS"))
   }
 
   func testOverloadIsRetriedOnce() async throws {
