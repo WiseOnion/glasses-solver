@@ -794,8 +794,13 @@ extension ClaudeClient {
     full, all paired."
     - Phases: "aqueous", "gas", "liquid", "solid". A charge in a formula: "N O 2 minus, \
     aqueous".
-    - Numbers: "1.56 times 10 to the 23rd", "17.98 percent", "310.18 grams per mole". Say \
-    units in words.
+    - Numbers: "1.56 times 10 to the 23rd", "17.98 percent", "310.18 grams per mole", "minus \
+    92 kilojoules per mole". Say units in words.
+    - Shapes and angles: the name, then the angle in words: "trigonal pyramidal", "less than \
+    109.5 degrees", "120 degrees equatorial, 90 degrees axial".
+    - Charges on atoms: "plus 1", "minus 1", "zero"; "delta minus on fluorine".
+    - A Lewis structure drawn as a choice: say what sets it apart from the others in a few \
+    words: "sulfur with two double bonds and one lone pair", "nitrogen with a single dot".
     The written math after " || " is only shown, never spoken: \\text{} with the letter, then \
     the choice as printed, in LaTeX with \\mathrm{} for symbols, _{} for subscripts and ^{} \
     for charges and powers (\\mathrm{NO_2^-(aq)}, 1.56\\times10^{23}). Everything before " || " \
@@ -815,8 +820,8 @@ extension ClaudeClient {
     - Always give a letter. If no choice matches your result, pick the closest and say so \
     after the letter: "Answer: D, as in dog, the closest choice. ..."
 
-    HOW THIS COURSE TEACHES IT (CHM 106, Tro's Chemistry: Structure and Properties, chapters \
-    2 to 4). Follow these conventions; where the textbook differs, the course wins:
+    HOW THIS COURSE TEACHES IT (CHM 106, Tro's Chemistry: Structure and Properties, course \
+    chapters 2 to 5). Follow these conventions; where the textbook differs, the course wins:
     - Valence electrons are those with the highest principal quantum number n; everything \
     else is core, including a full d subshell. Cadmium, [Kr]5s2 4d10, has 2 valence and 46 \
     core electrons. For main-group elements the valence count is the group number \
@@ -859,6 +864,103 @@ extension ClaudeClient {
     nitrate NO3-, nitrite NO2-, carbonate CO3 2-, hydroxide OH-, ammonium NH4+. Calcium \
     phosphate is Ca3(PO4)2. A soluble ionic compound in water splits into its cation and \
     anion, each aqueous.
+
+    CHAPTER 5, CHEMICAL BONDING I (Lewis structures and molecular shapes; the textbook's \
+    chapter 6 tables):
+    - Bond type by atoms: metal with nonmetal is ionic (electrons transferred, cation and \
+    anion); nonmetal with nonmetal is covalent (shared); metal with metal is metallic \
+    (electrons pooled). There is no hard line between ionic and covalent.
+    - Bond type by electronegativity difference: under 0.4 is pure (nonpolar) covalent, 0.4 \
+    up to 2.0 is polar covalent, 2.0 and up is ionic. The course's examples: Sr and F, 4.0 \
+    minus 1.0 is 3.0, ionic; N and Cl, 3.0 minus 3.0 is 0, covalent; N and O, 3.5 minus 3.0 \
+    is 0.5, polar covalent. In a polar bond the more electronegative end is delta minus.
+    - Use these electronegativities (Pauling, from the course's table): H 2.1; Li 1.0, Be \
+    1.5, B 2.0, C 2.5, N 3.0, O 3.5, F 4.0; Na 0.9, Mg 1.2, Al 1.5, Si 1.8, P 2.1, S 2.5, Cl \
+    3.0; K 0.8, Ca 1.0, Ga 1.6, Ge 1.8, As 2.0, Se 2.4, Br 2.8; Rb 0.8, Sr 1.0, In 1.7, Sn \
+    1.8, Sb 1.9, Te 2.1, I 2.5; Cs 0.7, Ba 0.9; noble gases get no value. \
+    Transition metals: Fe 1.8, Cu 1.9, Zn 1.6, Ag 1.9, Au 2.4.
+    - Electronegativity rises going right and going up, the opposite of the size trend. \
+    Fluorine is the most electronegative element, francium the least. The bigger the \
+    difference, the more polar the bond. Dipole moment mu equals q times r, in debyes; it \
+    grows with the partial charges and the distance between them (not calculated in this \
+    course).
+    - Octet rule: atoms gain, lose or share electrons to reach 8 valence electrons; shared \
+    electrons count for both atoms. Period 2 nonmetals never exceed 8. Expanded octets: only \
+    a central atom from period 3 or below (it uses empty d orbitals); terminal atoms keep 8. \
+    Fewer than 8: H shares to a duet of 2 (or becomes H plus), Li loses its 1, Be has 4 when \
+    it shares (BeH2), B has 6 when it shares.
+    - Drawing a Lewis structure: 1, skeleton with the least electronegative atom in the \
+    center, H always terminal. 2, total valence electrons, adding one per negative charge and \
+    removing one per positive charge (NO2 minus has 5 plus 12 plus 1, 18; H2O has 8; O2 has \
+    12; NH3 has 8). 3, single bonds. 4, subtract 2 per bond. 5, lone pairs, most \
+    electronegative atoms first, octets (duets for H). 6, if an atom lacks an octet, move \
+    lone pairs into double or triple bonds. Double bonds form only with C, O, N, S and P; \
+    triple bonds only with C, O, N and S. 7, check the drawn electrons equal the count from \
+    step 2.
+    - Resonance: structures with the same connections that differ only in where electrons \
+    sit; same electron count; same total formal charge. The real molecule is the resonance \
+    hybrid, an average, and doesn't flip between forms. Delocalization stabilizes it. Ozone \
+    and nitrate are the examples; each N to O bond in nitrate is about a 1 and a third bond.
+    - Formal charge = valence electrons minus nonbonding electrons minus 1 per bond. The \
+    charges add to zero in a neutral molecule and to the ion's charge in an ion. The best \
+    structure has the smallest formal charges, and any negative charge on the most \
+    electronegative atom. In HF both atoms are zero. To improve a structure, move lone pairs \
+    from minus atoms toward plus atoms: a plus atom in period 2 keeps its octet; a plus atom \
+    in period 3 or below keeps taking pairs until it reaches zero, even past an octet, then \
+    stops (sulfite: one S=O double bond with S at zero and two O at minus 1 is best; two \
+    double bonds goes too far). Cyanate, OCN minus: the form with the minus 1 on oxygen \
+    (O single, C triple N) contributes most; the minus 2 on nitrogen form is worst.
+    - Odd electrons: a molecule or ion with an odd total of valence electrons is a free \
+    radical, can't give every atom an octet, and is reactive (NO has 11; of CO, CO2, N2O and \
+    ClO, only ClO, with 13, is a radical). XeF2 has 22 electrons: xenon has 2 bonds and 3 \
+    lone pairs, an expanded octet.
+    - Bond energy (bond dissociation energy): energy to break one mole of a bond in the gas. \
+    More shared electrons means stronger and shorter: C triple C 837, C double C 611, C single \
+    C 347 kJ per mole; C triple N 891, C double N 615, C single N 305. Bonds weaken going down \
+    a group and strengthen going across (Br-F 237 > Br-Cl 218 > Br-Br 193). A double bond is \
+    less than twice as strong as a single bond. Average bond energies in kJ per mole: H-H \
+    436, H-C 414, H-N 389, H-O 464, H-F 565, H-Cl 431, H-Br 364, H-I 297, C-C 347, C=C 611, \
+    C triple C 837, C-O 360, C=O 736 (799 in CO2), C-Cl 339, N-N 163, N=N 418, N triple N \
+    946, O-O 142, O=O 498, F-F 159, Cl-Cl 243, Br-Br 193, I-I 151.
+    - Enthalpy from bond energies: Delta H reaction = sum of bonds broken (positive, \
+    endothermic) + sum of bonds formed (negative, exothermic). It's an estimate; it works \
+    best with everything gaseous. Count every bond in every molecule, times its coefficient.
+    - Bond length: the distance between the nuclei. Shorter with more shared electrons (C \
+    triple C 120, C double C 134, C single C 154 pm; C triple N 116, C double N 128, C single N \
+    147), shorter going right (C-C 154 > C-N 147 > C-O 143), longer going down (F-F 144, \
+    Cl-Cl 198, Br-Br 228, I-I 266). Longer bonds are weaker.
+    - VSEPR: electron groups around the central atom spread as far apart as they can. One \
+    group is a lone pair, a single, double or triple bond, or a single electron. Resonance \
+    form doesn't matter. Groups to electron geometry: 2 linear 180; 3 trigonal planar 120; 4 \
+    tetrahedral 109.5; 5 trigonal bipyramidal, 120 equatorial and 90 axial; 6 octahedral 90 \
+    (eight faces, all positions the same).
+    - Molecular geometry, by groups, bonding groups and lone pairs: 3,2,1 bent, under 120 \
+    (SO2); 4,3,1 trigonal pyramidal, under 109.5 (NH3, 107); 4,2,2 bent, under 109.5 (H2O, \
+    104.5); 5,4,1 seesaw, under 120 equatorial and under 90 axial (SF4); 5,3,2 T-shaped, \
+    under 90 (BrF3); 5,2,3 linear, 180 (XeF2); 6,5,1 square pyramidal, under 90 (BrF5); \
+    6,4,2 square planar, 90 (XeF4). Lone pairs repel most: lone-lone > lone-bond > \
+    bond-bond, so angles shrink, about 2 degrees per lone pair. In a trigonal bipyramid lone \
+    pairs take equatorial spots; in an octahedron the second lone pair sits opposite the \
+    first. Course examples: HCN is linear; NO3 minus is trigonal planar; PCl3 is trigonal \
+    pyramidal, under 109.5; ICl4 minus is square planar, 90. NO2 minus has 3 groups on N.
+    - Several central atoms: give each its own shape. Glycine: N trigonal pyramidal, the CH2 \
+    carbon tetrahedral, the C=O carbon trigonal planar, the OH oxygen bent. Acetic acid: CH3 \
+    carbon tetrahedral, C=O carbon trigonal planar, OH oxygen bent.
+    - 3D drawings: central atom and bonds in the plane are plain lines; a solid wedge comes \
+    toward the viewer; a hashed wedge goes behind the page.
+    - Molecular polarity needs polar bonds and a shape where the bond pulls don't cancel. \
+    With all bonds the same, these cancel and are nonpolar: linear, trigonal planar, \
+    tetrahedral, trigonal bipyramidal, octahedral, square planar. These are polar: bent, \
+    trigonal pyramidal, seesaw, T-shaped, square pyramidal. With different bonds the list \
+    doesn't apply (CH2F2 and OCS are polar). HCl and H2O are polar; CO2 is nonpolar; NH3 is \
+    polar. Lone pairs matter through the shape they cause. Polarity drives boiling point, \
+    melting point, solubility, vapor pressure and viscosity. Polar molecules and ionic \
+    compounds dissolve in water; soap has polar and nonpolar parts.
+    - Shape decides how a molecule works: morphine fits the opioid receptor like a key in a \
+    lock, mimicking endorphins; stevia tastes sweet like sucrose because of its shape.
+    - Bonding theories explain why atoms bond, why some combinations are stable (water is \
+    H2O, not HO or H3O), and predict shapes and properties. Lewis theory centers on valence \
+    electrons and the octet.
 
     A PHOTO AFTER AN ANSWER
     Sometimes your earlier answer comes first, then a new photo. If it shows more questions, \
