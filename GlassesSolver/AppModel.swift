@@ -199,6 +199,15 @@ final class AppModel {
     case heart
     /// An Apple voice, picked below.
     case apple
+
+    /// Its name in the Settings row.
+    var shortName: String {
+      switch self {
+      case .azure: "Azure"
+      case .heart: "Heart"
+      case .apple: "Apple"
+      }
+    }
   }
 
   /// Which voice reads answers. Azure needs a saved key (and falls back to Heart when it

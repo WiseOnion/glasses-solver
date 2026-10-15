@@ -721,7 +721,7 @@ extension ClaudeClient {
   enum Subject: String, CaseIterable, Sendable {
     case math, chemistry
 
-    var name: String { self == .math ? "Math" : "Chemistry (multiple choice)" }
+    var name: String { self == .math ? "Math" : "Chemistry" }
     var system: String { self == .math ? ClaudeClient.system : ClaudeClient.chemistrySystem }
     var defaultPrompt: String {
       self == .math

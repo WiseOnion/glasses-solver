@@ -236,24 +236,12 @@ struct ContentView: View {
   }
 }
 
+/// Settings, organized the usual way (Nielsen Norman Group on progressive disclosure; Android's
+/// settings guidelines): the few things changed most on the first screen, each showing its
+/// current value; details one level down, never deeper; rarely used options under Advanced.
 struct SettingsView: View {
   @Bindable var model: AppModel
   @Environment(\.dismiss) private var dismiss
-  @State private var keyDraft = ""
-  @State private var azureKeyDraft = ""
-  /// Re-read when Settings opens, so newly downloaded voices show up.
-  @State private var voices: [(id: String, label: String)] = []
-  @Environment(\.scenePhase) private var scenePhase
-
-  /// The end of the Voice footer: how answers are paced, and what a double-tap repeats.
-  private var subjectVoiceNote: String {
-    if model.subject == .chemistry {
-      return "Double-tap the glasses' touchpad to hear the last answer again; double-tap again for slower."
-    }
-    return "Answers dictate each line to write a few words at a time and pause while you write each part "
-      + "(turn off \"Pause after each part\" to hear the whole line first, then one pause). "
-      + "Double-tap the glasses' touchpad to hear the last line again; double-tap again for slower."
-  }
 
   var body: some View {
     NavigationStack {
@@ -265,95 +253,28 @@ struct SettingsView: View {
         } footer: {
           Text(
             model.subject == .math
-              ? "Math: each problem is dictated line by line for you to copy by hand."
-              : "Chemistry: each question gets its letter, said with a word (\"B, as in boy\"), "
-                + "and the choice read back, with a pause to fill in the bubble."
+              ? "Each problem is dictated line by line for you to copy."
+              : "Each answer is a letter (\"B, as in boy\") and the choice, with time to fill in the bubble."
           )
-        }
-
-        Section {
-          SecureField("sk-ant-…", text: $keyDraft)
-            .textInputAutocapitalization(.never)
-            .autocorrectionDisabled()
-          Button("Save key") {
-            model.saveAPIKey(keyDraft)
-            keyDraft = ""
-          }
-          .disabled(keyDraft.trimmingCharacters(in: .whitespaces).isEmpty)
-          if model.hasAPIKey {
-            Button("Delete saved key", role: .destructive) { model.deleteAPIKey() }
-          }
-        } header: {
-          Text("Anthropic API key")
-        } footer: {
-          Text(model.hasAPIKey ? "A key is saved in the Keychain on this phone." : "No key saved yet.")
         }
 
         Section {
           Toggle("Fast answers", isOn: $model.fastAnswers)
+          Toggle("Sharper photos", isOn: $model.useHighResPhoto)
+        } header: {
+          Text("Answers")
         } footer: {
           Text(
-            "Claude's fast mode: the same model, just as careful, but it thinks and writes "
-              + "about twice as fast, so the first words come sooner. It costs twice as much per answer. "
-              + "If your account can't use it, standard speed is used automatically."
-          )
+            "Fast answers start about twice as soon and cost twice as much. Sharper photos read small print "
+              + "better but take a few seconds longer.")
         }
 
         Section {
-          Toggle("Test mode (no Claude)", isOn: $model.testMode)
-        } footer: {
-          Text(
-            "Runs everything (glasses, photo, speech) but skips Claude, so it's free. You'll hear a sample answer. "
-              + "With the phone locked it waits 35 seconds first, longer than iOS normally lets a background app run, "
-              + "so hearing the answer means the app stays running."
-          )
-        }
-
-        Section {
-          Picker("Voice", selection: $model.voiceEngine) {
-            Text("Azure (online, clearest)").tag(AppModel.VoiceEngine.azure)
-            if model.hasNeuralVoice {
-              Text("Heart (built in, offline)").tag(AppModel.VoiceEngine.heart)
-            }
-            Text("Apple").tag(AppModel.VoiceEngine.apple)
+          NavigationLink {
+            VoiceSettingsView(model: model)
+          } label: {
+            LabeledContent("Voice", value: model.voiceEngine.shortName)
           }
-          if model.voiceEngine == .azure {
-            Picker("Azure voice", selection: $model.azureVoiceName) {
-              ForEach(AppModel.azureVoices, id: \.self) { id in
-                Text(Speaker.azureVoiceName(id)).tag(id)
-              }
-            }
-            TextField("Region, such as eastus", text: $model.azureRegion)
-              .textInputAutocapitalization(.never)
-              .autocorrectionDisabled()
-            SecureField(model.hasAzureKey ? "Azure key saved" : "Azure Speech key", text: $azureKeyDraft)
-              .textInputAutocapitalization(.never)
-              .autocorrectionDisabled()
-            Button("Save Azure key") {
-              model.saveAzureKey(azureKeyDraft)
-              azureKeyDraft = ""
-            }
-            .disabled(azureKeyDraft.trimmingCharacters(in: .whitespaces).isEmpty)
-            if model.hasAzureKey {
-              Button("Delete Azure key", role: .destructive) { model.deleteAzureKey() }
-            }
-          }
-          if model.voiceEngine == .apple {
-            Picker("Apple voice", selection: $model.voiceIdentifier) {
-              Text("Automatic (best installed)").tag(String?.none)
-              // Keep a saved voice in the list even when iOS isn't offering it right now, so
-              // the choice isn't lost and you can see it's still selected.
-              if let saved = model.voiceIdentifier, !voices.contains(where: { $0.id == saved }) {
-                Text("Your saved voice (not available right now)").tag(String?.some(saved))
-              }
-              ForEach(voices, id: \.id) { voice in
-                Text(voice.label).tag(String?.some(voice.id))
-              }
-            }
-          }
-          Button("Preview voice", systemImage: "play.circle") { model.previewVoice() }
-          Button("Compare voices", systemImage: "person.2.wave.2") { model.compareVoices() }
-          Button("Match speed to 150 words a minute", systemImage: "gauge.with.needle") { model.matchSpeed() }
           VStack(alignment: .leading) {
             Text("Speaking speed")
             Slider(value: $model.speechRate, in: Speaker.rateRange) {
@@ -364,81 +285,242 @@ struct SettingsView: View {
               Image(systemName: "hare")
             }
           }
-          // Writing time only applies to math, which is copied by hand.
+          // Copying by hand only happens in math.
           if model.subject == .math {
-            VStack(alignment: .leading) {
-              Text("Time to write each line")
-              Slider(value: $model.writingTime, in: Speaker.writingTimeRange) {
-                Text("Time to write each line")
-              } minimumValueLabel: {
-                Text("Less").font(.caption)
-              } maximumValueLabel: {
-                Text("More").font(.caption)
-              }
-            }
-            Toggle("Pause after each part of a line", isOn: $model.dictateInParts)
+            NavigationLink("Writing pauses") { WritingSettingsView(model: model) }
           }
           Button("Test voice", systemImage: "speaker.wave.2") { model.testVoice() }
-          if model.subject == .math {
-            Button("Test limit definition", systemImage: "function") { model.testLimitDefinition() }
-          }
-          Button(model.subject == .math ? "Reset speed and writing time" : "Reset speed") {
-            model.speechRate = Speaker.defaultRate
-            model.writingTime = 1
-          }
-          .disabled(model.speechRate == Speaker.defaultRate && (model.subject != .math || model.writingTime == 1))
         } header: {
           Text("Voice")
         } footer: {
           Text(
-            "Using \(model.voiceDescription). Azure is the clearest: it needs internet and your own free key "
-              + "(portal.azure.com, a Speech resource on the Free F0 tier; copy its key and region), and uses Heart "
-              + "when it can't be reached. Heart runs inside the app and works offline. "
-              + "Enhanced and Premium voices sound far more natural than Default "
-              + "ones. Download them in iOS Settings → Accessibility → Read & Speak → Voices → English (for "
-              + "example Ava, Zoe or Evan, Premium), then come back here and pick one. Compare voices reads "
-              + "one real line of dictation in each voice, so you can choose by ear; Match speed sets the "
-              + "current voice to about 150 words a minute. " + subjectVoiceNote
-          )
+            model.subject == .math
+              ? "Double-tap the glasses' touchpad to hear the last line again."
+              : "Double-tap the glasses' touchpad to hear the last answer again.")
         }
 
         Section {
-          Toggle("High-resolution photo (experimental)", isOn: $model.useHighResPhoto)
-        } footer: {
-          Text("Uses the SDK's experimental standalone photo capture. Sharper for small print, but slower to transfer.")
-        }
-
-        Section {
-          NavigationLink("Diagnostics log") { DiagnosticsView() }
-        } footer: {
-          Text("Session, capture-button and error details. Copy it and send it along when reporting a problem.")
-        }
-
-        if model.isRegistered {
-          Section {
-            Button("Disconnect glasses from this app", role: .destructive) {
-              model.disconnectGlasses()
+          NavigationLink {
+            APIKeySettingsView(model: model)
+          } label: {
+            LabeledContent("Anthropic API key") {
+              Text(model.hasAPIKey ? "Saved" : "Not set")
+                .foregroundStyle(model.hasAPIKey ? Color.secondary : Color.red)
+            }
+          }
+          NavigationLink {
+            AdvancedSettingsView(model: model)
+          } label: {
+            VStack(alignment: .leading, spacing: 2) {
+              Text("Advanced")
+              Text("Test mode, diagnostics, disconnect")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
             }
           }
         }
       }
       .navigationTitle("Settings")
-      .onAppear {
-        voices = model.availableVoices
-        model.logInstalledVoices()
-      }
-      .onChange(of: scenePhase) { _, phase in
-        if phase == .active { voices = model.availableVoices }
-      }
-      // Apple's recommended signal: voices downloaded (in Settings or apps like Piper) or deleted.
-      .onReceive(NotificationCenter.default.publisher(for: AVSpeechSynthesizer.availableVoicesDidChangeNotification)) { _ in
-        voices = model.availableVoices
-        model.logInstalledVoices()
-      }
       .toolbar {
         Button("Done") { dismiss() }
       }
     }
+  }
+}
+
+/// Which voice reads answers, and the tools for choosing one by ear.
+private struct VoiceSettingsView: View {
+  @Bindable var model: AppModel
+  @State private var azureKeyDraft = ""
+  /// Re-read when this opens, so newly downloaded voices show up.
+  @State private var voices: [(id: String, label: String)] = []
+  @Environment(\.scenePhase) private var scenePhase
+
+  var body: some View {
+    Form {
+      Section {
+        Picker("Voice", selection: $model.voiceEngine) {
+          Text("Azure (online, clearest)").tag(AppModel.VoiceEngine.azure)
+          if model.hasNeuralVoice {
+            Text("Heart (built in, offline)").tag(AppModel.VoiceEngine.heart)
+          }
+          Text("Apple").tag(AppModel.VoiceEngine.apple)
+        }
+        .pickerStyle(.inline)
+        .labelsHidden()
+      } footer: {
+        Text("Using \(model.voiceDescription).")
+      }
+
+      if model.voiceEngine == .azure {
+        Section {
+          Picker("Azure voice", selection: $model.azureVoiceName) {
+            ForEach(AppModel.azureVoices, id: \.self) { id in
+              Text(Speaker.azureVoiceName(id)).tag(id)
+            }
+          }
+          TextField("Region, such as eastus", text: $model.azureRegion)
+            .textInputAutocapitalization(.never)
+            .autocorrectionDisabled()
+          SecureField(model.hasAzureKey ? "Azure key saved" : "Azure Speech key", text: $azureKeyDraft)
+            .textInputAutocapitalization(.never)
+            .autocorrectionDisabled()
+          Button("Save Azure key") {
+            model.saveAzureKey(azureKeyDraft)
+            azureKeyDraft = ""
+          }
+          .disabled(azureKeyDraft.trimmingCharacters(in: .whitespaces).isEmpty)
+          if model.hasAzureKey {
+            Button("Delete Azure key", role: .destructive) { model.deleteAzureKey() }
+          }
+        } header: {
+          Text("Azure")
+        } footer: {
+          Text(
+            "Needs internet and your own free key: portal.azure.com, a Speech resource on the Free F0 tier. "
+              + "Heart is used when Azure can't be reached.")
+        }
+      }
+
+      if model.voiceEngine == .apple {
+        Section {
+          Picker("Apple voice", selection: $model.voiceIdentifier) {
+            Text("Automatic (best installed)").tag(String?.none)
+            // Keep a saved voice in the list even when iOS isn't offering it right now, so
+            // the choice isn't lost and you can see it's still selected.
+            if let saved = model.voiceIdentifier, !voices.contains(where: { $0.id == saved }) {
+              Text("Your saved voice (not available right now)").tag(String?.some(saved))
+            }
+            ForEach(voices, id: \.id) { voice in
+              Text(voice.label).tag(String?.some(voice.id))
+            }
+          }
+        } footer: {
+          Text(
+            "Premium voices sound far more natural. Download them in iOS Settings → Accessibility → "
+              + "Read & Speak → Voices → English.")
+        }
+      }
+
+      Section {
+        Button("Preview voice", systemImage: "play.circle") { model.previewVoice() }
+        Button("Compare voices", systemImage: "person.2.wave.2") { model.compareVoices() }
+        Button("Match speed to 150 words a minute", systemImage: "gauge.with.needle") { model.matchSpeed() }
+        Button("Reset speed") { model.speechRate = Speaker.defaultRate }
+          .disabled(model.speechRate == Speaker.defaultRate)
+      } footer: {
+        Text("Compare voices reads the same line in each voice, so you can choose by ear.")
+      }
+    }
+    .navigationTitle("Voice")
+    .navigationBarTitleDisplayMode(.inline)
+    .onAppear {
+      voices = model.availableVoices
+      model.logInstalledVoices()
+    }
+    .onChange(of: scenePhase) { _, phase in
+      if phase == .active { voices = model.availableVoices }
+    }
+    // Apple's recommended signal: voices downloaded (in Settings or apps like Piper) or deleted.
+    .onReceive(NotificationCenter.default.publisher(for: AVSpeechSynthesizer.availableVoicesDidChangeNotification)) { _ in
+      voices = model.availableVoices
+      model.logInstalledVoices()
+    }
+  }
+}
+
+/// How long math dictation waits while you write.
+private struct WritingSettingsView: View {
+  @Bindable var model: AppModel
+
+  var body: some View {
+    Form {
+      Section {
+        VStack(alignment: .leading) {
+          Text("Time to write each line")
+          Slider(value: $model.writingTime, in: Speaker.writingTimeRange) {
+            Text("Time to write each line")
+          } minimumValueLabel: {
+            Text("Less").font(.caption)
+          } maximumValueLabel: {
+            Text("More").font(.caption)
+          }
+        }
+        Toggle("Pause after each part of a line", isOn: $model.dictateInParts)
+        Button("Reset writing time") { model.writingTime = 1 }
+          .disabled(model.writingTime == 1)
+      } footer: {
+        Text("Each line is read a few words at a time, pausing while you write each part. Turn off part pauses to hear the whole line, then one pause.")
+      }
+
+      Section {
+        Button("Test limit definition", systemImage: "function") { model.testLimitDefinition() }
+      } footer: {
+        Text("A long worked answer (about 7 minutes) to practice copying.")
+      }
+    }
+    .navigationTitle("Writing pauses")
+    .navigationBarTitleDisplayMode(.inline)
+  }
+}
+
+private struct APIKeySettingsView: View {
+  @Bindable var model: AppModel
+  @State private var keyDraft = ""
+
+  var body: some View {
+    Form {
+      Section {
+        SecureField("sk-ant-…", text: $keyDraft)
+          .textInputAutocapitalization(.never)
+          .autocorrectionDisabled()
+        Button("Save key") {
+          model.saveAPIKey(keyDraft)
+          keyDraft = ""
+        }
+        .disabled(keyDraft.trimmingCharacters(in: .whitespaces).isEmpty)
+        if model.hasAPIKey {
+          Button("Delete saved key", role: .destructive) { model.deleteAPIKey() }
+        }
+      } footer: {
+        Text(model.hasAPIKey ? "A key is saved in the Keychain on this phone." : "No key saved yet.")
+      }
+    }
+    .navigationTitle("Anthropic API key")
+    .navigationBarTitleDisplayMode(.inline)
+  }
+}
+
+/// Rarely used: testing without Claude, the log, and disconnecting.
+private struct AdvancedSettingsView: View {
+  @Bindable var model: AppModel
+
+  var body: some View {
+    Form {
+      Section {
+        Toggle("Test mode (no Claude)", isOn: $model.testMode)
+      } footer: {
+        Text(
+          "Runs the glasses, photo and speech but skips Claude, so it's free, and plays a sample answer. "
+            + "With the phone locked it waits 35 seconds first, to show the app keeps running.")
+      }
+
+      Section {
+        NavigationLink("Diagnostics log") { DiagnosticsView() }
+      } footer: {
+        Text("Copy it and send it along when reporting a problem.")
+      }
+
+      if model.isRegistered {
+        Section {
+          Button("Disconnect glasses from this app", role: .destructive) {
+            model.disconnectGlasses()
+          }
+        }
+      }
+    }
+    .navigationTitle("Advanced")
+    .navigationBarTitleDisplayMode(.inline)
   }
 }
 
