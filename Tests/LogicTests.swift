@@ -409,6 +409,25 @@ final class ClaudeClientTests: XCTestCase {
     XCTAssertEqual((body["output_config"] as? [String: Any])?["effort"] as? String, "high")
   }
 
+  /// The warm-up must match a photo's cached prefix (prompt, effort, speed) or the photo
+  /// can't read it, and `max_tokens` 0 is refused with streaming.
+  func testWarmUpMatchesAPhotosCachedPrefix() throws {
+    let jpeg = try XCTUnwrap(ClaudeClient.preparedJPEG(from: TestImages.jpeg()))
+    let photo = ClaudeClient.body(
+      messages: ClaudeClient.messages(jpeg: jpeg, prompt: "Solve", previousAnswer: nil, stoppedAt: nil, subject: .chemistry),
+      fast: true, subject: .chemistry)
+    let warm = ClaudeClient.warmUpBody(subject: .chemistry, fast: true)
+    XCTAssertEqual(warm["max_tokens"] as? Int, 0)
+    XCTAssertEqual(warm["stream"] as? Bool, false)
+    XCTAssertNil(warm["fallbacks"])
+    for key in ["model", "speed"] { XCTAssertEqual(warm[key] as? String, photo[key] as? String) }
+    XCTAssertEqual(
+      (warm["output_config"] as? [String: Any])?["effort"] as? String,
+      (photo["output_config"] as? [String: Any])?["effort"] as? String)
+    let warmSystem = try XCTUnwrap(warm["system"] as? [[String: Any]])
+    XCTAssertEqual(warmSystem.first?["text"] as? String, ClaudeClient.chemistrySystem)
+  }
+
   func testFollowUpPhotoIncludesTheEarlierAnswer() throws {
     let jpeg = try XCTUnwrap(ClaudeClient.preparedJPEG(from: TestImages.jpeg()))
     // A first photo: just the photo and the prompt.

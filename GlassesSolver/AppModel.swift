@@ -170,7 +170,16 @@ final class AppModel {
       if sessionPrompt == oldValue.defaultPrompt { sessionPrompt = subject.defaultPrompt }
       // A photo after switching is never a follow-up to an answer in the other subject.
       lastAnswerTime = nil
+      warmCache()
     }
+  }
+
+  /// Caches the current subject's system prompt ahead of the first photo (see
+  /// `ClaudeClient.warmCache`).
+  func warmCache() {
+    guard !testMode, let apiKey = Keychain.read(Self.apiKeyAccount) else { return }
+    let client = ClaudeClient(apiKey: apiKey, subject: subject, fast: fastAnswers)
+    Task.detached { await client.warmCache() }
   }
 
   /// How long to wait after each dictated Write line, as a multiple of the estimated
@@ -411,6 +420,7 @@ final class AppModel {
       self?.linePosition = LinePosition(problem: problem, line: line)
     }
     applyVoiceEngine()
+    warmCache()
     if let sdkSetupError {
       errorMessage =
         "The Meta glasses SDK failed to start, so glasses features may not work.\n\nDetails: \(sdkSetupError)"

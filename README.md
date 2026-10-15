@@ -171,7 +171,7 @@ These rules were checked in Python while being written, and `Tests/DictationTest
 
 ## Chemistry multiple choice
 
-For CHM 106 (NC A&T) scantron tests. The answer to each question is one tagged line, `Answer:`, which plays the part a pen line plays in math: the app says "Question 7.", then the line once, then waits 2 s to fill in the bubble. A double-tap on the touchpad repeats it ("Again, question 7."), the written page shows it boxed under the question, and a photo taken partway through tells Claude which answers were heard. Its system prompt is `ClaudeClient.chemistrySystem`, run at high effort (math uses medium), since one wrong letter loses the whole question and the answers are short.
+For CHM 106 (NC A&T) scantron tests. The answer to each question is one tagged line, `Answer:`, which plays the part a pen line plays in math: the app says "Question 7.", then the line once, then waits 2 s to fill in the bubble. A double-tap on the touchpad repeats it ("Again, question 7."), the written page shows it boxed under the question, and a photo taken partway through tells Claude which answers were heard. Its system prompt is `ClaudeClient.chemistrySystem`, run at high effort (math uses medium), since one wrong letter loses the whole question and the answers are short. It holds only what the course does its own way (the instructor's rules, tables and worked answers for chapters 2 to 6), not chemistry Claude already knows, so it stays about 5,000 tokens. It's cached for an hour, and the app writes it into the cache when it opens and when the subject changes, so the first photo of a test doesn't wait for it.
 
 | Finding | Setting |
 |---|---|

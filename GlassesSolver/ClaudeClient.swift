@@ -523,6 +523,44 @@ struct ClaudeClient: Sendable {
     return body
   }
 
+  /// A request that only writes the system prompt into the cache: `max_tokens` 0 runs the
+  /// prefill and returns nothing, so no output is billed. Same model, effort and speed as
+  /// a photo, or the photo wouldn't read what it wrote.
+  static func warmUpBody(subject: Subject, fast: Bool) -> [String: Any] {
+    var body = body(messages: [["role": "user", "content": "warmup"]], fast: fast, subject: subject)
+    body["max_tokens"] = 0
+    body["stream"] = false
+    body["fallbacks"] = nil
+    return body
+  }
+
+  /// When each subject's prompt (at each speed) was last warmed.
+  private static let lastWarmUp = LockedValue([String: Date]())
+
+  /// Caches the system prompt before the first photo, so the first answer starts as soon as
+  /// later ones do. Skipped if it was warmed in the last 50 minutes (the cache lasts an hour
+  /// from its last use). Failures only go to the log: the photo writes the cache anyway.
+  func warmCache() async {
+    let fast = self.fast && !Self.fastModeRefused.get()
+    let key = "\(subject.rawValue) \(fast)"
+    if let last = Self.lastWarmUp.get()[key], Date().timeIntervalSince(last) < 50 * 60 { return }
+    do {
+      var request = try Self.request(apiKey: apiKey, fast: fast)
+      request.timeoutInterval = 30
+      request.httpBody = try JSONSerialization.data(withJSONObject: Self.warmUpBody(subject: subject, fast: fast))
+      let (_, response) = try await URLSession.shared.data(for: request)
+      let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+      diag("claude", "\(subject.name) prompt warm-up: HTTP \(status)")
+      if status == 200 {
+        var warmed = Self.lastWarmUp.get()
+        warmed[key] = Date()
+        Self.lastWarmUp.set(warmed)
+      }
+    } catch {
+      diag("claude", "\(subject.name) prompt warm-up failed: \(error.localizedDescription)")
+    }
+  }
+
   private static func request(
     apiKey: String, messages: [[String: Any]], fast: Bool, subject: Subject
   ) throws -> URLRequest {
@@ -821,7 +859,7 @@ extension ClaudeClient {
     after the letter: "Answer: D, as in dog, the closest choice. ..."
 
     HOW THIS COURSE TEACHES IT (CHM 106, Tro's Chemistry: Structure and Properties, course \
-    chapters 2 to 5). Follow these conventions; where the textbook differs, the course wins:
+    chapters 2 to 6). Follow these conventions; where the textbook differs, the course wins:
     - Valence electrons are those with the highest principal quantum number n; everything \
     else is core, including a full d subshell. Cadmium, [Kr]5s2 4d10, has 2 valence and 46 \
     core electrons. For main-group elements the valence count is the group number \
@@ -859,108 +897,134 @@ extension ClaudeClient {
     - Empirical formula: percent to mass (assume 100 grams), mass to moles, divide by the \
     smallest, multiply to whole numbers (a 1.5 means multiply everything by 2). Molecular \
     formula: the molar mass over the empirical formula's mass gives the multiplier.
-    - Names: a Roman numeral is the metal's charge, found by balancing the anions (Sn(SO4)2 \
-    is tin(IV) sulfate). Polyatomic ions: sulfate SO4 2-, sulfite SO3 2-, phosphate PO4 3-, \
-    nitrate NO3-, nitrite NO2-, carbonate CO3 2-, hydroxide OH-, ammonium NH4+. Calcium \
-    phosphate is Ca3(PO4)2. A soluble ionic compound in water splits into its cation and \
-    anion, each aqueous.
+    - Atomic masses: the course's examples use H 1.01 or 1.008; if the choices differ only \
+    in the last digit, use whichever gives a printed choice.
 
-    CHAPTER 5, CHEMICAL BONDING I (Lewis structures and molecular shapes; the textbook's \
-    chapter 6 tables):
-    - Bond type by atoms: metal with nonmetal is ionic (electrons transferred, cation and \
-    anion); nonmetal with nonmetal is covalent (shared); metal with metal is metallic \
-    (electrons pooled). There is no hard line between ionic and covalent.
-    - Bond type by electronegativity difference: under 0.4 is pure (nonpolar) covalent, 0.4 \
-    up to 2.0 is polar covalent, 2.0 and up is ionic. The course's examples: Sr and F, 4.0 \
-    minus 1.0 is 3.0, ionic; N and Cl, 3.0 minus 3.0 is 0, covalent; N and O, 3.5 minus 3.0 \
-    is 0.5, polar covalent. In a polar bond the more electronegative end is delta minus.
-    - Use these electronegativities (Pauling, from the course's table): H 2.1; Li 1.0, Be \
-    1.5, B 2.0, C 2.5, N 3.0, O 3.5, F 4.0; Na 0.9, Mg 1.2, Al 1.5, Si 1.8, P 2.1, S 2.5, Cl \
-    3.0; K 0.8, Ca 1.0, Ga 1.6, Ge 1.8, As 2.0, Se 2.4, Br 2.8; Rb 0.8, Sr 1.0, In 1.7, Sn \
-    1.8, Sb 1.9, Te 2.1, I 2.5; Cs 0.7, Ba 0.9; noble gases get no value. \
-    Transition metals: Fe 1.8, Cu 1.9, Zn 1.6, Ag 1.9, Au 2.4.
-    - Electronegativity rises going right and going up, the opposite of the size trend. \
-    Fluorine is the most electronegative element, francium the least. The bigger the \
-    difference, the more polar the bond. Dipole moment mu equals q times r, in debyes; it \
-    grows with the partial charges and the distance between them (not calculated in this \
-    course).
-    - Octet rule: atoms gain, lose or share electrons to reach 8 valence electrons; shared \
-    electrons count for both atoms. Period 2 nonmetals never exceed 8. Expanded octets: only \
-    a central atom from period 3 or below (it uses empty d orbitals); terminal atoms keep 8. \
-    Fewer than 8: H shares to a duet of 2 (or becomes H plus), Li loses its 1, Be has 4 when \
-    it shares (BeH2), B has 6 when it shares.
-    - Drawing a Lewis structure: 1, skeleton with the least electronegative atom in the \
-    center, H always terminal. 2, total valence electrons, adding one per negative charge and \
-    removing one per positive charge (NO2 minus has 5 plus 12 plus 1, 18; H2O has 8; O2 has \
-    12; NH3 has 8). 3, single bonds. 4, subtract 2 per bond. 5, lone pairs, most \
-    electronegative atoms first, octets (duets for H). 6, if an atom lacks an octet, move \
-    lone pairs into double or triple bonds. Double bonds form only with C, O, N, S and P; \
-    triple bonds only with C, O, N and S. 7, check the drawn electrons equal the count from \
-    step 2.
-    - Resonance: structures with the same connections that differ only in where electrons \
-    sit; same electron count; same total formal charge. The real molecule is the resonance \
-    hybrid, an average, and doesn't flip between forms. Delocalization stabilizes it. Ozone \
-    and nitrate are the examples; each N to O bond in nitrate is about a 1 and a third bond.
-    - Formal charge = valence electrons minus nonbonding electrons minus 1 per bond. The \
-    charges add to zero in a neutral molecule and to the ion's charge in an ion. The best \
-    structure has the smallest formal charges, and any negative charge on the most \
-    electronegative atom. In HF both atoms are zero. To improve a structure, move lone pairs \
-    from minus atoms toward plus atoms: a plus atom in period 2 keeps its octet; a plus atom \
-    in period 3 or below keeps taking pairs until it reaches zero, even past an octet, then \
-    stops (sulfite: one S=O double bond with S at zero and two O at minus 1 is best; two \
-    double bonds goes too far). Cyanate, OCN minus: the form with the minus 1 on oxygen \
-    (O single, C triple N) contributes most; the minus 2 on nitrogen form is worst.
-    - Odd electrons: a molecule or ion with an odd total of valence electrons is a free \
-    radical, can't give every atom an octet, and is reactive (NO has 11; of CO, CO2, N2O and \
-    ClO, only ClO, with 13, is a radical). XeF2 has 22 electrons: xenon has 2 bonds and 3 \
-    lone pairs, an expanded octet.
-    - Bond energy (bond dissociation energy): energy to break one mole of a bond in the gas. \
-    More shared electrons means stronger and shorter: C triple C 837, C double C 611, C single \
-    C 347 kJ per mole; C triple N 891, C double N 615, C single N 305. Bonds weaken going down \
-    a group and strengthen going across (Br-F 237 > Br-Cl 218 > Br-Br 193). A double bond is \
-    less than twice as strong as a single bond. Average bond energies in kJ per mole: H-H \
-    436, H-C 414, H-N 389, H-O 464, H-F 565, H-Cl 431, H-Br 364, H-I 297, C-C 347, C=C 611, \
-    C triple C 837, C-O 360, C=O 736 (799 in CO2), C-Cl 339, N-N 163, N=N 418, N triple N \
-    946, O-O 142, O=O 498, F-F 159, Cl-Cl 243, Br-Br 193, I-I 151.
-    - Enthalpy from bond energies: Delta H reaction = sum of bonds broken (positive, \
-    endothermic) + sum of bonds formed (negative, exothermic). It's an estimate; it works \
-    best with everything gaseous. Count every bond in every molecule, times its coefficient.
-    - Bond length: the distance between the nuclei. Shorter with more shared electrons (C \
-    triple C 120, C double C 134, C single C 154 pm; C triple N 116, C double N 128, C single N \
-    147), shorter going right (C-C 154 > C-N 147 > C-O 143), longer going down (F-F 144, \
-    Cl-Cl 198, Br-Br 228, I-I 266). Longer bonds are weaker.
-    - VSEPR: electron groups around the central atom spread as far apart as they can. One \
-    group is a lone pair, a single, double or triple bond, or a single electron. Resonance \
-    form doesn't matter. Groups to electron geometry: 2 linear 180; 3 trigonal planar 120; 4 \
-    tetrahedral 109.5; 5 trigonal bipyramidal, 120 equatorial and 90 axial; 6 octahedral 90 \
-    (eight faces, all positions the same).
-    - Molecular geometry, by groups, bonding groups and lone pairs: 3,2,1 bent, under 120 \
-    (SO2); 4,3,1 trigonal pyramidal, under 109.5 (NH3, 107); 4,2,2 bent, under 109.5 (H2O, \
-    104.5); 5,4,1 seesaw, under 120 equatorial and under 90 axial (SF4); 5,3,2 T-shaped, \
-    under 90 (BrF3); 5,2,3 linear, 180 (XeF2); 6,5,1 square pyramidal, under 90 (BrF5); \
-    6,4,2 square planar, 90 (XeF4). Lone pairs repel most: lone-lone > lone-bond > \
-    bond-bond, so angles shrink, about 2 degrees per lone pair. In a trigonal bipyramid lone \
-    pairs take equatorial spots; in an octahedron the second lone pair sits opposite the \
-    first. Course examples: HCN is linear; NO3 minus is trigonal planar; PCl3 is trigonal \
-    pyramidal, under 109.5; ICl4 minus is square planar, 90. NO2 minus has 3 groups on N.
-    - Several central atoms: give each its own shape. Glycine: N trigonal pyramidal, the CH2 \
-    carbon tetrahedral, the C=O carbon trigonal planar, the OH oxygen bent. Acetic acid: CH3 \
-    carbon tetrahedral, C=O carbon trigonal planar, OH oxygen bent.
-    - 3D drawings: central atom and bonds in the plane are plain lines; a solid wedge comes \
-    toward the viewer; a hashed wedge goes behind the page.
-    - Molecular polarity needs polar bonds and a shape where the bond pulls don't cancel. \
-    With all bonds the same, these cancel and are nonpolar: linear, trigonal planar, \
-    tetrahedral, trigonal bipyramidal, octahedral, square planar. These are polar: bent, \
-    trigonal pyramidal, seesaw, T-shaped, square pyramidal. With different bonds the list \
-    doesn't apply (CH2F2 and OCS are polar). HCl and H2O are polar; CO2 is nonpolar; NH3 is \
-    polar. Lone pairs matter through the shape they cause. Polarity drives boiling point, \
-    melting point, solubility, vapor pressure and viscosity. Polar molecules and ionic \
-    compounds dissolve in water; soap has polar and nonpolar parts.
-    - Shape decides how a molecule works: morphine fits the opioid receptor like a key in a \
-    lock, mimicking endorphins; stevia tastes sweet like sucrose because of its shape.
-    - Bonding theories explain why atoms bond, why some combinations are stable (water is \
-    H2O, not HO or H3O), and predict shapes and properties. Lewis theory centers on valence \
-    electrons and the octet.
+    CHAPTER 4, MOLECULES AND COMPOUNDS (the instructor's rules and lists; your usual \
+    chemistry covers the rest):
+    - Ionic: metal with nonmetal, electrons transferred, a lattice with no separate \
+    molecules, so an ionic formula is always an empirical formula and its charges add to \
+    zero. Hard and brittle; conduct when melted or dissolved, not as solids. Lattice energy \
+    is always exothermic, grows with the ions' charges and shrinks with distance. NaCl: \
+    ionization of Na +496, electron affinity of Cl -244, heat of formation -411 kJ per mole. \
+    Covalent: nonmetals share electrons in directional bonds, forming separate molecules.
+    - Formula types: empirical gives the simplest whole-number ratio (C4H8 is CH2, B2H6 is \
+    BH3, CCl4 stays CCl4); molecular gives the actual count; structural shows connections. \
+    What each shows: empirical and molecular formulas, composition only; structural, plus \
+    connectivity; ball-and-stick, plus shape; space-filling, plus size.
+    - Fixed-charge metals (no Roman numeral): group 1A +1, Be Mg Ca Sr Ba +2, Al +3, and Zn \
+    2+, Sc 3+, Ag+ (Ag3N is silver nitride). Others, like Cr, Fe, Co, Cu, Sn, Hg, Pb, get a \
+    Roman numeral for the charge, worked out from the anions, never copied from a subscript: \
+    Cu2O copper(I) oxide, CuO copper(II) oxide, SnBr2 tin(II) bromide, PbCl4 lead(IV) \
+    chloride, FeS iron(II) sulfide, cobalt(III) oxide Co2O3. Mercury(I) is Hg2 2+. The old \
+    -ous and -ic names aren't used.
+    - Anions: fluoride, chloride, bromide, iodide, oxide, sulfide, nitride N 3-, phosphide P \
+    3-, hydride H-. Polyatomic ions to know: acetate C2H3O2-, carbonate CO3 2-, hydrogen \
+    carbonate or bicarbonate HCO3-, hydroxide OH-, nitrite NO2-, nitrate NO3-, chromate CrO4 \
+    2-, dichromate Cr2O7 2-, phosphate PO4 3-, hydrogen phosphate HPO4 2-, dihydrogen \
+    phosphate H2PO4-, ammonium NH4+, hypochlorite ClO-, chlorite ClO2-, chlorate ClO3-, \
+    perchlorate ClO4-, permanganate MnO4-, sulfite SO3 2-, hydrogen sulfite HSO3-, sulfate SO4 \
+    2-, hydrogen sulfate HSO4-, cyanide CN-, peroxide O2 2-. Bromine and iodine follow \
+    chlorine: hypobromite BrO- (sodium hypobromite NaBrO), periodate IO4-. More oxygen is \
+    -ate, fewer is -ite; per- is one more than -ate, hypo- one fewer than -ite. Copper(I) \
+    phosphate is Cu3PO4; magnesium nitrate Mg(NO3)2.
+    - Hydrates: the waters count in the molar mass; prefixes hemi ½, mono, di, tri, tetra, \
+    penta, hexa, hepta, octa: MgSO4·7H2O magnesium sulfate heptahydrate, CaSO4·½H2O calcium \
+    sulfate hemihydrate, CuSO4·5H2O copper(II) sulfate pentahydrate.
+    - Molecular names: the element with the lower group number first; in the same group, the \
+    lower one (higher row) first. Prefixes mono to deca (nona 9, deca 10); drop mono on the \
+    first element only: NI3 nitrogen triiodide, PCl5 phosphorus pentachloride, P4S10 \
+    tetraphosphorus decasulfide. The same two elements can form many compounds (NO, NO2, N2O, \
+    N2O3, N2O4, N2O5).
+    - Diatomic elements: H2, N2, O2, F2, Cl2, Br2, I2. H and halogens make 1 bond, O makes 2 \
+    (or one double), C makes 4.
+    - Course example answers: water 18.02 and glucose 180.16 grams per mole; 325 mg of \
+    aspirin, C9H8O4, is 1.09 times 10 to the 21st molecules; Freon-112, C2Cl4F2, is 69.58 \
+    percent Cl; 2.4 g of sodium is 6.2 g of NaCl.
+    - Empirical formula: a ratio within 0.1 of a whole number is rounded; 0.5 means multiply \
+    by 2, 0.33 or 0.67 by 3, 0.25 or 0.75 by 4 (24.5 g N and 70.0 g O gives N2O5; 60.00% C, \
+    4.48% H, 35.52% O gives C9H8O4). Molecular formula: n is molar mass over empirical mass \
+    (C2H3O at 86.09 is C4H6O2).
+    - Combustion analysis: all C goes to CO2, all H to H2O, O is the sample mass minus C and \
+    H. 1.83 g CO2 and 0.901 g H2O gives C5H12.
+    - A percent on a product means by mass, except alcohol by volume; 1 percent ABV is 2 \
+    proof.
+    - Organic compounds are mostly C and H; carbon makes four bonds (four single, two double, \
+    or a triple and a single) and forms chains and rings. Vitalism was the old idea that \
+    organic compounds came only from living things.
+
+    CHAPTER 5, CHEMICAL BONDING I (Lewis structures and shapes):
+    - Electronegativity difference: under 0.4 pure covalent, 0.4 up to 2.0 polar covalent, \
+    2.0 and up ionic. Use the course's values: H 2.1; Li 1.0, Be 1.5, B 2.0, C 2.5, N 3.0, O \
+    3.5, F 4.0; Na 0.9, Mg 1.2, Al 1.5, Si 1.8, P 2.1, S 2.5, Cl 3.0; K 0.8, Ca 1.0, Ga 1.6, \
+    Ge 1.8, As 2.0, Se 2.4, Br 2.8; Rb 0.8, Sr 1.0, In 1.7, Sn 1.8, Sb 1.9, Te 2.1, I 2.5; Cs \
+    0.7, Ba 0.9; Fe 1.8, Cu 1.9, Zn 1.6, Ag 1.9, Au 2.4. Noble gases have none. So Sr-F is \
+    ionic, N-Cl covalent, N-O polar covalent. Fluorine is the most electronegative, francium \
+    the least. Dipole moments aren't calculated.
+    - Lewis rules: least electronegative atom in the center, H always terminal; lone pairs go \
+    on the most electronegative atoms first. Double bonds only with C, N, O, S, P; triple \
+    only with C, N, O, S. Period 2 never passes 8; only a central atom from period 3 or below \
+    expands. Be has 4 when sharing (BeH2), B has 6.
+    - Formal charge = valence minus nonbonding electrons minus bonds. Best structure: \
+    smallest charges, any negative on the most electronegative atom. A plus atom in period 2 \
+    keeps its octet; a plus atom in period 3 or below takes lone pairs as double bonds until \
+    it reaches zero, then stops (sulfite: one S=O, S at zero, two O at minus 1; two double \
+    bonds is too far). Cyanate OCN-: the form with minus 1 on O contributes most.
+    - Resonance: same connections and electron count; the real molecule is the hybrid and \
+    doesn't flip between forms. Nitrate's N-O bonds are each about 1 and a third.
+    - An odd electron total means a free radical (NO has 11; of CO, CO2, N2O and ClO, only \
+    ClO). XeF2: 22 electrons, 3 lone pairs on Xe.
+    - Course bond energies, kJ per mole: H-H 436, H-C 414, H-N 389, H-O 464, H-F 565, H-Cl \
+    431, H-Br 364, H-I 297, C-C 347, C=C 611, C triple C 837, C-O 360, C=O 736 (799 in CO2), \
+    C-Cl 339, N-N 163, N=N 418, N triple N 946, O-O 142, O=O 498, F-F 159, Cl-Cl 243, Br-Br \
+    193, I-I 151; also C=N 615, C triple N 891, C-N 305, Br-F 237, Br-Cl 218. Delta H \
+    reaction = bonds broken (positive) + bonds formed (negative), times coefficients. A \
+    double bond is less than twice a single.
+    - Course bond lengths, pm: C-C 154, C=C 134, C triple C 120; C-N 147, C=N 128, C triple \
+    N 116; C-O 143; F-F 144 (143 in the figure), Cl-Cl 198, Br-Br 228, I-I 266. Longer is \
+    weaker.
+    - Shapes: angles with lone pairs are "less than" the ideal (NH3 107, H2O 104.5, about 2 \
+    degrees per lone pair). Lone pairs take equatorial spots in a trigonal bipyramid; in an \
+    octahedron the second sits opposite the first. Course answers: HCN linear, NO3- trigonal \
+    planar, PCl3 trigonal pyramidal, ICl4- square planar 90, glycine's N trigonal \
+    pyramidal, acetic acid's CH3 carbon tetrahedral, C=O carbon trigonal planar, OH oxygen \
+    bent.
+    - Polarity: with identical bonds, linear, trigonal planar, tetrahedral, trigonal \
+    bipyramidal, octahedral and square planar are nonpolar; bent, trigonal pyramidal, \
+    seesaw, T-shaped and square pyramidal are polar. With different bonds that list doesn't \
+    apply (CH2F2 and OCS are polar). NH3 and H2O are polar, CO2 is not. Polar and ionic \
+    substances dissolve in water.
+
+    CHAPTER 6, CHEMICAL BONDING II (valence bond and molecular orbital theory):
+    - Lewis theory misses real bond lengths, energies and angles, resonance, and magnetism. \
+    Valence bond theory misses O2's magnetism and delocalization. Only MO theory predicts O2 \
+    is paramagnetic.
+    - Valence bond: a bond is two half-filled orbitals overlapping with paired spins; more \
+    overlap means a lower energy, stronger bond. Hybrid orbitals = electron groups: 2 sp \
+    linear 180, 3 sp2 trigonal planar 120, 4 sp3 tetrahedral 109.5, 5 sp3d, 6 sp3d2 (the \
+    last two use d orbitals). Orbitals are conserved. Terminal atoms are treated as \
+    unhybridized. The same element can be sp, sp2 or sp3 (carbon). H2S is drawn with \
+    unhybridized S p orbitals. XeF4 is sp3d2, square planar.
+    - Single bond: 1 sigma. Double: 1 sigma, 1 pi. Triple: 1 sigma, 2 pi. Sigma is end to \
+    end, pi is side by side from unhybridized p orbitals; sigma is stronger. Hybrids hold \
+    sigma bonds and lone pairs. Ethene: each C sp2, C=C is sp2-sp2 sigma plus p-p pi, C-H is \
+    sp2 to H 1s. A pi bond blocks rotation, which gives cis (same side) and trans (opposite) \
+    isomers.
+    - MO theory: atomic orbitals combine into as many molecular orbitals; in phase gives \
+    bonding (sigma, pi), out of phase gives antibonding (sigma star, pi star, with a node). \
+    Fill from the bottom, two per orbital, Hund's rule. Bond order = half of (bonding minus \
+    antibonding electrons), valence electrons only; it can be a fraction; above zero a bond \
+    forms, zero means none; higher is stronger and shorter. Any unpaired electron means \
+    paramagnetic. H2 1; He2 0, doesn't exist; He2+ ½; H2- ½, weaker than H2.
+    - Period 2 order: B2, C2, N2 put pi 2p below sigma 2p (s-p mixing); O2, F2, Ne2 put \
+    sigma 2p below pi 2p. O2 has 2 unpaired electrons in pi star: paramagnetic, bond order 2. \
+    N2- has bond order 2.5, weaker than N2, paramagnetic, a radical anion. Heteronuclear \
+    diagrams like NO aren't tested.
+    - Metals: cations in a sea of delocalized electrons; good conductors, malleable and \
+    ductile. Band theory: N atoms give N/2 bonding and N/2 antibonding levels; the filled \
+    valence band doesn't conduct, the empty conduction band does. n-type carries electrons \
+    in the conduction band; p-type carries holes in the valence band. Joining them makes \
+    diodes.
 
     A PHOTO AFTER AN ANSWER
     Sometimes your earlier answer comes first, then a new photo. If it shows more questions, \
