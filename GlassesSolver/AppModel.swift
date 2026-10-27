@@ -21,6 +21,7 @@ final class AppModel {
   private static let testModeDefaultsKey = "testMode"
   private static let fastAnswersDefaultsKey = "fastAnswers"
   private static let subjectDefaultsKey = "subject"
+  private static let photoActionDefaultsKey = "photoAction"
   private static let writingTimeDefaultsKey = "writingTime"
   private static let voiceDefaultsKey = "voiceIdentifier"
   private static let dictateInPartsDefaultsKey = "dictateInParts"
@@ -183,6 +184,70 @@ final class AppModel {
     }
   }
 
+  /// What a photo (Solve button or capture button) asks for: the solution, a hint, or a check.
+  var photoAction: ClaudeClient.PhotoAction {
+    didSet { UserDefaults.standard.set(photoAction.rawValue, forKey: Self.photoActionDefaultsKey) }
+  }
+
+  /// The practice exam and the skills to review.
+  @ObservationIgnored let study = StudyStore()
+  private(set) var isWritingExam = false
+  var canWriteExam: Bool { hasAPIKey && !testMode }
+
+  /// Has Claude write a practice exam like the course's tests, with the skills due for review
+  /// in it, then switches photos to Check, so the next capture press marks the paper.
+  func writePracticeExam(count: Int, topics: String) async {
+    guard !isWritingExam, canWriteExam, let apiKey = Keychain.read(Self.apiKeyAccount) else { return }
+    isWritingExam = true
+    defer { isWritingExam = false }
+    let subject = subject
+    let reviewed = study.due(for: subject)
+    let request = ClaudeClient.practiceExamRequest(count: count, topics: topics, review: reviewed.map(\.skill))
+    diag("study", "writing a \(subject.name) practice exam: \(request)")
+    do {
+      let reply = try await ClaudeClient(apiKey: apiKey, subject: subject, fast: fastAnswers).write(request)
+      guard let exam = PracticeExam.parse(reply.text, subject: subject) else {
+        diag("study", "the exam had no answer key (ended by \(reply.stopReason ?? "a dropped connection"))")
+        errorMessage =
+          reply.isComplete
+          ? "The exam came back without its answer key. Try again." : "The exam was cut off. Try again."
+        return
+      }
+      study.startExam(exam, reviewed: reviewed)
+      photoAction = .check
+    } catch {
+      errorMessage = ErrorDetail.alertText(error)
+    }
+  }
+
+  /// Dictates the handed-in exam's worked solutions like an answer, so a photo of the
+  /// listener's work right after is checked and continued from them.
+  func hearSolutions() {
+    guard let exam = study.exam, exam.handedIn != nil else { return }
+    if let examSubject = ClaudeClient.Subject(rawValue: exam.subject), examSubject != subject {
+      subject = examSubject
+    }
+    speaker.stop("worked solutions requested")
+    photoAction = .solve
+    lastAnswer = exam.key
+    shownAnswer = exam.key
+    linePosition = nil
+    lastAnswerStoppedAt = nil
+    lastAnswerTime = .now
+    speaker.speak(exam.key, isAnswer: true)
+  }
+
+  /// The practice exam and key a Check photo is marked against, handing the exam in if it
+  /// wasn't yet: pressing Check is what finishing it means, with no phone needed.
+  private func examToMark() -> String? {
+    guard photoAction == .check, let exam = study.exam, exam.subject == subject.rawValue else { return nil }
+    if exam.handedIn == nil {
+      diag("study", "a Check photo handed in the practice exam")
+      study.handIn()
+    }
+    return exam.withKey
+  }
+
   /// Caches the current subject's system prompt ahead of the first photo (see
   /// `ClaudeClient.warmCache`).
   func warmCache() {
@@ -330,7 +395,7 @@ final class AppModel {
       if !canSolve { return "Add your Anthropic API key in Settings, or turn on Test mode." }
       if !isRegistered { return "Connect your glasses to get started." }
       if !hasActiveDevice { return "Put on your glasses (hinges open)." }
-      return "Ready. Look at the page and tap Solve."
+      return "Ready. Look at the page and tap \(photoAction.name)."
     }
   }
 
@@ -397,6 +462,9 @@ final class AppModel {
     self.fastAnswers = UserDefaults.standard.object(forKey: Self.fastAnswersDefaultsKey) as? Bool ?? true
     self.subject = UserDefaults.standard.string(forKey: Self.subjectDefaultsKey).flatMap(ClaudeClient.Subject.init)
       ?? .math
+    self.photoAction =
+      UserDefaults.standard.string(forKey: Self.photoActionDefaultsKey).flatMap(ClaudeClient.PhotoAction.init)
+      ?? .solve
     let savedRate = UserDefaults.standard.object(forKey: Self.speechRateDefaultsKey) as? Float
     self.speechRate = savedRate.map { min(max($0, Speaker.rateRange.lowerBound), Speaker.rateRange.upperBound) }
       ?? Speaker.defaultRate
@@ -720,7 +788,11 @@ final class AppModel {
       phase = .idle
       backgroundActivity.end()
     }
-    let prompt = sessionActive ? sessionPrompt : subject.defaultPrompt
+    let action = photoAction
+    let exam = examToMark()
+    let prompt = action.prompt(key: exam) ?? (sessionActive ? sessionPrompt : subject.defaultPrompt)
+    // The chats show the request without a practice exam's whole key.
+    let chatPrompt = exam == nil ? prompt : (action.prompt() ?? prompt) + " (marked against the practice exam's key)"
     // Captured now, so an answer that arrives after the session ends still files under it.
     let chatSessionID = conversation.currentSessionID
     diag("solve", "start (app \(Self.appStateDescription), hands-free \(sessionActive), test mode \(testMode))")
@@ -749,7 +821,7 @@ final class AppModel {
       shownAnswer = lastAnswer
       reportSolveFailure(error)
       conversation.add(
-        prompt: prompt, photo: nil, answer: nil, error: error.localizedDescription, isTest: testMode,
+        prompt: chatPrompt, photo: nil, answer: nil, error: error.localizedDescription, isTest: testMode,
         sessionID: chatSessionID)
       speaker.endKeepAliveAfterSpeech()
       return
@@ -795,7 +867,7 @@ final class AppModel {
         let stopNote = previous == nil ? nil : stoppedAt.map { Self.describeStop($0) }
         if previous != nil { diag("solve", "sending as a follow-up to the last answer. \(stopNote ?? "It was heard to the end.")") }
         reply = try await ClaudeClient(apiKey: apiKey, subject: subject, fast: fastAnswers).solve(
-          photo: photo, prompt: prompt, previousAnswer: previous, stoppedAt: stopNote,
+          photo: photo, prompt: prompt, previousAnswer: previous, stoppedAt: stopNote, action: action,
           onText: { [weak self] piece in self?.answerArrived(piece, runID: runID) },
           onRestartLine: { [weak self] in self?.speaker.discardUnfinishedLine() })
       } else {
@@ -821,19 +893,20 @@ final class AppModel {
       lastAnswerStoppedAt = nil
       // A Test mode sample isn't a real answer, so it's never sent as one to follow up on.
       lastAnswerTime = testMode ? nil : .now
+      if !testMode { study.recordMisses(in: reply.text, subject: subject) }
       diag(
         "solve",
         "answer received, \(reply.text.count) characters, ended by \(reply.stopReason ?? "a dropped connection") "
           + "(app \(Self.appStateDescription))")
       conversation.add(
-        prompt: prompt, photo: photo, answer: answer, error: nil, isTest: testMode, sessionID: chatSessionID)
+        prompt: chatPrompt, photo: photo, answer: answer, error: nil, isTest: testMode, sessionID: chatSessionID)
     } catch where Task.isCancelled {
-      stoppedForNewPhoto(prompt: prompt, photo: photo, sessionID: chatSessionID)
+      stoppedForNewPhoto(prompt: chatPrompt, photo: photo, sessionID: chatSessionID)
       return
     } catch {
       reportSolveFailure(error)
       conversation.add(
-        prompt: prompt, photo: photo, answer: nil, error: error.localizedDescription, isTest: testMode,
+        prompt: chatPrompt, photo: photo, answer: nil, error: error.localizedDescription, isTest: testMode,
         sessionID: chatSessionID)
     }
     speaker.endKeepAliveAfterSpeech()

@@ -93,6 +93,20 @@
   }
 
   .message { color: var(--quiet); margin: 10px 0; font-size: 17px; }
+
+  /* A printed practice exam: black on white, nothing cut off at the side, a problem never
+     split across pages, and no screen of space at the end. */
+  @media print {
+    :root { --ink: #000; --quiet: #555; --rule: #bbb; }
+    html, body { background: #fff; }
+    #page { padding: 0; }
+    .work { overflow: visible; }
+    td { white-space: normal; }
+    .words { max-width: none; }
+    .now-band { display: none; }
+    .problem { break-after: avoid; }
+    .work { break-inside: avoid; }
+  }
 </style>
 </head>
 <body>

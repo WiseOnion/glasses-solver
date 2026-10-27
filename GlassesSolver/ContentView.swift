@@ -8,6 +8,7 @@ struct ContentView: View {
   @State private var showStartSession = false
   @State private var showConversation = false
   @State private var showWritten = false
+  @State private var showPractice = false
 
   var body: some View {
     NavigationStack {
@@ -27,6 +28,12 @@ struct ContentView: View {
             .disabled(model.registrationState == .registering)
           }
 
+          Picker("A photo", selection: $model.photoAction) {
+            ForEach(ClaudeClient.PhotoAction.allCases, id: \.self) { Text($0.name).tag($0) }
+          }
+          .pickerStyle(.segmented)
+          .disabled(model.isBusy)
+
           Button {
             Task { await model.solve() }
           } label: {
@@ -34,7 +41,7 @@ struct ContentView: View {
               if model.isBusy {
                 ProgressView().tint(.white)
               } else {
-                Label("Solve", systemImage: "camera.viewfinder")
+                Label(model.photoAction.name, systemImage: model.photoAction.systemImage)
               }
             }
             .font(.title2.bold())
@@ -64,6 +71,15 @@ struct ContentView: View {
           }
 
           sessionSection
+
+          Button {
+            showPractice = true
+          } label: {
+            Label(practiceTitle, systemImage: "graduationcap")
+              .frame(maxWidth: .infinity)
+          }
+          .buttonStyle(.bordered)
+          .controlSize(.large)
 
           if let photo = model.lastPhoto {
             Image(uiImage: photo)
@@ -120,6 +136,9 @@ struct ContentView: View {
       .fullScreenCover(isPresented: $showWritten) {
         WrittenAnswerScreen(model: model)
       }
+      .sheet(isPresented: $showPractice) {
+        PracticeView(model: model)
+      }
       .sheet(isPresented: $showStartSession) {
         StartSessionView(model: model)
       }
@@ -169,7 +188,7 @@ struct ContentView: View {
         Text(shutterText)
           .font(.subheadline)
           .foregroundStyle(isShutterUnavailable ? Color.red : Color.secondary)
-        Text("Prompt: \(model.sessionPrompt)")
+        Text(model.photoAction == .solve ? "Prompt: \(model.sessionPrompt)" : "Photos: \(model.photoAction.name)")
           .font(.footnote)
           .foregroundStyle(.secondary)
         Button("Stop session", systemImage: "stop.circle", role: .destructive) {
@@ -209,10 +228,25 @@ struct ContentView: View {
     case .off, .activating:
       return "Connecting to the capture button…"
     case .active:
-      return "Press the capture button on your glasses to solve. Tap the touchpad once to pause, or touch and hold to end."
+      return "Press the capture button on your glasses to \(Self.verb(model.photoAction)). Tap the touchpad once to pause, or touch and hold to end."
     case .unavailable(let reason, _):
       return "Capture button unavailable. \(reason) The Solve button above still works."
     }
+  }
+
+  /// What a capture press does, for "Press the capture button on your glasses to ...".
+  private static func verb(_ action: ClaudeClient.PhotoAction) -> String {
+    switch action {
+    case .solve: "solve"
+    case .hint: "get a hint"
+    case .check: "check your work"
+    }
+  }
+
+  /// "Practice exam", or where the current one is.
+  private var practiceTitle: String {
+    guard let exam = model.study.exam else { return "Practice exam" }
+    return exam.handedIn == nil ? "Practice exam (not handed in)" : "Practice exam (marked)"
   }
 
   private var statusCard: some View {
@@ -545,7 +579,7 @@ struct StartSessionView: View {
         } header: {
           Text("Prompt for this session")
         } footer: {
-          Text("Sent to Claude with every photo you take with the capture button.")
+          Text("Sent to Claude with every Solve photo you take with the capture button. Hint and Check photos send their own request; choose which on the main screen.")
         }
 
         Section {

@@ -170,6 +170,8 @@ struct ClaudeClient: Sendable {
     remaining pen lines, and go on to any problems after it that weren't dictated yet.
     - If it shows different problems, they've moved on: answer those.
 
+    \(studyRules)
+
     SHOWING THE WORK
     The pen lines are the worked solution as a teacher wants it on paper: usually two to six \
     Write lines going straight down the page, one equals sign per line, the final answer on \
@@ -301,6 +303,68 @@ struct ClaudeClient: Sendable {
     decides how long from how much there is to write.
     """
 
+  /// Hints, checking finished work, and writing practice exams, for both subjects. Each one
+  /// is asked for in the message (see `PhotoAction` and `practiceExamRequest`), so the system
+  /// prompt, and its cache, stay the same whatever a photo is for.
+  static let studyRules = """
+    WHEN THE MESSAGE ASKS FOR A HINT
+    This replaces THE SHAPE OF AN ANSWER. Don't give the solution. Find the problem they're \
+    on (the one with unfinished work, or the first one if nothing is written yet) and give \
+    only the next step:
+    - If your earlier answer in this conversation was a hint for that step, and the photo \
+    shows nothing new written since, give that step in full: "Problem:" with the number and \
+    the line it goes on ("Problem: 3, line 4"), its step sentence, its pen lines, then "Take \
+    another photo for the next hint."
+    - Otherwise give a nudge: "Problem:" with the number, then one or two plain sentences \
+    naming the move to make next and what it applies to, without its result ("Use the \
+    quotient rule, with the top as u and the bottom as v."), then "Take another photo for the \
+    next hint." If a line they've written is wrong, say which line and what's wrong in a few \
+    words first, and make the hint about fixing it.
+    - If the problem is finished and right, say "That one is right." and "Done."
+
+    WHEN THE MESSAGE ASKS YOU TO CHECK MY WORK
+    This replaces THE SHAPE OF AN ANSWER. They've finished and want to know what they got \
+    wrong; they aren't copying anything. For each problem in the photo that has work on it, \
+    top to bottom:
+    1. "Problem:" with its number.
+    2. If the work and answer are right: "This one is right." If not, name the first wrong \
+    line and what's wrong in a few plain words ("Line 3 has a mistake: the 7 wasn't \
+    distributed to the second term."), then "Mark: On line 3, circle the mistake." Don't \
+    dictate a corrected solution.
+    3. For a wrong one, a line "Review:" with the skill they missed in two to six words, the \
+    same words every time for the same skill ("Review: chain rule inside a power"). The app \
+    saves it for practice later and never says it.
+    On a multiple-choice answer sheet, go through only the questions they got wrong: \
+    "Problem:" with the number, "You filled in C. The answer is B, as in boy.", and a Review \
+    line.
+    End with the count, "You got 4 of 6 right.", then "Done." If an answer key comes with the \
+    message, check against it.
+
+    WHEN THE MESSAGE ASKS FOR A PRACTICE EXAM
+    It's read on the phone, not spoken. Write a new exam like this course's real ones: the \
+    same kinds of problems, wording, format and difficulty, with new numbers, functions and \
+    compounds. Write exactly:
+    1. For each problem, a line "Problem:" with its number, then one "Write:" line with the \
+    whole problem in words, then " || " and the problem in LaTeX, with its words in \
+    \\text{...}. For multiple choice, each choice gets a Write line of its own the same way, \
+    with its letter in the LaTeX: "Write: B, 2 point 5 moles || \\text{(B) } 2.5\\text{ mol}".
+    2. A line "ANSWER KEY" on its own.
+    3. The worked solution to every problem, exactly as you'd dictate it from a photo of the \
+    exam, starting at the first "Problem:" line (no sentence about what you can see), and \
+    ending with "Done."
+    """
+
+  /// Asks for a practice exam, with the skills due for review worked in.
+  static func practiceExamRequest(count: Int, topics: String, review: [String]) -> String {
+    var request = "Write me a practice exam with \(count) problems."
+    let topics = topics.trimmingCharacters(in: .whitespacesAndNewlines)
+    if !topics.isEmpty { request += " Cover: \(topics)." }
+    if !review.isEmpty {
+      request += " Include a problem on each of these, which I got wrong before: \(review.joined(separator: "; "))."
+    }
+    return request
+  }
+
   let apiKey: String
   var subject = Subject.math
   /// Fast mode: the same model and effort, writing (and thinking) up to about 2.5 times as
@@ -349,6 +413,7 @@ struct ClaudeClient: Sendable {
   /// or when cancelled.
   func solve(
     photo: Data, prompt: String = defaultPrompt, previousAnswer: String? = nil, stoppedAt: String? = nil,
+    action: PhotoAction = .solve,
     onText: @escaping @MainActor @Sendable (String) -> Void = { _ in },
     onRestartLine: @escaping @MainActor @Sendable () -> Void = {}
   ) async throws -> Answer {
@@ -358,7 +423,23 @@ struct ClaudeClient: Sendable {
       "timing",
       "image ready to send: \(jpeg.count / 1024) KB in \(SolveTiming.seconds(Date().timeIntervalSince(preparing)))")
     let messages = Self.messages(
-      jpeg: jpeg, prompt: prompt, previousAnswer: previousAnswer, stoppedAt: stoppedAt, subject: subject)
+      jpeg: jpeg, prompt: prompt, previousAnswer: previousAnswer, stoppedAt: stoppedAt, subject: subject,
+      action: action)
+    return try await complete(messages, onText: onText, onRestartLine: onRestartLine)
+  }
+
+  /// A request with no photo, such as `practiceExamRequest`, answered in full (continued if
+  /// it's cut off, like a photo's answer).
+  func write(_ request: String) async throws -> Answer {
+    try await complete([["role": "user", "content": [["type": "text", "text": request]]]])
+  }
+
+  /// Sends `messages` and continues the answer if it's cut off (see `solve`).
+  private func complete(
+    _ messages: [[String: Any]],
+    onText: @escaping @MainActor @Sendable (String) -> Void = { _ in },
+    onRestartLine: @escaping @MainActor @Sendable () -> Void = {}
+  ) async throws -> Answer {
     var text = ""
     var stopReason: String?
     var continuations = 0
@@ -486,22 +567,28 @@ struct ClaudeClient: Sendable {
   /// the earlier prompt (its photo isn't sent again), the earlier answer, then the new photo
   /// with `followUpPrompt`, after `stoppedAt` (where the earlier answer was cut short) if set.
   static func body(
-    jpeg: Data, prompt: String, previousAnswer: String?, stoppedAt: String? = nil, subject: Subject = .math
+    jpeg: Data, prompt: String, previousAnswer: String?, stoppedAt: String? = nil, subject: Subject = .math,
+    action: PhotoAction = .solve
   ) -> [String: Any] {
     body(
       messages: messages(
-        jpeg: jpeg, prompt: prompt, previousAnswer: previousAnswer, stoppedAt: stoppedAt, subject: subject),
+        jpeg: jpeg, prompt: prompt, previousAnswer: previousAnswer, stoppedAt: stoppedAt, subject: subject,
+        action: action),
       subject: subject)
   }
 
   /// The conversation sent for a photo (see `body(jpeg:prompt:previousAnswer:stoppedAt:)`).
+  /// A hint or check sends its own request with the new photo too, since it already covers
+  /// what a follow-up photo might show.
   static func messages(
-    jpeg: Data, prompt: String, previousAnswer: String?, stoppedAt: String?, subject: Subject = .math
+    jpeg: Data, prompt: String, previousAnswer: String?, stoppedAt: String?, subject: Subject = .math,
+    action: PhotoAction = .solve
   ) -> [[String: Any]] {
     let image: [String: Any] = [
       "type": "image", "source": ["type": "base64", "media_type": "image/jpeg", "data": jpeg.base64EncodedString()],
     ]
-    let followUpText: String = [stoppedAt, subject.followUpPrompt].compactMap { $0 }.joined(separator: " ")
+    let followUp = action == .solve ? subject.followUpPrompt : prompt
+    let followUpText: String = [stoppedAt, followUp].compactMap { $0 }.joined(separator: " ")
     if let previousAnswer, !previousAnswer.isEmpty {
       return [
         ["role": "user", "content": [["type": "text", "text": prompt + " (That photo isn't included again.)"]]],
@@ -787,6 +874,43 @@ extension ClaudeClient {
     /// One wrong letter or digit loses a chemistry question, so Claude thinks harder about
     /// each one; the extra thinking is quiet and adds little wait.
     var effort: String { self == .math ? "medium" : "high" }
+  }
+
+  /// What a photo is for: the worked solution to copy (the default), only the next step, or
+  /// a check of finished work that names the mistakes and saves the skills missed.
+  enum PhotoAction: String, CaseIterable, Sendable {
+    case solve, hint, check
+
+    var name: String {
+      switch self {
+      case .solve: "Solve"
+      case .hint: "Hint"
+      case .check: "Check"
+      }
+    }
+
+    var systemImage: String {
+      switch self {
+      case .solve: "camera.viewfinder"
+      case .hint: "lightbulb"
+      case .check: "checkmark.circle"
+      }
+    }
+
+    /// The request sent with a hint or check photo; a solve photo uses the subject's (or the
+    /// session's) prompt. `key` is a practice exam and its answer key, to check against.
+    func prompt(key: String? = nil) -> String? {
+      switch self {
+      case .solve:
+        return nil
+      case .hint:
+        return "Give me a hint for the problem I'm on in this photo, not the solution."
+      case .check:
+        let request = "Check my work in this photo. I've finished, so tell me what I got wrong."
+        guard let key else { return request }
+        return request + " It's the practice exam you wrote me. Here it is with its answer key:\n\n" + key
+      }
+    }
   }
 
   /// For a CHM 106 (NC A&T) test. Problems that need work shown (the dimensional analysis
@@ -1117,6 +1241,8 @@ extension ClaudeClient {
     valence band doesn't conduct, the empty conduction band does. n-type carries electrons \
     in the conduction band; p-type carries holes in the valence band. Joining them makes \
     diodes.
+
+    \(studyRules)
 
     A PHOTO AFTER AN ANSWER
     Sometimes your earlier answer comes first, then a new photo. If it shows more questions, \
