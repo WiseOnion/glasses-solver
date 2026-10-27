@@ -5,7 +5,7 @@ A small iPhone app. Tap **Solve**, and it takes a photo with your Ray-Ban Meta g
 - **Math:** each problem's worked solution is dictated line by line, with time to copy it by hand (see "How the voice dictates").
 - **Chemistry:** a multiple-choice question gets its letter, said with a word so B, D and E can't be confused, and the choice read back, with a pause to fill in the bubble; a question that needs work shown (the dimensional analysis quiz) is dictated line by line like math, with units, unit cancellations and significant figures (see "Chemistry").
 
-The picker above the button sets what a photo is for: **Solve** (the above), **Hint** (only the next step), or **Check** (marks your finished work). **Practice exam** writes a printable exam like your real ones, with a locked answer key (see "Practice, hints and checks").
+The picker above the button sets what a photo is for: **Solve** (the above) or **Check**, which goes through your finished work and says "This one is right." or names the first wrong line and what's wrong, without a corrected solution, then "You got 4 of 6 right." Check's rules (`ClaudeClient.checkRules`) are in both system prompts, so the prompt and its cache are the same either way.
 
 You can also tap **Start Session** for hands-free use: the session stays open in the background, and each press of the **capture button** on the glasses frame does the same thing as Solve, with a prompt you can edit for that session.
 
@@ -27,7 +27,6 @@ You can also tap **Start Session** for hands-free use: the session stays open in
 | `GlassesSolver/ShutterButton.swift` | Capture-button presses via the Inputs capability |
 | `GlassesSolver/Speaker.swift` | Text-to-speech (`AVSpeechSynthesizer`) |
 | `GlassesSolver/Keychain.swift` | Stores the Anthropic API key on the phone |
-| `GlassesSolver/Study.swift` | Practice exams, skills to review, and the Practice screen |
 
 ## Secrets
 
@@ -204,15 +203,6 @@ The dimensional analysis quiz (Fall 2023, a 0.290 m helium balloon at 1.786 × 1
 Rounding each part before reusing it gives 2.29 g, 0.572 mol and 3.44 × 10²³, which the prompt steers away from. Using 4.00 g/mol for helium gives the same answers.
 
 **Settings → Test voice** plays questions 7 and 13 of the practice exam and part B of the quiz in chemistry mode.
-
-## Practice, hints and checks
-
-All three use the system prompt's shared `ClaudeClient.studyRules`, so the prompt and its hour-long cache are the same whatever a photo is for. Each mode is asked for in the message instead (`PhotoAction.prompt`).
-
-- **Hint** finds the problem you're on and gives a nudge: the move to make next, without its result. Press again with nothing new written and you get that step's pen lines. A wrong line you've written is pointed out first.
-- **Check** goes through finished work: "This one is right." or the first wrong line and what's wrong, with a Mark to circle it, and no corrected solution. Each miss ends with a `Review:` line naming the skill. The app saves it and never speaks it. It finishes with "You got 4 of 6 right."
-- **Practice exam** (main screen) has Claude write an exam like the course's tests with new numbers. The skills due for review are worked in. The reply is split at its `ANSWER KEY` line: the problems go on the written page, with a **Print** button (black on white from the page's print styles), and the key stays locked. Writing an exam switches photos to Check. The exam runs with the phone away, and when you're done, a capture press hands it in and marks the paper against the key. After that, **Hear worked solutions** dictates the key like any answer, so a photo of your work right after is checked and continued.
-- **Review**: a missed skill is in the very next exam, then comes back after 3, 7 and 14 days, then drops off. A new miss resets it. Saved in Documents/Study.
 
 ## Settings layout
 

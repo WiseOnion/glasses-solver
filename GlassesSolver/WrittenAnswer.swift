@@ -240,14 +240,11 @@ struct WrittenAnswerView: UIViewRepresentable {
   let data: String
   /// Shown instead when there are no steps ("Working on it...").
   var emptyMessage = "No written answer yet."
-  /// Given the page, so it can be printed.
-  var printer: PagePrinter?
 
   func makeCoordinator() -> Coordinator { Coordinator() }
 
   func makeUIView(context: Context) -> WKWebView {
     let view = WKWebView()
-    printer?.view = view
     view.navigationDelegate = context.coordinator
     view.isOpaque = true
     view.backgroundColor = .black
@@ -304,32 +301,11 @@ struct WrittenAnswerView: UIViewRepresentable {
   }
 }
 
-/// Prints the written page (black on white, from its print styles) with iOS's print sheet,
-/// so a practice exam can be done on paper without the phone.
-@MainActor
-final class PagePrinter {
-  weak var view: WKWebView?
-
-  func print(jobName: String) {
-    guard let view else { return }
-    let info = UIPrintInfo.printInfo()
-    info.jobName = jobName
-    info.outputType = .grayscale
-    let controller = UIPrintInteractionController.shared
-    controller.printInfo = info
-    controller.printFormatter = view.viewPrintFormatter()
-    controller.present(animated: true)
-  }
-}
-
 /// The written answer and nothing else, full screen, white on black: the math the listener
 /// copies, for the current answer (or one from the chats). A single Done button returns.
 struct WrittenAnswerScreen: View {
   private let model: AppModel?
   private let answer: String?
-  /// Set for a practice exam, which gets a Print button.
-  private var printTitle: String?
-  @State private var printer = PagePrinter()
   @Environment(\.dismiss) private var dismiss
 
   /// The current answer, following along as it arrives and as it's read.
@@ -339,25 +315,18 @@ struct WrittenAnswerScreen: View {
   }
 
   /// A saved answer.
-  init(answer: String, printTitle: String? = nil) {
+  init(answer: String) {
     model = nil
     self.answer = answer
-    self.printTitle = printTitle
   }
 
   var body: some View {
     NavigationStack {
-      WrittenAnswerView(data: data, emptyMessage: emptyMessage, printer: printer)
+      WrittenAnswerView(data: data, emptyMessage: emptyMessage)
         .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(.black, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
         .toolbar {
-          if let printTitle {
-            ToolbarItem(placement: .topBarLeading) {
-              Button("Print", systemImage: "printer") { printer.print(jobName: printTitle) }
-                .foregroundStyle(.white)
-            }
-          }
           ToolbarItem(placement: .topBarTrailing) {
             Button("Done") { dismiss() }
               .foregroundStyle(.white)

@@ -985,8 +985,6 @@ final class Speaker: NSObject {
       let line = PenLine(kind: pen.0, text: pen.1, number: max(lineNumber, 1))
       return flushProse(beforeWrite: true) + dictation(line, cue: Self.cue(for: line), inParts: dictateInParts)
     }
-    // A skill missed, saved for practice (`StudyStore`), not said.
-    if StudyStore.reviewSkill(in: paragraph) != nil { return [] }
     if !paragraph.isEmpty { pendingProse.append(paragraph) }
     return []
   }

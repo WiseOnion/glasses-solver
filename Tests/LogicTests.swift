@@ -560,109 +560,23 @@ func waitUntil(_ timeout: TimeInterval = 10, _ condition: () -> Bool) async -> B
   return true
 }
 
-// MARK: - Practice exams, review, hints and checks
+// MARK: - Checking finished work
 
-@MainActor
-final class StudyTests: XCTestCase {
-  private var folder: URL!
-
-  override func setUp() async throws {
-    try await super.setUp()
-    folder = FileManager.default.temporaryDirectory.appending(path: "study-\(UUID().uuidString)")
+final class CheckTests: XCTestCase {
+  /// Both subjects know how to check work, so the system prompt (and its cache) is the same
+  /// whatever a photo is for.
+  func testBothSystemPromptsHaveTheCheckRules() {
+    XCTAssertTrue(ClaudeClient.system.contains(ClaudeClient.checkRules))
+    XCTAssertTrue(ClaudeClient.chemistrySystem.contains(ClaudeClient.checkRules))
   }
 
-  override func tearDown() async throws {
-    try? FileManager.default.removeItem(at: folder)
-    try await super.tearDown()
-  }
-
-  private let reply = """
-    Problem: 1
-    Write: Find the derivative of x squared || \\text{Find } \\frac{d}{dx} x^2
-    **Answer key**
-    Problem: 1
-    Write: y prime equals, 2 x || y' = 2x
-    Mark: Draw a box around line 1.
-    Done.
-    """
-
-  func testExamIsSplitAtItsKey() throws {
-    let exam = try XCTUnwrap(PracticeExam.parse(reply, subject: .math))
-    XCTAssertTrue(exam.exam.hasPrefix("Problem: 1\nWrite: Find"))
-    XCTAssertFalse(exam.exam.contains("2 x"))
-    XCTAssertTrue(exam.key.hasPrefix("Problem: 1\nWrite: y prime"))
-    XCTAssertNil(exam.handedIn)
-    XCTAssertNil(PracticeExam.parse("Problem: 1\nWrite: x", subject: .math))
-  }
-
-  func testReviewLinesAreReadAndNeverSpoken() {
-    XCTAssertEqual(StudyStore.reviewSkill(in: "Review: chain rule inside a power."), "chain rule inside a power")
-    XCTAssertNil(StudyStore.reviewSkill(in: "Line 3 has a mistake."))
-    XCTAssertNil(StudyStore.reviewSkill(in: "Review:"))
-  }
-
-  func testMissedSkillsComeBackAndAreSaved() throws {
-    let now = Date(timeIntervalSince1970: 1_000_000)
-    let store = StudyStore(folder: folder)
-    store.recordMisses(in: "Problem: 2\nReview: chain rule\nProblem: 3\nReview: Quotient rule", subject: .math, now: now)
-    XCTAssertEqual(store.due(for: .math, now: now).map(\.skill).sorted(), ["Quotient rule", "chain rule"])
-    XCTAssertTrue(store.due(for: .chemistry, now: now).isEmpty)
-
-    // In an exam, each moves to 3 days on; the exam is saved with the list.
-    let exam = try XCTUnwrap(PracticeExam.parse(reply, subject: .math, now: now))
-    store.startExam(exam, reviewed: store.due(for: .math, now: now), now: now)
-    XCTAssertTrue(store.due(for: .math, now: now.addingTimeInterval(2 * 86400)).isEmpty)
-    XCTAssertEqual(store.due(for: .math, now: now.addingTimeInterval(3 * 86400)).count, 2)
-
-    // Missed again, any case: due at once, and not added twice.
-    store.recordMisses(in: "Review: Chain rule", subject: .math, now: now)
-    XCTAssertEqual(store.reviews(for: .math).count, 2)
-    XCTAssertEqual(store.due(for: .math, now: now).map(\.skill), ["chain rule"])
-
-    store.handIn(now: now)
-    let reloaded = StudyStore(folder: folder)
-    XCTAssertEqual(reloaded.exam?.handedIn, now)
-    XCTAssertEqual(reloaded.reviews.count, 2)
-  }
-
-  func testASkillIsDroppedAfterItsLastReview() throws {
-    let now = Date(timeIntervalSince1970: 1_000_000)
-    let store = StudyStore(folder: folder)
-    store.recordMisses(in: "Review: limits", subject: .math, now: now)
-    let exam = try XCTUnwrap(PracticeExam.parse(reply, subject: .math, now: now))
-    for _ in 0...StudyStore.intervals.count {
-      store.startExam(exam, reviewed: store.reviews(for: .math), now: now)
-    }
-    XCTAssertTrue(store.reviews.isEmpty)
-  }
-
-  func testExamRequestNamesTopicsAndReview() {
-    let request = ClaudeClient.practiceExamRequest(count: 5, topics: " related rates ", review: ["chain rule", "limits"])
-    XCTAssertEqual(
-      request,
-      "Write me a practice exam with 5 problems. Cover: related rates. "
-        + "Include a problem on each of these, which I got wrong before: chain rule; limits.")
-    XCTAssertEqual(ClaudeClient.practiceExamRequest(count: 3, topics: "", review: []), "Write me a practice exam with 3 problems.")
-  }
-
-  /// Both subjects know how to hint, check and write exams, so the system prompt (and its
-  /// cache) is the same whatever a photo is for.
-  func testBothSystemPromptsHaveTheStudyRules() {
-    XCTAssertTrue(ClaudeClient.system.contains(ClaudeClient.studyRules))
-    XCTAssertTrue(ClaudeClient.chemistrySystem.contains(ClaudeClient.studyRules))
-  }
-
-  /// A hint or check follow-up sends its own request with the new photo, not "continue".
-  func testHintAndCheckFollowUpsSendTheirOwnRequest() throws {
+  /// A check follow-up sends the check request with the new photo, not "continue".
+  func testCheckFollowUpSendsItsOwnRequest() throws {
     let jpeg = try XCTUnwrap(ClaudeClient.preparedJPEG(from: TestImages.jpeg()))
-    let hint = try XCTUnwrap(ClaudeClient.PhotoAction.hint.prompt())
-    let body = ClaudeClient.body(jpeg: jpeg, prompt: hint, previousAnswer: "Problem: 3", action: .hint)
+    let check = ClaudeClient.PhotoAction.checkPrompt
+    let body = ClaudeClient.body(jpeg: jpeg, prompt: check, previousAnswer: "Problem: 3", action: .check)
     let messages = try XCTUnwrap(body["messages"] as? [[String: Any]])
     let text = (messages[2]["content"] as? [[String: Any]])?.last?["text"] as? String
-    XCTAssertEqual(text, hint)
-    XCTAssertNil(ClaudeClient.PhotoAction.solve.prompt())
-    let check = try XCTUnwrap(ClaudeClient.PhotoAction.check.prompt(key: "THE KEY"))
-    XCTAssertTrue(check.hasPrefix("Check my work"))
-    XCTAssertTrue(check.hasSuffix("THE KEY"))
+    XCTAssertEqual(text, check)
   }
 }

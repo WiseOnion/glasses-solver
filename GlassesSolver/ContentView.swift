@@ -8,7 +8,6 @@ struct ContentView: View {
   @State private var showStartSession = false
   @State private var showConversation = false
   @State private var showWritten = false
-  @State private var showPractice = false
 
   var body: some View {
     NavigationStack {
@@ -72,15 +71,6 @@ struct ContentView: View {
 
           sessionSection
 
-          Button {
-            showPractice = true
-          } label: {
-            Label(practiceTitle, systemImage: "graduationcap")
-              .frame(maxWidth: .infinity)
-          }
-          .buttonStyle(.bordered)
-          .controlSize(.large)
-
           if let photo = model.lastPhoto {
             Image(uiImage: photo)
               .resizable()
@@ -136,9 +126,6 @@ struct ContentView: View {
       .fullScreenCover(isPresented: $showWritten) {
         WrittenAnswerScreen(model: model)
       }
-      .sheet(isPresented: $showPractice) {
-        PracticeView(model: model)
-      }
       .sheet(isPresented: $showStartSession) {
         StartSessionView(model: model)
       }
@@ -188,7 +175,7 @@ struct ContentView: View {
         Text(shutterText)
           .font(.subheadline)
           .foregroundStyle(isShutterUnavailable ? Color.red : Color.secondary)
-        Text(model.photoAction == .solve ? "Prompt: \(model.sessionPrompt)" : "Photos: \(model.photoAction.name)")
+        Text(model.photoAction == .solve ? "Prompt: \(model.sessionPrompt)" : "Photos: Check")
           .font(.footnote)
           .foregroundStyle(.secondary)
         Button("Stop session", systemImage: "stop.circle", role: .destructive) {
@@ -228,25 +215,10 @@ struct ContentView: View {
     case .off, .activating:
       return "Connecting to the capture button…"
     case .active:
-      return "Press the capture button on your glasses to \(Self.verb(model.photoAction)). Tap the touchpad once to pause, or touch and hold to end."
+      return "Press the capture button on your glasses to \(model.photoAction == .solve ? "solve" : "check your work"). Tap the touchpad once to pause, or touch and hold to end."
     case .unavailable(let reason, _):
       return "Capture button unavailable. \(reason) The Solve button above still works."
     }
-  }
-
-  /// What a capture press does, for "Press the capture button on your glasses to ...".
-  private static func verb(_ action: ClaudeClient.PhotoAction) -> String {
-    switch action {
-    case .solve: "solve"
-    case .hint: "get a hint"
-    case .check: "check your work"
-    }
-  }
-
-  /// "Practice exam", or where the current one is.
-  private var practiceTitle: String {
-    guard let exam = model.study.exam else { return "Practice exam" }
-    return exam.handedIn == nil ? "Practice exam (not handed in)" : "Practice exam (marked)"
   }
 
   private var statusCard: some View {
@@ -579,7 +551,7 @@ struct StartSessionView: View {
         } header: {
           Text("Prompt for this session")
         } footer: {
-          Text("Sent to Claude with every Solve photo you take with the capture button. Hint and Check photos send their own request; choose which on the main screen.")
+          Text("Sent to Claude with every Solve photo you take with the capture button. Check photos send their own request.")
         }
 
         Section {
