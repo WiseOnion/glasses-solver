@@ -927,7 +927,9 @@ final class Speaker: NSObject {
     guard let lastProblem else {
       return "Stop. \(what) before the first \(item). Take the photo again."
     }
-    let name = itemName(lastProblem, itemWord: itemWord).lowercased()
+    // Only the first letter: "problem 5, part A" keeps its capital part letter.
+    let fullName = itemName(lastProblem, itemWord: itemWord)
+    let name = fullName.prefix(1).lowercased() + fullName.dropFirst()
     return "Stop. \(what) partway through \(name), so its last line may be unfinished. "
       + "Take a new photo of \(name) and any after it."
   }
