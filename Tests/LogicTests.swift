@@ -578,7 +578,7 @@ final class StudyTests: XCTestCase {
 
   private let reply = """
     Problem: 1
-    Write: Find the derivative of x squared || \text{Find } \frac{d}{dx} x^2
+    Write: Find the derivative of x squared || \\text{Find } \\frac{d}{dx} x^2
     **Answer key**
     Problem: 1
     Write: y prime equals, 2 x || y' = 2x
