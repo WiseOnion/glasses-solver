@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import WebKit
 import XCTest
 
 @testable import GlassesSolver
@@ -77,6 +78,10 @@ final class ScreenshotTests: XCTestCase {
     return space
   }
 
+  private static func webViews(in view: UIView) -> [WKWebView] {
+    (view as? WKWebView).map { [$0] } ?? view.subviews.flatMap(webViews(in:))
+  }
+
   private func shoot(_ name: String, _ view: some View, wait seconds: Double = 1.5) async throws {
     let scene = try XCTUnwrap(
       UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
@@ -87,8 +92,16 @@ final class ScreenshotTests: XCTestCase {
     window.makeKeyAndVisible()
     try await Task.sleep(for: .seconds(seconds))
 
+    var webShots: [(UIImage, CGRect)] = []
+    for web in Self.webViews(in: window) {
+      if let shot = try? await web.takeSnapshot(configuration: nil) {
+        webShots.append((shot, web.convert(web.bounds, to: window)))
+      }
+    }
     let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
       window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+      // Web views draw blank this way; their own snapshots go on top.
+      for (shot, frame) in webShots { shot.draw(in: frame) }
     }
     window.isHidden = true
 

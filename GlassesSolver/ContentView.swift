@@ -177,7 +177,7 @@ struct SolveView: View {
     switch model.phase {
     case .capturing: return "Taking Photo"
     case .thinking: return "Solving"
-    case .idle: return "Ready"
+    case .idle: return model.hasActiveDevice || model.sessionActive ? "Ready" : "Glasses Asleep"
     }
   }
 
@@ -308,7 +308,7 @@ struct SolveView: View {
           } label: {
             Label(
               model.sessionActive ? "Hands-Free On" : "Hands-Free",
-              systemImage: model.sessionActive ? "eyeglasses.circle.fill" : "eyeglasses")
+              systemImage: "eyeglasses")
           }
           .disabled(!model.sessionActive && (model.isStartingSession || model.isBusy || !model.canSolve))
           Spacer()
@@ -469,21 +469,21 @@ struct GlassesControlsList: View {
   private var rows: [Row] {
     subject == .math
       ? [
-        Row(symbol: "camera.fill", control: "Capture", action: "Solve"),
-        Row(symbol: "hand.tap.fill", control: "Double Tap", action: "Explain"),
-        Row(symbol: "checkmark.seal.fill", control: "Double Press", action: "Check"),
+        Row(symbol: "camera", control: "Capture", action: "Solve"),
+        Row(symbol: "hand.tap", control: "Double Tap", action: "Explain"),
+        Row(symbol: "checkmark.circle", control: "Double Press", action: "Check"),
         Row(symbol: "arrow.counterclockwise", control: "Hold", action: "Repeat"),
-        Row(symbol: "hand.draw.fill", control: "Swipe", action: "Previous / Next"),
-        Row(symbol: "pause.circle.fill", control: "Tap", action: "Pause / Resume"),
-        Row(symbol: "xmark.circle.fill", control: "Touch and Hold", action: "End Session"),
+        Row(symbol: "hand.draw", control: "Swipe", action: "Previous / Next"),
+        Row(symbol: "pause.circle", control: "Tap", action: "Pause / Resume"),
+        Row(symbol: "xmark.circle", control: "Touch and Hold", action: "End Session"),
       ]
       : [
-        Row(symbol: "camera.fill", control: "Capture", action: "Solve Page"),
-        Row(symbol: "hand.tap.fill", control: "Double Tap", action: "Repeat"),
-        Row(symbol: "checkmark.seal.fill", control: "Double Press", action: "Check Answer Sheet"),
-        Row(symbol: "hand.draw.fill", control: "Swipe", action: "Replay Previous / Next"),
-        Row(symbol: "pause.circle.fill", control: "Tap", action: "Pause / Resume"),
-        Row(symbol: "xmark.circle.fill", control: "Touch and Hold", action: "End Session"),
+        Row(symbol: "camera", control: "Capture", action: "Solve Page"),
+        Row(symbol: "hand.tap", control: "Double Tap", action: "Repeat"),
+        Row(symbol: "checkmark.circle", control: "Double Press", action: "Check Answer Sheet"),
+        Row(symbol: "hand.draw", control: "Swipe", action: "Replay Previous / Next"),
+        Row(symbol: "pause.circle", control: "Tap", action: "Pause / Resume"),
+        Row(symbol: "xmark.circle", control: "Touch and Hold", action: "End Session"),
       ]
   }
 
@@ -552,15 +552,12 @@ struct SettingsView: View {
           Text("Fast Answers start sooner and cost more. Sharper Photos read small print better but take longer.")
         }
 
-        Section("Voice") {
+        Section("Speaking") {
           NavigationLink {
             VoiceSettingsView(model: model)
           } label: {
             LabeledContent("Voice", value: model.voiceEngine.shortName)
           }
-        }
-
-        Section("Writing") {
           NavigationLink("Writing Pauses") { WritingSettingsView(model: model) }
         }
 

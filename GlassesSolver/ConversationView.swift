@@ -95,9 +95,10 @@ struct HistoryView: View {
         HistoryDetailView(model: model, route: route)
       }
       .toolbar {
-        ToolbarItem(placement: .topBarTrailing) {
-          Button("Clear All") { confirmClear = true }
-            .disabled(store.entries.isEmpty)
+        if !store.entries.isEmpty {
+          ToolbarItem(placement: .topBarTrailing) {
+            Button("Clear All") { confirmClear = true }
+          }
         }
       }
       .alert("Delete All?", isPresented: $confirmClear) {
