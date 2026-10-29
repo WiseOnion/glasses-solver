@@ -46,7 +46,7 @@ struct ContentView: View {
 
   var body: some View {
     TabView(selection: $tab) {
-      SolveView(model: model, openWorkspace: { showWorkspace = true })
+      SolveView(model: model, openWorkspace: { showWorkspace = true }, openSettings: { tab = .settings })
         .tabItem { Label("Solve", systemImage: "viewfinder") }
         .tag(Tab.solve)
       HistoryView(model: model)
@@ -96,6 +96,7 @@ struct ContentView: View {
 struct SolveView: View {
   @Bindable var model: AppModel
   let openWorkspace: () -> Void
+  let openSettings: () -> Void
   @State private var showStartSession = false
   @State private var showSession = false
 
@@ -148,12 +149,21 @@ struct SolveView: View {
           } else {
             ProgressView()
               .controlSize(.large)
+              .tint(.secondary)
           }
         }
       } description: {
         Text(state.detail)
       } actions: {
-        if model.phase == .idle && model.canSolve {
+        if !model.canSolve {
+          Button("Open Settings", action: openSettings)
+            .buttonStyle(.bordered)
+        } else if waitingForGlasses {
+          // As in Meta's CameraAccess: no action while waiting, just say so.
+          Label("Waiting for your glasses", systemImage: "hourglass")
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+        } else if model.phase == .idle {
           Button("Take Photo") { Task { await model.solve() } }
             .buttonStyle(.bordered)
             .disabled(!model.canStartPhoto)
@@ -191,17 +201,19 @@ struct SolveView: View {
   /// The one thing that matters now, highest priority first.
   private var state: (title: String, detail: String, symbol: String) {
     let page = model.subject == .math ? "a problem" : "the page"
-    if !model.canSolve { return ("Add Your API Key", "Solving needs a Claude API key. Add it in Settings.", "key") }
+    if !model.canSolve { return ("Add Your API Key", "Solving needs a Claude API key.", "key") }
     switch model.phase {
     case .capturing: return ("Taking Photo", "Hold still.", "camera")
     case .thinking: return ("Solving", "Press capture again to use a new photo.", "camera")
     case .idle: break
     }
     if model.sessionActive && model.sessionPaused { return ("Paused", "Tap your glasses to resume.", "pause.circle") }
-    if !model.hasActiveDevice && !model.sessionActive {
-      return ("Glasses Asleep", "Unfold your glasses to wake them.", "eyeglasses")
-    }
-    return ("Ready", "Look at \(page) and press capture on your glasses.", "camera.viewfinder")
+    if waitingForGlasses { return ("Glasses Asleep", "Unfold your glasses to wake them.", "eyeglasses") }
+    return ("Ready", "Look at \(page) and press capture.", "camera.viewfinder")
+  }
+
+  private var waitingForGlasses: Bool {
+    model.phase == .idle && !model.hasActiveDevice && !model.sessionActive
   }
 
   // MARK: - Bottom: the latest answer, as a row
