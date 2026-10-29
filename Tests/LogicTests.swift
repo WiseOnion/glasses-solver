@@ -710,6 +710,19 @@ final class MathReplyTests: XCTestCase {
     XCTAssertTrue(ClaudeClient.system.contains(ClaudeClient.courseNotes))
   }
 
+  /// The direct-answering rule is in the system prompt a real math request sends, at the top
+  /// of the reply format, and only in math's.
+  func testTheMathPromptSaysToAnswerDirectly() throws {
+    let rule =
+      "Solve what's visible. Never ask the user a question. No introductions, disclaimers, or commentary. "
+      + "Use `Unclear:` only when something physically unreadable could change the answer."
+    let body = ClaudeClient.body(
+      messages: ClaudeClient.MathRequest.photo(jpeg: Data([1]), ask: ClaudeClient.solveAsk).messages, subject: .math)
+    let system = try XCTUnwrap((body["system"] as? [[String: Any]])?.first?["text"] as? String)
+    XCTAssertTrue(system.contains("THE SHAPE OF A REPLY\n" + rule + "\nWork the problem out completely"))
+    XCTAssertFalse(ClaudeClient.chemistrySystem.contains(rule))
+  }
+
   /// Chemistry's swipe replays a question from the last answer, with no new request.
   func testAChemistryAnswerSplitsIntoQuestions() {
     let answer = """
