@@ -168,6 +168,61 @@ final class GlassesIntegrationTests: XCTestCase {
       aReply: .init(text: "Problems: 1\nProblem: 1\nQuestion: which photo\nAnswer: photo A ans", stopReason: "max_tokens"))
   }
 
+  /// Save Photos to Photos through the real glasses flow: rapid presses take one photo and add
+  /// one photo; a second photo later adds a second; with the setting off nothing is added.
+  func testEachGlassesPhotoIsAddedToPhotosOnce() async throws {
+    let model = AppModel()
+    let wasTestMode = model.testMode
+    let wasSubject = model.subject
+    model.testMode = true
+    model.subject = .math
+    var saved = 0
+    AppModel.photoSaveOverride = { _ in saved += 1 }
+    defer {
+      model.testMode = wasTestMode
+      model.subject = wasSubject
+      AppModel.photoSaveOverride = nil
+    }
+    await model.setSavePhotos(true)
+    XCTAssertTrue(model.savePhotosToLibrary, "Photos access wasn't granted: \(model.errorMessage ?? "no error")")
+    let ready = await waitUntil(10) { model.isRegistered && model.hasActiveDevice }
+    XCTAssertTrue(ready)
+    await model.connect()
+    XCTAssertTrue(model.sessionActive, "didn't connect: \(model.errorMessage ?? "no error")")
+    let input = try XCTUnwrap(glasses).services.input
+    let buttonReady = await waitUntil(20) { model.shutterStatus == .active && !model.isBusy }
+    XCTAssertTrue(buttonReady)
+    try await Task.sleep(for: .seconds(1))
+
+    for _ in 1...3 {
+      input.capture(pressType: MWDATMockDevice.CapturePressType.shortPress)
+      try await Task.sleep(for: .milliseconds(100))
+    }
+    let first = await waitUntil(60) { saved >= 1 && !model.isBusy }
+    XCTAssertTrue(first, "the photo wasn't added")
+    try await Task.sleep(for: .seconds(1))
+    XCTAssertEqual(saved, 1, "rapid presses added more than one photo")
+
+    let again = await waitUntil(20) { model.shutterStatus == .active && !model.isBusy }
+    XCTAssertTrue(again)
+    try await Task.sleep(for: .seconds(1))
+    input.capture(pressType: MWDATMockDevice.CapturePressType.shortPress)
+    let second = await waitUntil(60) { saved >= 2 && !model.isBusy }
+    XCTAssertTrue(second, "the second photo wasn't added")
+    XCTAssertEqual(saved, 2)
+
+    await model.setSavePhotos(false)
+    let off = await waitUntil(20) { model.shutterStatus == .active && !model.isBusy }
+    XCTAssertTrue(off)
+    try await Task.sleep(for: .seconds(1))
+    let photosBefore = Self.count("[solve] math photo (")
+    input.capture(pressType: MWDATMockDevice.CapturePressType.shortPress)
+    let third = await waitUntil(60) { Self.count("[solve] math photo (") > photosBefore && !model.isBusy }
+    XCTAssertTrue(third, "the third photo wasn't taken")
+    XCTAssertEqual(saved, 2, "a photo was added with the setting off")
+    model.stopSession()
+  }
+
   /// Presses in quick succession start one photo, never several at once.
   func testRapidPressesStartOnePhoto() async throws {
     let model = AppModel()

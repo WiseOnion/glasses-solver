@@ -37,19 +37,25 @@ final class ScreenshotTests: XCTestCase {
     try await shoot("1b-solve-connecting", ContentView(model: model))
 
     model.showForScreenshots(registered: true, glassesAwake: false)
-    try await shoot("2-solve-connected-asleep", ContentView(model: model))
+    try await shoot("2-solve-asleep", ContentView(model: model))
+
+    model.showForScreenshots(registered: true)
+    try await shoot("2c-solve-not-connected", ContentView(model: model))
+
+    model.showForScreenshots(registered: true, starting: true)
+    try await shoot("2d-solve-connecting-session", ContentView(model: model))
 
     model.showForScreenshots(registered: true, apiKey: false)
     try await shoot("2b-solve-no-api-key", ContentView(model: model))
 
-    model.showForScreenshots(registered: true, phase: .thinking, workspace: Self.workspace(), photo: TestImages.image())
+    model.showForScreenshots(registered: true, session: true, phase: .thinking, workspace: Self.workspace(), photo: TestImages.image())
     try await shoot("3b-solve-solving", ContentView(model: model))
 
     model.showForScreenshots(registered: true, session: true, paused: true)
     try await shoot("3c-solve-paused", ContentView(model: model))
 
-    model.showForScreenshots(registered: true, workspace: Self.workspace(), photo: TestImages.image())
-    try await shoot("3-solve-math", ContentView(model: model))
+    model.showForScreenshots(registered: true, session: true, workspace: Self.workspace(), photo: TestImages.image())
+    try await shoot("3-solve-connected-math", ContentView(model: model))
 
     model.showForScreenshots(
       registered: true, session: true, subject: .chemistry, photo: TestImages.image(),

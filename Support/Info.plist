@@ -64,6 +64,8 @@
 	<array>
 		<string>com.meta.ar.wearable</string>
 	</array>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Saves the photos your glasses take for solving to your camera roll.</string>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>Needed to connect to your Meta AI glasses.</string>
 	<key>NSLocalNetworkUsageDescription</key>

@@ -2,6 +2,7 @@ import AVFoundation
 import Foundation
 import MWDATCore
 import Observation
+import Photos
 import UIKit
 
 @Observable
@@ -15,6 +16,7 @@ final class AppModel {
 
   private static let apiKeyAccount = "anthropic-api-key"
   private static let highResDefaultsKey = "useHighResPhoto"
+  private static let savePhotosDefaultsKey = "savePhotosToLibrary"
   /// A new key when the default changed to Apple's normal speed, so an old, slower saved
   /// speed (which made voices sound robotic) starts over at the new default once.
   private static let speechRateDefaultsKey = "speechRate.v2"
@@ -179,6 +181,11 @@ final class AppModel {
   var showCameraPermissionPrompt = false
   var useHighResPhoto: Bool {
     didSet { UserDefaults.standard.set(useHighResPhoto, forKey: Self.highResDefaultsKey) }
+  }
+  /// Each glasses photo is also added to the Photos library. Off until the user turns it on
+  /// (setSavePhotos), which is also when Photos access is asked for.
+  private(set) var savePhotosToLibrary: Bool {
+    didSet { UserDefaults.standard.set(savePhotosToLibrary, forKey: Self.savePhotosDefaultsKey) }
   }
   /// Runs the full glasses flow but skips Claude: waits, then speaks a sample answer.
   /// Free to use, and the wait outlasts iOS's background allowance when the phone is
@@ -421,6 +428,7 @@ final class AppModel {
     self.registrationState = wearables.registrationState
     self.hasAPIKey = Keychain.read(Self.apiKeyAccount) != nil
     self.useHighResPhoto = UserDefaults.standard.bool(forKey: Self.highResDefaultsKey)
+    self.savePhotosToLibrary = UserDefaults.standard.bool(forKey: Self.savePhotosDefaultsKey)
     self.testMode = UserDefaults.standard.bool(forKey: Self.testModeDefaultsKey)
     self.fastAnswers = UserDefaults.standard.object(forKey: Self.fastAnswersDefaultsKey) as? Bool ?? true
     self.subject = UserDefaults.standard.string(forKey: Self.subjectDefaultsKey).flatMap(ClaudeClient.Subject.init)
@@ -581,7 +589,7 @@ final class AppModel {
   /// key involved.
   func showForScreenshots(
     registered: Bool, registering: Bool = false, glassesAwake: Bool = true, session: Bool = false,
-    paused: Bool = false, apiKey: Bool = true, phase: Phase = .idle, subject: ClaudeClient.Subject = .math,
+    paused: Bool = false, starting: Bool = false, apiKey: Bool = true, phase: Phase = .idle, subject: ClaudeClient.Subject = .math,
     workspace: MathWorkspace? = nil, photo: UIImage? = nil, lastAnswer: String = ""
   ) {
     registrationState = registered ? .registered : registering ? .registering : .available
@@ -589,6 +597,7 @@ final class AppModel {
     hasAPIKey = apiKey
     sessionActive = session
     sessionPaused = paused
+    isStartingSession = starting
     self.phase = phase
     shutterStatus = session ? .active : .off
     self.subject = subject
@@ -839,6 +848,7 @@ final class AppModel {
       return
     }
     lastPhoto = UIImage(data: photo)
+    saveToPhotos(photo)
     phase = .thinking
     // In SDK 1.0.0 a second camera stream in the same session can fail at once (Meta, SDK
     // issue #260), so each photo gets a fresh session. Refresh now, while Claude works and
@@ -1053,6 +1063,53 @@ final class AppModel {
       + subjectSample
   }
 
+  /// Turns Save Photos to Photos on or off. Turning it on asks for add-only Photos access (the
+  /// app can add photos but never see the library); without it the setting stays off.
+  func setSavePhotos(_ on: Bool) async {
+    guard on else {
+      savePhotosToLibrary = false
+      return
+    }
+    let access = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
+    diag("photos", "add-only access: \(access.rawValue)")
+    if access == .authorized || access == .limited {
+      savePhotosToLibrary = true
+    } else {
+      savePhotosToLibrary = false
+      errorMessage = "Glasses Solver can't add to Photos. Allow it in Settings > Privacy & Security > Photos."
+    }
+  }
+
+  /// For the tests: receives the photos that would be added to Photos.
+  static var photoSaveOverride: ((Data) -> Void)?
+
+  /// Adds a glasses photo to Photos when that's on: the photo exactly as the glasses sent it.
+  /// Called once per photo the glasses took, right after the capture succeeded (a failed try
+  /// and its retry are one capture: only the photo that arrived is added). It runs on its own,
+  /// so a failure here never stops a solve.
+  func saveToPhotos(_ photo: Data) {
+    guard savePhotosToLibrary else { return }
+    if let save = Self.photoSaveOverride {
+      save(photo)
+      return
+    }
+    let access = PHPhotoLibrary.authorizationStatus(for: .addOnly)
+    guard access == .authorized || access == .limited else {
+      diag("photos", "not added to Photos: access is \(access.rawValue)")
+      return
+    }
+    Task {
+      do {
+        try await PHPhotoLibrary.shared().performChanges {
+          PHAssetCreationRequest.forAsset().addResource(with: .photo, data: photo, options: nil)
+        }
+        diag("photos", "added the photo to Photos")
+      } catch {
+        diag("photos", "adding to Photos FAILED: \(ErrorDetail.describe(error))")
+      }
+    }
+  }
+
   /// Takes the photo; if the camera fails in a way a fresh glasses session fixes, starts one
   /// and tries once more.
   private func captureWithRecovery() async throws -> Data {
@@ -1209,6 +1266,7 @@ final class AppModel {
       return
     }
     lastPhoto = UIImage(data: photo)
+    saveToPhotos(photo)
     // A fresh glasses session for the next photo (SDK issue #260), while Claude works.
     if sessionActive { startSessionRefresh(reason: "fresh camera for the next photo") } else { camera.endSession() }
     guard let jpeg = ClaudeClient.preparedJPEG(from: photo) else {
@@ -1804,6 +1862,12 @@ final class AppModel {
       diag("permission", "checkPermissionStatus(.camera) FAILED: \(ErrorDetail.describe(error))")
       errorMessage = ErrorDetail.alertText(error)
     }
+  }
+
+  /// Connect: the app starts holding a glasses session, so the glasses' buttons solve. Until
+  /// then the glasses work with Meta AI as usual.
+  func connect() async {
+    await startSession(prompt: sessionPrompt)
   }
 
   func stopSession() {

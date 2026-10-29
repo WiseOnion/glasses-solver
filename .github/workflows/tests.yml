@@ -40,6 +40,14 @@ jobs:
           echo "SIMULATOR_UDID=$UDID" >> "$GITHUB_ENV"
           xcrun simctl list devices | grep "$UDID"
 
+      # Save Photos to Photos is tested against the simulator's real library: grant access up
+      # front so no permission prompt waits for a tap.
+      - name: Grant Photos access
+        run: |
+          xcrun simctl boot "$SIMULATOR_UDID" || true
+          xcrun simctl privacy "$SIMULATOR_UDID" grant photos-add com.glassessolver.k7q3m2
+          xcrun simctl privacy "$SIMULATOR_UDID" grant photos com.glassessolver.k7q3m2
+
       # Ad-hoc signing ("-"): the SDK fails to start in an unsigned simulator app (SDK issue
       # #197). Tests run one at a time because the simulated glasses are shared.
       - name: Run tests

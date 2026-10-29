@@ -89,22 +89,25 @@ struct ContentView: View {
 
 /// Solve: a companion to the glasses, which do the work. Built from two references:
 /// - Meta's CameraAccess sample: the root follows registration (setup until the glasses are
-///   connected), and each state gets one title, one line on what to do, and at most one action,
+///   linked), and each state gets one title, one line on what to do, and at most one action,
 ///   picked by a priority-ordered ladder.
 /// - Apple's samples (Food Truck, Backyard Birds): native navigation, a segmented picker for
-///   two modes, ContentUnavailableView for "nothing here yet" states.
+///   two modes, ContentUnavailableView for the state, a hairline thumbnail row.
+///
+/// "Connected" means one thing here: the app is holding a glasses session (Connect starts it,
+/// Disconnect ends it). Until then the glasses work with Meta AI as usual, even though the app
+/// is linked to them and can see them.
 struct SolveView: View {
   @Bindable var model: AppModel
   let openWorkspace: () -> Void
   let openSettings: () -> Void
-  @State private var showStartSession = false
   @State private var showSession = false
 
   var body: some View {
     NavigationStack {
       Group {
         if model.isRegistered {
-          ready
+          linked
         } else {
           setup
         }
@@ -121,22 +124,25 @@ struct SolveView: View {
             .fixedSize()
             .disabled(model.isBusy)
           }
+        }
+        if model.sessionActive {
           ToolbarItem(placement: .topBarTrailing) {
-            Button("Hands-Free", systemImage: "eyeglasses") {
-              if model.sessionActive { showSession = true } else { showStartSession = true }
+            Menu {
+              Button("Glasses Controls", systemImage: "list.bullet") { showSession = true }
+              Button("Disconnect", systemImage: "xmark", role: .destructive) { model.stopSession() }
+            } label: {
+              Label("Glasses", image: "Glasses")
             }
-            .disabled(!model.sessionActive && (model.isStartingSession || model.isBusy || !model.canSolve))
           }
         }
       }
       .navigationDestination(isPresented: $showSession) { SessionControlsView(model: model) }
-      .sheet(isPresented: $showStartSession) { StartSessionView(model: model) }
     }
   }
 
-  // MARK: - Connected: the state, what to do, one action
+  // MARK: - Linked: the state, what to do, one action
 
-  private var ready: some View {
+  private var linked: some View {
     VStack(spacing: 0) {
       status
         .padding(.top, 8)
@@ -144,47 +150,60 @@ struct SolveView: View {
         Label {
           Text(state.title)
         } icon: {
-          if model.phase == .idle {
-            Image(systemName: state.symbol)
-          } else {
+          if model.phase != .idle || model.isStartingSession {
             ProgressView()
               .controlSize(.large)
               .tint(.secondary)
+          } else if state.symbol == "Glasses" {
+            Image("Glasses")
+          } else {
+            Image(systemName: state.symbol)
           }
         }
       } description: {
         Text(state.detail)
       } actions: {
-        if !model.canSolve {
-          Button("Open Settings", action: openSettings)
-            .buttonStyle(.bordered)
-        } else if waitingForGlasses {
-          // As in Meta's CameraAccess: no action while waiting, just say so.
-          Label("Waiting for your glasses", systemImage: "hourglass")
-            .font(.footnote)
-            .foregroundStyle(.secondary)
-        } else if model.phase == .idle {
-          Button("Take Photo") { Task { await model.solve() } }
-            .buttonStyle(.bordered)
-            .disabled(!model.canStartPhoto)
-          if model.subject == .chemistry {
-            Button("Check Answer Sheet") { Task { await model.checkAnswerSheet() } }
-              .disabled(!model.canStartPhoto)
-          }
-        }
+        actions
       }
       .animation(.easeOut(duration: 0.2), value: state.title)
       bottom
     }
   }
 
-  /// One small line: which glasses, and whether they're there.
+  @ViewBuilder
+  private var actions: some View {
+    if !model.canSolve {
+      Button("Open Settings", action: openSettings)
+        .buttonStyle(.bordered)
+    } else if !model.sessionActive {
+      if !model.isStartingSession {
+        Button("Connect Glasses") { Task { await model.connect() } }
+          .buttonStyle(.borderedProminent)
+          .disabled(!model.hasActiveDevice)
+      }
+    } else if model.phase == .idle && !model.sessionPaused {
+      Button("Take Photo") { Task { await model.solve() } }
+        .buttonStyle(.bordered)
+        .disabled(!model.canStartPhoto)
+      if model.subject == .chemistry {
+        Button("Check Answer Sheet") { Task { await model.checkAnswerSheet() } }
+          .disabled(!model.canStartPhoto)
+      }
+    }
+  }
+
+  /// One small line: the glasses, and whether the app is connected to them.
   private var status: some View {
     HStack(spacing: 6) {
-      Circle()
-        .fill(model.hasActiveDevice ? Color(.systemGreen) : Color(.systemGray))
-        .frame(width: 6, height: 6)
+      Image("Glasses")
+        .resizable()
+        .scaledToFit()
+        .frame(width: 16, height: 16)
+        .foregroundStyle(.secondary)
       Text("Ray-Ban Meta")
+      Circle()
+        .fill(model.sessionActive && !model.sessionPaused ? Color(.systemGreen) : Color(.systemGray))
+        .frame(width: 6, height: 6)
       Text(statusText)
         .foregroundStyle(.secondary)
     }
@@ -193,7 +212,12 @@ struct SolveView: View {
   }
 
   private var statusText: String {
-    var text = model.sessionActive ? (model.sessionPaused ? "Paused" : "Hands-free") : (model.hasActiveDevice ? "Connected" : "Asleep")
+    var text: String
+    if model.sessionActive {
+      text = model.sessionPaused ? "Paused" : "Connected"
+    } else {
+      text = model.isStartingSession ? "Connecting…" : "Not connected"
+    }
     if model.testMode { text += " · Test Mode" }
     return text
   }
@@ -204,16 +228,17 @@ struct SolveView: View {
     if !model.canSolve { return ("Add Your API Key", "Solving needs a Claude API key.", "key") }
     switch model.phase {
     case .capturing: return ("Taking Photo", "Hold still.", "camera")
-    case .thinking: return ("Solving", "Press capture again to use a new photo.", "camera")
+    case .thinking:
+      return ("Solving", model.sessionActive ? "Press capture again to use a new photo." : "This takes a few seconds.", "camera")
     case .idle: break
     }
-    if model.sessionActive && model.sessionPaused { return ("Paused", "Tap your glasses to resume.", "pause.circle") }
-    if waitingForGlasses { return ("Glasses Asleep", "Unfold your glasses to wake them.", "eyeglasses") }
+    if model.isStartingSession { return ("Connecting", "Getting your glasses ready.", "Glasses") }
+    if !model.sessionActive {
+      if !model.hasActiveDevice { return ("Glasses Asleep", "Unfold your glasses to connect.", "Glasses") }
+      return ("Not Connected", "Your glasses work with Meta AI as usual until you connect.", "Glasses")
+    }
+    if model.sessionPaused { return ("Paused", "Tap your glasses to resume.", "pause.circle") }
     return ("Ready", "Look at \(page) and press capture.", "camera.viewfinder")
-  }
-
-  private var waitingForGlasses: Bool {
-    model.phase == .idle && !model.hasActiveDevice && !model.sessionActive
   }
 
   // MARK: - Bottom: the latest answer, as a row
@@ -282,7 +307,7 @@ struct SolveView: View {
     return ("Last page", questions.count == 1 ? "Question \(names)" : "Questions \(names)")
   }
 
-  // MARK: - Setup: before the glasses are connected
+  // MARK: - Setup: before the app is linked to the glasses in Meta AI
 
   /// What the glasses will do, then one action (the order Meta's CameraAccess onboarding uses).
   private var setup: some View {
@@ -498,10 +523,13 @@ struct SettingsView: View {
         Section {
           Toggle("Fast Answers", isOn: $model.fastAnswers)
           Toggle("Sharper Photos", isOn: $model.useHighResPhoto)
+          Toggle("Save Photos to Photos", isOn: Binding(
+            get: { model.savePhotosToLibrary },
+            set: { on in Task { await model.setSavePhotos(on) } }))
         } header: {
           Text("Solving")
         } footer: {
-          Text("Fast Answers start sooner and cost more. Sharper Photos read small print better but take longer.")
+          Text("Fast Answers start sooner and cost more. Sharper Photos read small print better but take longer. Save Photos to Photos adds each photo your glasses take to your library.")
         }
 
         Section("Speaking") {
@@ -716,7 +744,7 @@ private struct AdvancedSettingsView: View {
       Section {
         Toggle("Reverse Swipe Direction", isOn: $model.reverseSwipes)
         if model.isRegistered {
-          Button("Disconnect Glasses", role: .destructive) { model.disconnectGlasses() }
+          Button("Unlink from Meta AI", role: .destructive) { model.disconnectGlasses() }
         }
       } header: {
         Text("Glasses")
@@ -746,64 +774,6 @@ private struct AdvancedSettingsView: View {
     }
     .navigationTitle("Advanced")
     .navigationBarTitleDisplayMode(.inline)
-  }
-}
-
-struct StartSessionView: View {
-  @Bindable var model: AppModel
-  @Environment(\.dismiss) private var dismiss
-  @State private var prompt = ""
-
-  private var trimmedPrompt: String {
-    prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-  }
-
-  var body: some View {
-    NavigationStack {
-      List {
-        Section {
-          GlassesControlsList(subject: model.subject)
-        } header: {
-          Text("Glasses Controls")
-        } footer: {
-          Text("You can lock your iPhone. The glasses keep working.")
-        }
-
-        // Math runs on the buttons alone; chemistry still sends an editable prompt.
-        if model.subject == .chemistry {
-          Section {
-            TextField("Prompt", text: $prompt, axis: .vertical)
-              .lineLimit(3...10)
-            if prompt != model.subject.defaultPrompt {
-              Button("Reset to Default") { prompt = model.subject.defaultPrompt }
-            }
-          } header: {
-            Text("Prompt")
-          } footer: {
-            Text("Sent with every page you photograph.")
-          }
-        }
-      }
-      .navigationTitle(model.subject.title)
-      .navigationBarTitleDisplayMode(.inline)
-      .toolbar {
-        ToolbarItem(placement: .cancellationAction) {
-          Button("Cancel") { dismiss() }
-        }
-        ToolbarItem(placement: .confirmationAction) {
-          Button("Start") {
-            let prompt = model.subject == .chemistry ? trimmedPrompt : model.subject.defaultPrompt
-            // Dismiss first so a camera-permission alert can appear on the main screen.
-            dismiss()
-            Task { await model.startSession(prompt: prompt) }
-          }
-          .disabled(model.subject == .chemistry && trimmedPrompt.isEmpty)
-        }
-      }
-      .onAppear { if prompt.isEmpty { prompt = model.subject.defaultPrompt } }
-    }
-    .listStyle(.grouped)
-    .preferredColorScheme(.dark)
   }
 }
 
