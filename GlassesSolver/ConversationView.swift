@@ -166,7 +166,7 @@ private struct HistoryRow: View {
       Image(systemName: row.symbol)
         .font(.body)
         .frame(width: 40, height: 40)
-        .background(Color(white: 0.16), in: Circle())
+        .background(Color(.tertiarySystemFill), in: Circle())
         .accessibilityHidden(true)
       VStack(alignment: .leading, spacing: 3) {
         HStack(spacing: 6) {

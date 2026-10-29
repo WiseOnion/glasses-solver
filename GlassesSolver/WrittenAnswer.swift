@@ -338,37 +338,51 @@ struct WrittenAnswerScreen: View {
         header
         WrittenAnswerView(data: data, emptyMessage: emptyMessage)
         result
-        controls
+        thumbnail
       }
       .background(Color.black.ignoresSafeArea())
+      .navigationTitle(title)
       .navigationBarTitleDisplayMode(.inline)
-      .toolbarBackground(.black, for: .navigationBar)
-      .toolbarBackground(.visible, for: .navigationBar)
       .toolbar {
-        ToolbarItem(placement: .principal) {
-          Text(title)
-            .font(.headline)
-            .foregroundStyle(.white)
-        }
         ToolbarItem(placement: .topBarLeading) {
-          Button {
-            dismiss()
-          } label: {
-            Image(systemName: "chevron.left")
-              .font(.body.weight(.semibold))
-          }
-          .accessibilityLabel("Back")
+          Button("Back", systemImage: "chevron.left") { dismiss() }
         }
         if let model {
           ToolbarItem(placement: .topBarTrailing) {
-            Button("Stop", systemImage: "stop.circle") { model.stopSpeaking() }
+            Button("Stop", systemImage: "stop.fill") { model.stopSpeaking() }
+          }
+          ToolbarItemGroup(placement: .bottomBar) {
+            if model.subject == .math {
+              Button("Previous", systemImage: "chevron.left") { model.moveProblem(by: -1) }
+                .disabled((model.workspace?.index ?? 0) == 0)
+              Spacer()
+              Button("Explain", systemImage: "text.bubble") { model.explainCurrentProblem() }
+              Button("Repeat", systemImage: "arrow.counterclockwise") { model.repeatAnswer() }
+              Button("Check", systemImage: "checkmark.circle") { model.checkCurrentProblem() }
+                .disabled(model.isChecking)
+              Spacer()
+              Button("Next", systemImage: "chevron.right") { model.moveProblem(by: 1) }
+                .disabled(model.workspace.map { $0.index >= $0.labels.count - 1 } ?? true)
+            } else {
+              Button("Previous", systemImage: "chevron.left") { model.replayQuestion(by: -1) }
+              Spacer()
+              Button("Repeat", systemImage: "arrow.counterclockwise") { model.repeatWriteLine() }
+              Spacer()
+              Button("Next", systemImage: "chevron.right") { model.replayQuestion(by: 1) }
+            }
+          }
+        } else if let onReplay = saved?.onReplay {
+          ToolbarItemGroup(placement: .bottomBar) {
+            Spacer()
+            Button("Play Again", systemImage: "play.fill", action: onReplay)
+              .labelStyle(.titleAndIcon)
+            Spacer()
           }
         }
       }
       .sheet(isPresented: $showPhoto) { PhotoDetailView(image: photo) }
     }
     .preferredColorScheme(.dark)
-    .tint(.white)
   }
 
   // MARK: - Top: the photo and what the problem asks
@@ -379,13 +393,12 @@ struct WrittenAnswerScreen: View {
       HStack(alignment: .center, spacing: 12) {
         Text(subtitle)
           .font(.subheadline)
-          .foregroundStyle(Color(white: 0.62))
+          .foregroundStyle(.secondary)
           .lineLimit(2)
         Spacer(minLength: 0)
       }
-      .padding(.horizontal, 20)
+      .padding(.horizontal, 16)
       .padding(.vertical, 10)
-      .overlay(alignment: .bottom) { Rectangle().fill(Color(white: 0.14)).frame(height: 0.5) }
     }
   }
 
@@ -445,7 +458,7 @@ struct WrittenAnswerScreen: View {
           ForEach(lines.notes, id: \.self) { note in
             Text(note)
               .font(.callout)
-              .foregroundStyle(Color(white: 0.62))
+              .foregroundStyle(.secondary)
           }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -455,7 +468,7 @@ struct WrittenAnswerScreen: View {
       }
       .frame(maxHeight: 200)
       .fixedSize(horizontal: false, vertical: true)
-      .overlay(alignment: .top) { Rectangle().fill(Color(white: 0.14)).frame(height: 0.5) }
+      .background(Color(.secondarySystemBackground))
     }
   }
 
@@ -482,96 +495,26 @@ struct WrittenAnswerScreen: View {
 
   // MARK: - Controls
 
+  /// The photo, small, at the bottom leading corner: tap to see it full screen.
   @ViewBuilder
-  private var controls: some View {
-    VStack(spacing: 10) {
-      if let photo {
-        HStack {
-          Button {
-            showPhoto = true
-          } label: {
-            Image(uiImage: photo)
-              .resizable()
-              .scaledToFill()
-              .frame(width: 64, height: 64)
-              .clipShape(RoundedRectangle(cornerRadius: 8))
-          }
-          .accessibilityLabel("Photo. Opens it full screen.")
-          Spacer()
+  private var thumbnail: some View {
+    if let photo {
+      HStack {
+        Button {
+          showPhoto = true
+        } label: {
+          Image(uiImage: photo)
+            .resizable()
+            .scaledToFill()
+            .frame(width: 56, height: 56)
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         }
-        .padding(.horizontal, 20)
+        .buttonStyle(PressScaleStyle(scale: 0.96))
+        .accessibilityLabel("Photo. Opens it full screen.")
+        Spacer()
       }
-      if let model {
-        VStack(spacing: 0) {
-          HStack(spacing: 0) {
-            if model.subject == .math {
-              ControlButton(title: "Explain", symbol: "text.bubble") { model.explainCurrentProblem() }
-              ControlButton(title: "Repeat", symbol: "arrow.counterclockwise") { model.repeatAnswer() }
-              ControlButton(title: "Check", symbol: "checkmark.circle") { model.checkCurrentProblem() }
-                .disabled(model.isChecking)
-            } else {
-              ControlButton(title: "Repeat", symbol: "arrow.counterclockwise") { model.repeatWriteLine() }
-            }
-          }
-          HStack {
-            Button {
-              if model.subject == .math { model.moveProblem(by: -1) } else { model.replayQuestion(by: -1) }
-            } label: {
-              Label("Previous", systemImage: "chevron.left")
-                .frame(minHeight: 44)
-            }
-            .disabled(model.subject == .math && (model.workspace?.index ?? 0) == 0)
-            Spacer()
-            Button {
-              if model.subject == .math { model.moveProblem(by: 1) } else { model.replayQuestion(by: 1) }
-            } label: {
-              HStack(spacing: 6) {
-                Text("Next")
-                Image(systemName: "chevron.right")
-              }
-              .frame(minHeight: 44)
-            }
-            .disabled(model.subject == .math && (model.workspace.map { $0.index >= $0.labels.count - 1 } ?? true))
-          }
-          .font(.subheadline)
-          .foregroundStyle(Color(white: 0.8))
-          .padding(.horizontal, 20)
-        }
-        .padding(.vertical, 6)
-        .background(Color(white: 0.07), in: RoundedRectangle(cornerRadius: 16))
-        .padding(.horizontal, 12)
-        .padding(.bottom, 4)
-      } else if let onReplay = saved?.onReplay {
-        Button(action: onReplay) {
-          Label("Play Again", systemImage: "play.circle")
-            .frame(maxWidth: .infinity, minHeight: 44)
-        }
-        .buttonStyle(.bordered)
-        .padding(.horizontal, 20)
-        .padding(.bottom, 8)
-      }
+      .padding(.horizontal, 16)
+      .padding(.vertical, 10)
     }
-    .padding(.top, 10)
-  }
-}
-
-/// One quiet action in the written answer's toolbar.
-private struct ControlButton: View {
-  let title: String
-  let symbol: String
-  let action: () -> Void
-
-  var body: some View {
-    Button(action: action) {
-      VStack(spacing: 4) {
-        Image(systemName: symbol)
-          .font(.body)
-        Text(title)
-          .font(.caption2)
-      }
-      .frame(maxWidth: .infinity, minHeight: 44)
-      .foregroundStyle(Color(white: 0.75))
-    }
-    .buttonStyle(.plain)
   }
 }

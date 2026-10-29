@@ -425,9 +425,9 @@ final class AppModel {
     self.fastAnswers = UserDefaults.standard.object(forKey: Self.fastAnswersDefaultsKey) as? Bool ?? true
     self.subject = UserDefaults.standard.string(forKey: Self.subjectDefaultsKey).flatMap(ClaudeClient.Subject.init)
       ?? .math
-    self.photoAction =
-      UserDefaults.standard.string(forKey: Self.photoActionDefaultsKey).flatMap(ClaudeClient.PhotoAction.init)
-      ?? .solve
+    // A photo is always a solve unless a check is asked for (the glasses' double press, or
+    // Check Sheet), so a check left on from before never turns a press into a check.
+    self.photoAction = .solve
     let savedRate = UserDefaults.standard.object(forKey: Self.speechRateDefaultsKey) as? Float
     self.speechRate = savedRate.map { min(max($0, Speaker.rateRange.lowerBound), Speaker.rateRange.upperBound) }
       ?? Speaker.defaultRate
@@ -575,6 +575,13 @@ final class AppModel {
     } catch {
       errorMessage = ErrorDetail.alertText(error)
     }
+  }
+
+  /// Chemistry's Check Sheet: one photo of a filled-in answer sheet, checked.
+  func checkAnswerSheet() async {
+    photoAction = .check
+    await solve()
+    photoAction = .solve
   }
 
   func confirmCameraPermission() async {
