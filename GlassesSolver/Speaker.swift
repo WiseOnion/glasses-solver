@@ -236,8 +236,16 @@ final class Speaker: NSObject {
   private(set) var heldForRoute = false {
     didSet {
       guard heldForRoute != oldValue else { return }
-      neural.held = heldForRoute
+      neural.held = heldForRoute || pausedByWearer
       onHoldChanged?(heldForRoute)
+    }
+  }
+  /// True while the wearer has paused the glasses session (one tap on the touchpad). Speech
+  /// waits for as long as the pause lasts, and anything that arrives meanwhile waits too.
+  private(set) var pausedByWearer = false {
+    didSet {
+      guard pausedByWearer != oldValue else { return }
+      neural.held = heldForRoute || pausedByWearer
     }
   }
   /// True while the glasses take a photo, which briefly drops their audio.
@@ -346,7 +354,29 @@ final class Speaker: NSObject {
     heldForRoute = false
     heldSince = nil
     lastProgress = Date()
-    synthesizer.continueSpeaking()
+    if !pausedByWearer { synthesizer.continueSpeaking() }
+  }
+
+  /// The wearer paused the session: speech stops where it is until `resumeForWearer`.
+  func pauseForWearer() {
+    guard !pausedByWearer else { return }
+    diag("audio", "paused by the wearer")
+    pausedByWearer = true
+    synthesizer.pauseSpeaking(at: .immediate)
+    if isActive || answerOpen {
+      // Nothing is heard while paused, so the silent loop keeps iOS from suspending the app.
+      keepRunningDuringHold()
+      startWatchdog()
+    }
+  }
+
+  /// The wearer resumed the session: speech carries on from where it stopped.
+  func resumeForWearer() {
+    guard pausedByWearer else { return }
+    diag("audio", "resumed by the wearer")
+    pausedByWearer = false
+    lastProgress = Date()
+    if !heldForRoute { synthesizer.continueSpeaking() }
   }
 
   private func keepRunningDuringHold() {
@@ -371,7 +401,7 @@ final class Speaker: NSObject {
       diag("audio", "keep-alive \(started ? "restarted" : "FAILED to restart") after the interruption")
     }
     neural.resumeAfterInterruption()
-    if !heldForRoute { synthesizer.continueSpeaking() }
+    if !heldForRoute && !pausedByWearer { synthesizer.continueSpeaking() }
   }
 
   /// Ends a hold (`heldForRoute`) and plays the speech through whatever is connected now.
@@ -398,7 +428,7 @@ final class Speaker: NSObject {
   /// speech again from where it stopped if it hasn't moved for longer than it could take.
   /// Returns false when there's nothing left to watch.
   private func checkSpeech() -> Bool {
-    guard isActive || answerOpen || heldForRoute else {
+    guard isActive || answerOpen || heldForRoute || pausedByWearer else {
       watchdog = nil
       return false
     }
@@ -415,6 +445,10 @@ final class Speaker: NSObject {
             + Self.routeDescription)
         endHold()
       }
+      return true
+    }
+    if pausedByWearer {
+      lastProgress = now  // waiting on purpose, for as long as the pause lasts
       return true
     }
     if interrupted {
@@ -765,7 +799,7 @@ final class Speaker: NSObject {
     utteranceIndex[ObjectIdentifier(utterance)] = index
     synthesizer.speak(utterance)
     // Speech queued during a hold waits with the rest.
-    if heldForRoute { synthesizer.pauseSpeaking(at: .immediate) }
+    if heldForRoute || pausedByWearer { synthesizer.pauseSpeaking(at: .immediate) }
   }
 
   /// The neural voice couldn't run: say what it had left in Apple's voice, and keep using

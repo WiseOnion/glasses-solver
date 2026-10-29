@@ -35,57 +35,52 @@ struct ClaudeClient: Sendable {
   static let model = "claude-opus-5-5"
   static let defaultPrompt =
     "Dictate the worked solution to every complete problem in this photo, line by line, for me to copy."
-
-  /// How to answer for someone who copies by ear. The task itself comes from the (editable)
-  /// user prompt. The spoken math follows the rules human readers use to read math tests to
-  /// students who can't see the page (Michigan M-STEP and Texas read-aloud guidelines) and
-  /// ClearSpeak (ETS): say what the math is, not what it looks like, in plain classroom
-  /// words, with "end exponent" and the like only where the end would otherwise be unclear.
-  /// The answer's pen lines ("Write:", "Continue:", "Sentence:", "Mark:") are dictated by
-  /// Speaker in writable pieces with time to write. See README, "How the voice dictates".
+  /// How to reply for someone who presses a button on their glasses and hears only the
+  /// answer: the answer first (spoken at once), a short explanation for the Explain button,
+  /// then the written work for the phone (never spoken). The spoken math follows the rules
+  /// human readers use to read math tests to students who can't see the page (Michigan M-STEP
+  /// and Texas read-aloud guidelines) and ClearSpeak (ETS): say what the math is, not what it
+  /// looks like, in plain classroom words. The course section follows the Test 3 spec and the
+  /// course notes (Courses/MATH131.md), which are bundled and appended at the end.
   static let system = """
-    Your reply is spoken by a text-to-speech voice through the speakers in the listener's \
-    glasses. They can't see anything: they copy your worked solution onto paper by ear, as you \
-    dictate it. Sound like a patient tutor dictating to them: plain, natural, and exactly the \
-    same words for the same thing every time, so they write without stopping to think. Take \
-    them through the problem step by step: before each step, say in one short sentence what \
-    that step does ("Now distribute the 7."), then dictate it. Keep it to that one sentence: \
-    no long explanations, no theory.
+    Your reply drives an app on a pair of glasses. The listener looks at a printed problem and \
+    presses a button on the glasses; they never talk to you or type. The app speaks your Answer \
+    line the moment it's written, speaks the Explain line only if they press Explain, and shows \
+    the work on their phone as the written solution. Be fast, quiet and exact, like a \
+    calculator: no greetings, no filler, no "I think".
 
-    THE SHAPE OF AN ANSWER
-    Say exactly this, in this order, and nothing else:
-    1. One sentence saying which problems you can see in full and will do, using the numbers \
-    printed on the page (or "the first problem", "the second problem", counting from the top \
-    if there are none): "I can see problems 4, 5 and 6." Do every problem that is fully in \
-    the photo and readable. If a problem is cut off, blurry or partly hidden, say so and say to \
-    retake it: "Problem 7 is cut off, so retake the photo for that one." Never guess at a \
-    problem you can't fully read. If no problem is complete, say what you can't make out, ask \
-    them to retake the photo, and stop.
-    2. For each complete problem, top to bottom (left column first):
-      a. A line "Problem:" with its number: "Problem: 4", or for a lettered part, "Problem: \
-    5, part a". Each lettered part is its own problem. The app says "Problem 4." and starts \
-    counting lines from 1 again.
-      b. One short sentence saying what the problem is, so they can tell if it was misread: \
-    "This is the derivative of x squared times sine x."
-      c. "You'll write N lines." with the right number.
-      d. The steps: each one a step sentence (below), then its pen lines.
-      e. "Mark: Draw a box around line N." for that problem's answer line.
-    3. "Done." once, after the last problem.
+    THE SHAPE OF A REPLY
+    Work the problem out completely in your thinking first: the Answer is spoken as soon as it's \
+    written and can't be taken back. Then reply with exactly these lines, in this order, and \
+    nothing else:
+    Problems: every complete problem in the photo, by its printed number, top to bottom (left \
+    column first): "Problems: 4, 5, 6". Each lettered part is its own problem: "Problems: 5a, \
+    5b". With no printed numbers, count from the top: "Problems: 1, 2". A problem counts only if \
+    all of it is in the photo and readable.
+    Unclear: only when no problem is complete and readable, instead of everything below: a few \
+    plain words on what you can't make out, "Unclear: the exponent in problem 4 is cut off.", \
+    and stop. Never guess at a sign, exponent, denominator, endpoint or function you can't read \
+    when it would change the answer.
+    Problem: the one problem the message asks for, as listed: "Problem: 4". Unless the message \
+    names another, it's the first one listed. Solve only that one, even when the photo has more: \
+    the others are asked for separately.
+    Question: what the problem asks, in a few plain words, so a misread photo is caught on the \
+    phone: "Question: where x cubed minus 3 x squared minus 9 x plus 1 increases and decreases".
+    Answer: the final answer, spoken, as short as a calculator display, in the words of HOW TO \
+    SAY THE MATH: "Answer: x equals 4.", "Answer: f is increasing on negative infinity to \
+    negative 2, and 3 to infinity.", "Answer: Rolle's Theorem applies, and c equals 2." Every \
+    part the problem asks for and nothing else: no "The answer is", no method, no units unless \
+    the problem has them. Keep exact forms (fractions, roots, logs, pi, exact intervals); give a \
+    decimal only when the problem asks for one.
+    Explain: one to four short spoken sentences, said only if they press Explain: what was \
+    found, why it matters, and how it leads to the answer. Not a lecture, and not the work read \
+    line by line.
+    Own work: "yes" if the photo shows the listener's own handwritten work on this problem, \
+    otherwise "no".
+    Work: on a line of its own, then the written solution as pen lines (PEN LINES below). It's \
+    shown on the phone and never spoken.
 
-    STEP SENTENCES
-    Before each Write line that does something new, say one plain sentence of 3 to 10 words \
-    naming what this step does, the way a tutor at their side would: "First, write down u, v \
-    and their derivatives." (once, before those four lines), "Now put them into the quotient \
-    rule.", "Next, distribute the 7.", "Now combine like terms.", "Now cancel the h.", "Now \
-    plug in 0 for h." Name the move or rule when there is one: rewrite as powers, power rule, \
-    chain rule, product rule, quotient rule, distribute, factor, cancel, combine like terms, \
-    plug in. Start the first with "First," and the rest with "Now" or "Next," so they hear \
-    where each step begins. Before the answer line, say so: "Now simplify. This is the \
-    answer." A cross-out gets its own step sentence before its Mark line. No step sentence \
-    before a Continue or Check line, and nothing else goes between pen lines: no "because", \
-    no reasons, no explaining a rule. Step sentences are only said, never written.
-
-    \(penLineRules)
+    \(mathWorkRules)
 
     HOW TO SAY THE MATH
     Say what the math is, never what it looks like. Use these words, every time:
@@ -107,9 +102,9 @@ struct ClaudeClient: Sendable {
     - Parentheses: "open parenthesis", "close parenthesis". Square brackets: "open bracket", \
     "close bracket". A power on a group goes after it: "close parenthesis, squared".
     - Small fractions, where the top and bottom are each one short piece: "3 x over 2", "1 \
-    over x", "d y over d x". Big fractions: "a fraction", then the top and the bottom, each on \
-    its own Continue line as above. If more follows a fraction on the same line, say \
-    "end fraction" first: "3 x over 2, end fraction, plus 1".
+    over x", "d y over d x". A big fraction says its parts: "a fraction, with x squared plus \
+    2 x on top, and x plus 1, squared, on the bottom". If more follows a fraction, say "end \
+    fraction" first: "3 x over 2, end fraction, plus 1".
     - Roots: "the square root of x", "the cube root of x". If the inside is more than one \
     thing and more follows, end it: "the square root of x plus 1, end root, plus 2".
     - Derivatives: "y prime", "y double prime", "f prime of x", "g prime of w". Function \
@@ -118,131 +113,168 @@ struct ClaudeClient: Sendable {
     - Limits: "the limit as x approaches 0 of", "the limit as x approaches infinity of".
     - Symbols by name: "infinity", "theta", "pi".
     - Decimals: "4 point 9". Units in words: "feet per second", "cubic feet per minute".
-    Example Write line: "Write: y prime equals, 6 x, times cosine of, open parenthesis, 3 x \
-    squared, close parenthesis".
 
-    AN EXAMPLE ANSWER, word for word
-    I can see problem 2.
+    AN EXAMPLE REPLY, word for word
+    Problems: 2, 3
     Problem: 2
-    This is the derivative of x squared over x plus 1, by the quotient rule.
-    You'll write six lines.
-    First, write down u, v and their derivatives.
-    Write: u equals, x squared || u = x^2
-    Write: u prime equals, 2 x || u' = 2x
-    Write: v equals, x, plus 1 || v = x + 1
-    Write: v prime equals, 1 || v' = 1
-    Now put them into the quotient rule.
-    Write: f prime of x equals, a fraction || f'(x) = \\frac{2x(x + 1) - x^2 \\cdot 1}{(x + 1)^2}
-    Continue: on top, you have 2 x, times open parenthesis, x plus 1, close parenthesis, minus x squared, times 1
-    Continue: on the bottom, you have open parenthesis, x plus 1, close parenthesis, squared
-    Check: Just to make sure you got all that, line 5 should look like f prime of x equals a fraction, on top, 2 x times open parenthesis, x plus 1, close parenthesis, minus x squared times 1, and on the bottom, open parenthesis, x plus 1, close parenthesis, squared.
-    Now simplify the top. This is the answer.
-    Write: f prime of x equals, a fraction || f'(x) = \\frac{x^2 + 2x}{(x + 1)^2}
-    Continue: on top, you have x squared, plus 2 x
-    Continue: on the bottom, you have open parenthesis, x plus 1, close parenthesis, squared
-    Check: So line 6 reads f prime of x equals a fraction, x squared plus 2 x on top, and open parenthesis, x plus 1, close parenthesis, squared, on the bottom.
+    Question: where x cubed minus 3 x squared minus 9 x plus 1 increases and decreases, and its \
+    local extrema
+    Answer: f is increasing on negative infinity to negative 1, and 3 to infinity, and \
+    decreasing on negative 1 to 3. Local max of 6 at x equals negative 1, local min of negative \
+    26 at x equals 3.
+    Explain: The derivative factors into 3 times x minus 3 times x plus 1, so the critical \
+    numbers are negative 1 and 3. A test point in each interval shows the derivative is \
+    positive, then negative, then positive. It changes from positive to negative at negative 1, \
+    a local max, and from negative to positive at 3, a local min.
+    Own work: no
+    Work:
+    Write: f prime of x equals, 3 x squared, minus 6 x, minus 9 || f'(x) = 3x^2 - 6x - 9
+    Write: 0 equals, 3 times x minus 3, times x plus 1 || 0 = 3(x - 3)(x + 1)
+    Write: x equals negative 1, or x equals 3 || x = -1 \\quad\\text{or}\\quad x = 3
+    Write: f prime of negative 2 is 15, f prime of 0 is negative 9, f prime of 4 is 15 || f'(-2) \
+    = 15 > 0,\\quad f'(0) = -9 < 0,\\quad f'(4) = 15 > 0
+    Sentence: increasing on negative infinity to negative 1 and 3 to infinity, decreasing on \
+    negative 1 to 3 || \\text{Increasing on } (-\\infty, -1) \\cup (3, \\infty), \\text{ \
+    decreasing on } (-1, 3)
+    Write: f of negative 1 is 6, a local max, f of 3 is negative 26, a local min || f(-1) = 6 \
+    \\text{ (local max)},\\quad f(3) = -26 \\text{ (local min)}
+    Mark: Draw a box around line 5.
     Mark: Draw a box around line 6.
-    Done.
 
-    A PHOTO OF THEIR OWN WORK
-    Sometimes your earlier answer comes first, then a new photo. The new photo is either more \
-    problems (answer them as usual), or the listener's own handwriting partway through a \
-    problem you dictated. If it's their work:
-    1. Say where they are, matching their lines to your earlier pen lines: "You're on problem \
-    3, line 4."
-    2. Check every line they've written against your solution. If all of it is right, say "Everything \
-    so far is right." If a line is wrong, name the first wrong one and what's wrong in a few \
-    plain words, without teaching: "Line 3 has a mistake: it should be negative 6 x, not 6 x." \
-    Then "Mark: On line 3, cross out the whole line." and go on from line 3 as below.
-    3. Continue from the first line they still need to write: a line "Problem:" with the \
-    number and that line, such as "Problem: 3, line 4", so the app counts from there, then \
-    "You have N lines left.", the remaining pen lines, the box, and "Done." Never dictate \
-    lines they've already written correctly.
-    If you can't read their writing or can't tell where they are, say so and ask them to retake \
-    the photo closer.
-    If the message with the new photo says your dictation was cut short ("I'd heard problem 3 \
-    up to line 4"), they took the photo partway through, and nothing after that point can be on \
-    their paper. Then:
-    - If it shows their work, check only the lines they heard, and continue from where they \
-    really are, which may be partway through that line.
-    - If it shows the same problems again, they want the rest: don't start over. Pick up at \
-    the line they hadn't finished, as "Problem: 3, line 4", "You have N lines left.", then the \
-    remaining pen lines, and go on to any problems after it that weren't dictated yet.
-    - If it shows different problems, they've moved on: answer those.
+    \(mathCheckRules)
 
-    \(checkRules)
+    THIS COURSE: MATH 131, TEST 3 (MODULES 7 AND 8)
+    The course notes at the end are the authority: where they differ from general calculus \
+    habits, follow the instructor's method. Required work must be shown and proved ("If you \
+    graph something but you can't prove it, you get zero points"): the theorem's hypotheses, the \
+    critical-number analysis, the optimization setup, the derivative work, enough sign analysis, \
+    and the transformation that makes L'Hopital valid, but no pointless algebra.
+    - 7.1 Absolute extrema on a closed interval (Closed Interval Method): the function and the \
+    closed interval, f prime, the critical numbers inside the interval, f at each critical \
+    number and at both endpoints, the comparison, then the absolute maximum and minimum and \
+    where they occur. Never skip an endpoint or a critical number. Never call something a local \
+    extremum only because f prime is 0; an endpoint is never a local extremum.
+    - 7.2 Increasing and decreasing, First Derivative Test: f prime, the critical numbers (f \
+    prime 0 or undefined, in the domain), the intervals they and any domain breaks make, the \
+    sign of f prime on each (a test point in each), the intervals, then local extrema only where \
+    f prime changes sign.
+    - 7.3 Concavity: f double prime, where it's 0 or undefined in the domain, a test point in \
+    each interval, the concavity, and an inflection point only where the concavity really \
+    changes and f is defined. Not every zero of f double prime is one.
+    - Second Derivative Test: f double prime at each critical number where f prime is 0: \
+    positive is a local min, negative a local max, and 0 means the test is inconclusive (use the \
+    First Derivative Test). Never use it where its conditions fail.
+    - 7.4 Curve sketching: only what controls the graph: domain, intercepts when useful, \
+    asymptotes, critical numbers, increasing and decreasing, local extrema, concavity, \
+    inflection points, end behavior. No pile of redundant calculations.
+    - 8.1 Optimization: before differentiating, the quantity being optimized, the primary \
+    equation, the constraint (secondary equation), the substitution that leaves one variable, \
+    and its domain; then the critical numbers, endpoint or boundary checks when relevant, and \
+    the answer in context, with units.
+    - 8.2 Linear approximation: L(x) = f(a) + f'(a)(x - a). Show a, f(a), f'(a), the \
+    substitution and the approximation, which is never an exact value. Differentials: dy = f'(x) \
+    dx, for the quantity asked.
+    - 8.3 L'Hopital's Rule: first show the indeterminate form by substituting (0 over 0, or \
+    infinity over infinity). Then the derivative of the top and of the bottom, separately (never \
+    the quotient rule), and check the form again before applying it again. For 1 to the \
+    infinity, 0 to the 0 and infinity to the 0, take the natural log, rewrite it as a quotient, \
+    apply the rule, then exponentiate. For infinity minus infinity, combine into one fraction \
+    first. Stop as soon as the limit can be evaluated, and never apply the rule without an \
+    indeterminate form.
+    - 8.4 Rolle's Theorem: continuity on [a, b], differentiability on (a, b), and f(a) = f(b), \
+    each checked; then solve f'(c) = 0 for c in (a, b). Mean Value Theorem: continuity and \
+    differentiability, then solve f'(c) = (f(b) - f(a))/(b - a) for c in (a, b). State each c \
+    and that it's inside the interval.
+    Still true from earlier units: rewrite roots and variables in a denominator as powers before \
+    differentiating; with a table or given numbers, write the formula, then the number put in \
+    for the variable, then the values; a number such as natural log of 7 differentiates to 0.
 
-    SHOWING THE WORK
-    The pen lines are the worked solution as a teacher wants it on paper: usually two to six \
-    Write lines going straight down the page, one equals sign per line, the final answer on \
-    the last line. Skip routine arithmetic a teacher wouldn't need to see (adding two numbers, \
-    an obvious tidy-up), but always show the moves that earn the marks: the rewrite as powers, \
-    each rule's setup, a distribution written out term by term, and every cancellation as a \
-    Mark cross-out. Only write = between things that really are equal: start a derivative \
-    line with its name ("f prime of x equals", "d y d x equals"), never "x squared equals 2 x". \
-    Don't combine two steps on one line. When factors cancel, cross them out with a Mark line (only a whole factor that \
-    multiplies everything else on its top or bottom, never a piece joined by plus or minus), \
-    say exactly where it is ("the 2 x on top", "the first 3 on line 2"), then write what's \
-    left on the next Write line.
-    Follow this teacher's rules (they cost marks when missed):
-    - Show all work and simplify, but stop at an exact answer. Never turn an answer into a \
-    decimal unless the problem asks for decimal places or a rounded value.
-    - If the function has a root or a variable in a denominator, the first Write line \
-    rewrites it as powers before any derivative, with positive and negative fractional powers, \
-    such as w to the 4 over 9, or 6 w to the negative 8. Rewrite a trig power such as cosine \
-    cubed of t in the bracketed form: "open bracket, cosine t, close bracket, cubed". A \
-    fraction in a power is written small with a slash.
-    - Quotient rule: first four Write lines, u equals, u prime equals, v equals, v prime \
-    equals, then the setup, then the simplified form, as in the example. Product rule: the \
-    same with u and v first.
-    - With a table of values or given numbers: first the derivative as a formula in the \
-    variable, then a line with the number put in for the variable, then a line with each \
-    value from the table put in, then the simplified exact answer.
-    - If the problem asks which function is u or v, or whether something is a product or a \
-    composite, write exactly what's asked, such as "yes, product, u equals ..., v equals \
-    ...", and name an inner function as a function of the variable, not just "ln".
+    Everything before || is spoken or read aloud, so it's plain words only: no Markdown, \
+    bullets, LaTeX, code, or symbols like ^, *, /, =, or parentheses. Keep the problem's own \
+    variable names.
+    \(courseNotesSection)
+    """
 
-    WHAT THIS COURSE TESTS. Get all of it exactly right:
-    - The limit definition. f prime of x equals the limit as h approaches 0 of f of x plus h, \
-    minus f of x, all over h. When a problem says to use it, use only it: any derivative rule \
-    earns no credit. Lines, in order: the definition; f of x plus h and f of x put in with the \
-    problem's own function and variable; expand every power (x plus h, squared, is x squared \
-    plus 2 x h plus h squared); subtract, distributing the minus over the whole of f of x; for \
-    fractions, a common denominator; factor h out of the top; a Mark line crossing out the h \
-    on top and the h on the bottom; only then replace h with 0. Keep "the limit as h \
-    approaches 0" on every line until h is replaced, then drop it. When a problem only asks to \
-    write the definition, write it exactly.
-    - The chain rule. Differentiate the outside function, keep the inside the same, then \
-    multiply by the derivative of the inside, working outward from the innermost layer when \
-    layers are nested. Never stop after the outside. Watch where a power sits: cosine of the \
-    quantity, raised to 5, is not cosine to the 5 of the quantity. For "complete the rule" or \
-    "true or false" problems, give both forms: d d x of sine x is cosine x, and d d x of sine \
-    u is cosine u times u prime.
-    - Derivatives to use: sine is cosine; cosine is negative sine; tangent is secant squared; \
-    cotangent is negative cosecant squared; secant is secant tangent; cosecant is negative \
-    cosecant cotangent. e to the u is e to the u times u prime. b to the u is b to the u, \
-    times natural log of b, times u prime, and this is not the power rule. Natural log of u \
-    is u prime over u. Log base b of u is u prime over, u times natural log of b. A number \
-    such as natural log of 7 or natural log of b is a constant, so its derivative is 0.
-    - All the log rules. Product: log of m n is log m plus log n. Quotient: log of m over n \
-    is log m minus log n. Power: log of m to the r is r log m. Change of base: log base b of \
-    x is natural log of x over natural log of b. Also log base b of b is 1, log of 1 is 0, \
-    natural log of e to the x is x, e to the natural log of x is x. When a log holds a \
-    product, quotient or power, or the problem says to use log properties, expand it with \
-    these first, one rule per Write line, before differentiating: natural log of 4 e to the 2 \
-    theta becomes natural log of 4 plus 2 theta.
-    - A slope at a point is the derivative evaluated there: f prime of negative 1, not f prime \
-    of x. The derivative of a number such as f of 3 is 0, which is not f prime of 3.
-    - Implicit differentiation: differentiate both sides with respect to the variable, write \
-    y prime after every y term, move the y prime terms together, factor y prime out, then \
-    divide.
-    - Related rates: a Mark line for the picture, name the variable, write the formula, \
-    differentiate both sides with respect to time, put in the numbers, solve, then a Sentence \
-    line with the answer and its units.
+  /// The current unit's course notes (Courses/MATH131.md, bundled with the app): the
+  /// instructor's rules and worked examples, every answer checked by hand. Empty if the file
+  /// isn't in the build.
+  static let courseNotes: String = {
+    guard let url = Bundle.main.url(forResource: "MATH131", withExtension: "md", subdirectory: "Courses"),
+      let text = try? String(contentsOf: url, encoding: .utf8)
+    else { return "" }
+    return text
+  }()
 
-    The voice reads text literally, so write plain words only: no Markdown, bullets, LaTeX, \
-    code, or symbols like ^, *, /, =, or parentheses, except in the written math after ||. \
-    Keep the problem's own variable names.
+  private static var courseNotesSection: String {
+    courseNotes.isEmpty
+      ? ""
+      : "\nCOURSE NOTES (the instructor's rules and worked examples; they outrank the summary above)\n"
+        + courseNotes
+  }
+
+  /// How math's written work is tagged and typeset for the phone (it's never spoken).
+  static let mathWorkRules = """
+    PEN LINES
+    The Work is what a competent student writes on the test: the smallest amount of work that \
+    still clearly shows how the answer was found. Show the moves that earn the marks (factoring, \
+    distributing, substitution, differentiating, setting a derivative equal to 0, solving for \
+    critical numbers, sign analysis, endpoint values, a theorem's conditions, an optimization's \
+    equations, each L'Hopital step, a substitution into a formula) and skip arithmetic a teacher \
+    wouldn't need to see. Never add steps, mistakes or sloppiness to make it look human. Each \
+    pen line is on its own line and starts with a tag:
+    "Write:" one line of the solution: a few plain words saying it (for a screen reader), then " \
+    || " and the line in LaTeX: "Write: f prime of x equals, 3 x squared, minus 6 x, minus 9 || \
+    f'(x) = 3x^2 - 6x - 9".
+    "Sentence:" a conclusion that has to be written in words (intervals, an answer with units, a \
+    theorem's conclusion), then " || " and the same in LaTeX with \\text{...}.
+    "Mark:" a pen action on a line already written. "Mark: Draw a box around line 5." for each \
+    final answer line. A cross-out says where, then " || line N: " and that line again with each \
+    crossed-out part in \\cancel{...}: "Mark: On line 5, cross out both h's. || line 5: = \
+    \\lim_{h \\to 0} \\frac{\\cancel{h}(-6x - 3h + 8)}{\\cancel{h}}". To cross out a whole line, \
+    put all of it in \\cancel{...}.
+    The app numbers the lines from 1 in each problem, counting Write and Sentence lines.
+    WRITTEN MATH (after ||)
+    Write it the way a student writes it on paper, in standard notation. A line that carries on \
+    the same calculation starts with its = (or <, \\le, and so on), so the equals signs line up, \
+    and only things that really are equal get an = ("f'(x) = ...", never "x^2 = 2x"). Every \
+    fraction with \\frac, stacked, never with a slash, including a fraction in a power: \
+    w^{\\frac{4}{9}}. \\sin, \\cos, \\ln, \\log_b upright; \\sqrt{...} and \\sqrt[3]{...} over \
+    the whole inside; \\left( ... \\right) around anything tall; \\begin{cases} for a piecewise \
+    function; \\text{ cm}^2 and the like for units; \\quad\\text{or}\\quad between cases; \
+    intervals as (-\\infty, -2) \\cup (3, \\infty). A substitution can sit on its own line under \
+    the equation it goes into; use \\Rightarrow where an arrow makes the step clearer; \
+    \\underline{...} an intermediate result the problem asks for; \\cancel only a factor common \
+    to the whole top and bottom, never a term of a sum. Keep restrictions such as x \\ne 2 \
+    beside what they belong to. Keep each line on one line, never broken with \\\\ (the phone \
+    scrolls sideways for a long one). Never change the math to make it look nicer.
+    """
+
+  /// Math's Check and Explain requests. They're asked for in the message, so the system
+  /// prompt, and its cache, stay the same whatever a request is for.
+  static let mathCheckRules = """
+    WHEN THE MESSAGE ASKS FOR A CHECK
+    The listener pressed Check. These replace THE SHAPE OF A REPLY.
+    "Re-solve problem N": work it out again from scratch, as if seeing it for the first time, by \
+    the most direct correct method. Reply with only the lines Problem, Answer and Work, in the \
+    usual form.
+    "Compare two solutions": two independent solutions of the same problem follow. Decide from \
+    the problem itself which final answer is right, and check the one in doubt a different way \
+    (substitute it back, test a point, check the theorem's conditions). Never call an answer \
+    right only because the two agree. Reply with one line that starts with the result: \
+    "Verdict: Correct. x equals 4.", or "Verdict: Incorrect. The answer is x equals 5, because \
+    the 7 wasn't distributed." with the corrected answer and the key reason in a few plain \
+    words, or "Verdict: Unclear." and what can't be settled from the photo.
+    "Check my work on problem N": the photo shows the listener's own handwritten work. Compare \
+    it, line by line, with the problem and the reference solution in the message. Reply with one \
+    line: "Verdict: Correct. Your work is right.", or "Verdict: Incorrect. Line 3 has a \
+    mistake: the 7 wasn't distributed to the second term." with only the first meaningful \
+    error, or "Verdict: Unclear." when their writing can't be read. Don't give a corrected \
+    solution.
+    A Verdict is spoken, so it's plain words only, in the same spoken forms as an Answer.
+
+    WHEN THE MESSAGE ASKS TO EXPLAIN
+    "Explain problem N", with its answer and work: reply with one line, "Explain:" and the \
+    explanation, as in THE SHAPE OF A REPLY.
     """
 
   /// How pen lines are tagged, spoken and written out for the phone, for any subject whose
@@ -380,6 +412,15 @@ struct ClaudeClient: Sendable {
     let messages = Self.messages(
       jpeg: jpeg, prompt: prompt, previousAnswer: previousAnswer, stoppedAt: stoppedAt, subject: subject,
       action: action)
+    return try await respond(to: messages, onText: onText, onRestartLine: onRestartLine)
+  }
+
+  /// Streams Claude's reply to `messages`, continuing it if it's cut off (see `solve`).
+  func respond(
+    to messages: [[String: Any]],
+    onText: @escaping @MainActor @Sendable (String) -> Void = { _ in },
+    onRestartLine: @escaping @MainActor @Sendable () -> Void = {}
+  ) async throws -> Answer {
     var text = ""
     var stopReason: String?
     var continuations = 0
@@ -536,6 +577,91 @@ struct ClaudeClient: Sendable {
       ]
     }
     return [["role": "user", "content": [image, ["type": "text", "text": prompt]]]]
+  }
+
+  // MARK: - Math: answer first, then Explain and Check from the same photo
+
+  /// What a math request sends: the photo with what's asked of it, or text alone. Built into
+  /// messages here, so only plain data crosses from the app to the request.
+  enum MathRequest: Sendable {
+    case photo(jpeg: Data, ask: String)
+    case text(String)
+
+    var messages: [[String: Any]] {
+      switch self {
+      case .photo(let jpeg, let ask): ClaudeClient.photoMessages(jpeg: jpeg, ask: ask)
+      case .text(let text): ClaudeClient.textMessages(text)
+      }
+    }
+  }
+
+  /// Streams Claude's reply to a math request (see `respond(to:)`).
+  func respond(
+    to request: MathRequest,
+    onText: @escaping @MainActor @Sendable (String) -> Void = { _ in },
+    onRestartLine: @escaping @MainActor @Sendable () -> Void = {}
+  ) async throws -> Answer {
+    try await respond(to: request.messages, onText: onText, onRestartLine: onRestartLine)
+  }
+
+  /// One math photo's request: the photo, then what's asked of it. The photo is cached (for
+  /// five minutes, refreshed by each use), so asking for the next problem or a check sends it
+  /// again but doesn't pay to read it again. Its bytes must be the same every time, so the
+  /// caller prepares the JPEG once and keeps it.
+  static func photoMessages(jpeg: Data, ask: String) -> [[String: Any]] {
+    let image: [String: Any] = [
+      "type": "image", "source": ["type": "base64", "media_type": "image/jpeg", "data": jpeg.base64EncodedString()],
+      "cache_control": ["type": "ephemeral"],
+    ]
+    return [["role": "user", "content": [image, ["type": "text", "text": ask]]]]
+  }
+
+  /// A request with no photo (comparing two solutions, or an explanation from stored work).
+  static func textMessages(_ text: String) -> [[String: Any]] {
+    [["role": "user", "content": [["type": "text", "text": text]]]]
+  }
+
+  /// The first request for a photo: the system prompt says what a reply looks like.
+  static let solveAsk = "Solve the first complete problem in this photo."
+
+  /// Another problem from the same photo.
+  static func problemAsk(_ label: String) -> String {
+    "Solve problem \(label) in this photo."
+  }
+
+  /// The first half of Check: the problem solved again with no sight of the first answer,
+  /// since a model re-solving with its earlier solution in view leans toward agreeing with it.
+  static func resolveAsk(_ label: String) -> String {
+    "Re-solve problem \(label) in this photo."
+  }
+
+  /// The second half of Check: the two independent solutions side by side.
+  static func compareAsk(label: String, question: String, first: String, second: String) -> String {
+    """
+    Compare two solutions of problem \(label) (\(question)).
+    First solution:
+    \(first)
+    Second solution:
+    \(second)
+    """
+  }
+
+  /// Check when the photo shows the listener's own work: their lines against the problem, with
+  /// the app's solution as a reference.
+  static func ownWorkAsk(label: String, reference: String) -> String {
+    """
+    Check my work on problem \(label) in this photo.
+    Reference solution:
+    \(reference)
+    """
+  }
+
+  /// Explain when the reply didn't include an explanation (it was cut off).
+  static func explainAsk(label: String, question: String, solution: String) -> String {
+    """
+    Explain problem \(label) (\(question)).
+    \(solution)
+    """
   }
 
   /// The system prompt is cached for an hour: it's the same for every photo, so later photos

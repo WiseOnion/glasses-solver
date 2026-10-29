@@ -1,4 +1,5 @@
 import Foundation
+import MWDATInputs
 import UIKit
 import XCTest
 
@@ -475,10 +476,13 @@ final class ClaudeClientTests: XCTestCase {
     XCTAssertTrue(text?.contains("my own work") == true)
   }
 
-  /// Chemistry shares math's pen-line rules, so worked problems are dictated the same way.
+  /// Chemistry keeps its dictated pen lines for worked problems; math's work goes to the
+  /// phone under its own rules, so the two never mix.
   func testChemistryPromptHasWorkedProblems() {
     XCTAssertTrue(ClaudeClient.chemistrySystem.contains(ClaudeClient.penLineRules))
-    XCTAssertTrue(ClaudeClient.system.contains(ClaudeClient.penLineRules))
+    XCTAssertTrue(ClaudeClient.system.contains(ClaudeClient.mathWorkRules))
+    XCTAssertFalse(ClaudeClient.system.contains(ClaudeClient.penLineRules))
+    XCTAssertFalse(ClaudeClient.chemistrySystem.contains(ClaudeClient.mathWorkRules))
     XCTAssertTrue(ClaudeClient.chemistrySystem.contains("DIMENSIONAL ANALYSIS"))
   }
 
@@ -563,10 +567,10 @@ func waitUntil(_ timeout: TimeInterval = 10, _ condition: () -> Bool) async -> B
 // MARK: - Checking finished work
 
 final class CheckTests: XCTestCase {
-  /// Both subjects know how to check work, so the system prompt (and its cache) is the same
-  /// whatever a photo is for.
+  /// Each subject's system prompt has its own check rules, so a check request reads the same
+  /// cached prompt as a solve.
   func testBothSystemPromptsHaveTheCheckRules() {
-    XCTAssertTrue(ClaudeClient.system.contains(ClaudeClient.checkRules))
+    XCTAssertTrue(ClaudeClient.system.contains(ClaudeClient.mathCheckRules))
     XCTAssertTrue(ClaudeClient.chemistrySystem.contains(ClaudeClient.checkRules))
   }
 
@@ -578,5 +582,100 @@ final class CheckTests: XCTestCase {
     let messages = try XCTUnwrap(body["messages"] as? [[String: Any]])
     let text = (messages[2]["content"] as? [[String: Any]])?.last?["text"] as? String
     XCTAssertEqual(text, check)
+  }
+}
+
+// MARK: - Math: answer first
+
+@MainActor
+final class MathReplyTests: XCTestCase {
+  func testAReplyIsReadLineByLine() {
+    let reply = MathReply.parse(AppModel.simulatedMathReply(label: nil))
+    XCTAssertEqual(reply.labels, ["1", "2"])
+    XCTAssertEqual(reply.label, "1")
+    XCTAssertEqual(reply.answer, "x equals negative 1 half, or x equals negative 3.")
+    XCTAssertFalse(reply.explanation.isEmpty)
+    XCTAssertFalse(reply.ownWork)
+    XCTAssertEqual(reply.work.count, 4)
+    XCTAssertTrue(reply.work.allSatisfy { $0.hasPrefix("Write:") || $0.hasPrefix("Mark:") })
+  }
+
+  /// The answer is said the moment its line is complete, and not a moment before.
+  func testAnAnswerCountsOnlyOnceItsLineIsComplete() {
+    let arriving = "Problems: 4, 5 and 6\nProblem: 4\nQuestion: a limit\nAnswer: x equ"
+    let partial = MathReply.parse(ClaudeClient.completeLines(arriving))
+    XCTAssertEqual(partial.labels, ["4", "5", "6"])
+    XCTAssertEqual(partial.label, "4")
+    XCTAssertEqual(partial.answer, "")
+    let complete = MathReply.parse(arriving + "als 4.\n")
+    XCTAssertEqual(complete.answer, "x equals 4.")
+  }
+
+  func testUnclearPhotoAndVerdicts() {
+    XCTAssertEqual(MathReply.parse("Problems:\nUnclear: the exponent is cut off.").unclear, "the exponent is cut off.")
+    XCTAssertEqual(
+      MathReply.parse("Verdict: Incorrect. The answer is x equals 5.").verdict, "Incorrect. The answer is x equals 5.")
+    XCTAssertTrue(MathReply.parse("Own work: yes").ownWork)
+  }
+
+  /// The work goes to the written answer page, as the page already reads it.
+  func testTheWorkShowsOnTheWrittenPage() {
+    let reply = MathReply.parse(AppModel.simulatedMathReply(label: nil))
+    var problem = MathProblem()
+    problem.answer = reply.answer
+    problem.work = reply.work
+    let written = WrittenAnswer.parse(problem.written(label: "1"))
+    XCTAssertFalse(written.isEmpty)
+    XCTAssertEqual(written.problems.first?.label, "1")
+    XCTAssertEqual(written.problems.first?.lines.count, 3)
+    XCTAssertEqual(written.problems.first?.lines.last?.boxed, true)
+  }
+
+  /// The photo is cached, so the next problem and Check don't pay to read it again.
+  func testTheMathPhotoIsCached() throws {
+    let messages = ClaudeClient.photoMessages(jpeg: Data([1, 2, 3]), ask: ClaudeClient.solveAsk)
+    let content = try XCTUnwrap(messages.first?["content"] as? [[String: Any]])
+    XCTAssertEqual(content.first?["type"] as? String, "image")
+    XCTAssertEqual(content.first?["cache_control"] as? [String: String], ["type": "ephemeral"])
+    XCTAssertEqual(content.last?["text"] as? String, ClaudeClient.solveAsk)
+  }
+
+  /// Check's re-solve never sees the first answer.
+  func testTheResolveDoesNotShowTheFirstAnswer() {
+    XCTAssertFalse(ClaudeClient.resolveAsk("4").contains("Answer"))
+    XCTAssertTrue(ClaudeClient.compareAsk(label: "4", question: "q", first: "A1", second: "A2").contains("A1"))
+  }
+
+  /// The Test 3 rules and the course notes are in the math prompt.
+  func testTheMathPromptHasTest3AndTheCourseNotes() {
+    XCTAssertTrue(ClaudeClient.system.contains("THIS COURSE: MATH 131, TEST 3"))
+    XCTAssertFalse(ClaudeClient.courseNotes.isEmpty, "Courses/MATH131.md isn't in the app")
+    XCTAssertTrue(ClaudeClient.system.contains(ClaudeClient.courseNotes))
+  }
+
+  /// Chemistry's swipe replays a question from the last answer, with no new request.
+  func testAChemistryAnswerSplitsIntoQuestions() {
+    let answer = """
+      I can see questions 7 and 13.
+      Problem: 7
+      Answer: B, as in boy. Krypton core.
+      Problem: 13
+      Answer: D, as in dog.
+      Done.
+      """
+    let questions = AppModel.questions(in: answer)
+    XCTAssertEqual(questions.map(\.label), ["7", "13"])
+    XCTAssertEqual(questions[1].text, "Problem: 13\nAnswer: D, as in dog.")
+  }
+
+  /// Every gesture an app can receive is passed on as its own kind.
+  func testGesturesFromTheGlasses() {
+    XCTAssertEqual(ShutterButton.gesture(for: .capture(.shortPress, source: .captureButton, timestampMs: 1)), .capturePress)
+    XCTAssertEqual(
+      ShutterButton.gesture(for: .capture(.doublePress, source: .captureButton, timestampMs: 1)), .captureDoublePress)
+    XCTAssertEqual(ShutterButton.gesture(for: .capture(.hold, source: .captureButton, timestampMs: 1)), .captureHold)
+    XCTAssertEqual(ShutterButton.gesture(for: .select(source: .captouch, timestampMs: 1)), .touchpadDoubleTap)
+    XCTAssertEqual(ShutterButton.gesture(for: .nav(direction: .left, source: .captouch, timestampMs: 1)), .swipe(.left))
+    XCTAssertNil(ShutterButton.gesture(for: .button(.action, source: .actionButton, timestampMs: 1)))
   }
 }

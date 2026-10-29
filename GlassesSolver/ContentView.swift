@@ -27,11 +27,15 @@ struct ContentView: View {
             .disabled(model.registrationState == .registering)
           }
 
-          Picker("A photo", selection: $model.photoAction) {
-            ForEach(ClaudeClient.PhotoAction.allCases, id: \.self) { Text($0.name).tag($0) }
+          // Math checks from the glasses (double press) or the answer card; chemistry checks a
+          // photo of the filled-in answer sheet.
+          if model.subject == .chemistry {
+            Picker("A photo", selection: $model.photoAction) {
+              ForEach(ClaudeClient.PhotoAction.allCases, id: \.self) { Text($0.name).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .disabled(model.isBusy)
           }
-          .pickerStyle(.segmented)
-          .disabled(model.isBusy)
 
           Button {
             Task { await model.solve() }
@@ -40,7 +44,9 @@ struct ContentView: View {
               if model.isBusy {
                 ProgressView().tint(.white)
               } else {
-                Label(model.photoAction.name, systemImage: model.photoAction.systemImage)
+                Label(
+                  model.subject == .math ? "Solve" : model.photoAction.name,
+                  systemImage: model.subject == .math ? "camera.viewfinder" : model.photoAction.systemImage)
               }
             }
             .font(.title2.bold())
@@ -79,7 +85,9 @@ struct ContentView: View {
               .clipShape(RoundedRectangle(cornerRadius: 12))
           }
 
-          if !model.shownAnswer.isEmpty || !model.lastAnswer.isEmpty {
+          if model.subject == .math {
+            mathCard
+          } else if !model.shownAnswer.isEmpty || !model.lastAnswer.isEmpty {
             VStack(alignment: .leading, spacing: 12) {
               Text(Self.withoutWrittenMath(model.shownAnswer.isEmpty ? model.lastAnswer : model.shownAnswer))
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -156,6 +164,82 @@ struct ContentView: View {
     }
   }
 
+  /// The math problem the glasses' buttons act on: its answer, explanation and check, with
+  /// the same actions as the glasses.
+  @ViewBuilder
+  private var mathCard: some View {
+    if let current = model.currentProblem, let space = model.workspace {
+      VStack(alignment: .leading, spacing: 12) {
+        Text(
+          space.labels.count > 1
+            ? "Problem \(current.label), \(space.index + 1) of \(space.labels.count)" : "Problem \(current.label)"
+        )
+        .font(.caption.bold())
+        .foregroundStyle(.secondary)
+        if let problem = current.problem, !problem.question.isEmpty {
+          Text(problem.question)
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+        }
+        if let problem = current.problem, !problem.answer.isEmpty {
+          Text(problem.answer)
+            .font(.title3.bold())
+            .textSelection(.enabled)
+          if !problem.explanation.isEmpty {
+            Text(problem.explanation)
+              .font(.callout)
+              .textSelection(.enabled)
+          }
+          if let check = problem.check {
+            Label(check, systemImage: Self.checkSymbol(check))
+              .font(.callout)
+          }
+        } else if current.problem?.status == .failed {
+          Text("Couldn't solve this one. Tap Next, then Previous, to try it again.")
+            .foregroundStyle(.secondary)
+        } else {
+          ProgressView("Working it out…")
+        }
+        HStack {
+          Button("Explain", systemImage: "text.bubble") { model.explainCurrentProblem() }
+          Button("Check", systemImage: "checkmark.seal") { model.checkCurrentProblem() }
+            .disabled(model.isChecking)
+          Spacer()
+          Button("Repeat", systemImage: "speaker.wave.2") { model.repeatAnswer() }
+            .labelStyle(.iconOnly)
+          Button("Stop", systemImage: "stop.fill") { model.stopSpeaking() }
+            .labelStyle(.iconOnly)
+        }
+        .buttonStyle(.bordered)
+        if space.labels.count > 1 {
+          HStack {
+            Button("Previous", systemImage: "chevron.left") { model.moveProblem(by: -1) }
+              .disabled(space.index == 0)
+            Spacer()
+            Button("Next", systemImage: "chevron.right") { model.moveProblem(by: 1) }
+              .disabled(space.index == space.labels.count - 1)
+          }
+          .buttonStyle(.bordered)
+        }
+      }
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .padding()
+      .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 12))
+    } else if let unclear = model.workspace?.unclear {
+      Label("Couldn't read that: \(unclear)", systemImage: "eye.slash")
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding()
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 12))
+    }
+  }
+
+  private static func checkSymbol(_ check: String) -> String {
+    let result = check.lowercased()
+    if result.hasPrefix("correct") { return "checkmark.circle" }
+    if result.hasPrefix("incorrect") { return "xmark.circle" }
+    return "questionmark.circle"
+  }
+
   /// An answer's text without the written math after "||" on its lines.
   static func withoutWrittenMath(_ text: String) -> String {
     text.components(separatedBy: "\n").map(Speaker.spokenPart).joined(separator: "\n")
@@ -175,9 +259,11 @@ struct ContentView: View {
         Text(shutterText)
           .font(.subheadline)
           .foregroundStyle(isShutterUnavailable ? Color.red : Color.secondary)
-        Text(model.photoAction == .solve ? "Prompt: \(model.sessionPrompt)" : "Photos: Check")
-          .font(.footnote)
-          .foregroundStyle(.secondary)
+        if model.subject == .chemistry {
+          Text(model.photoAction == .solve ? "Prompt: \(model.sessionPrompt)" : "Photos: Check")
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+        }
         Button("Stop session", systemImage: "stop.circle", role: .destructive) {
           model.stopSession()
         }
@@ -215,7 +301,11 @@ struct ContentView: View {
     case .off, .activating:
       return "Connecting to the capture button…"
     case .active:
-      return "Press the capture button on your glasses to \(model.photoAction == .solve ? "solve" : "check your work"). Tap the touchpad once to pause, or touch and hold to end."
+      return model.subject == .math
+        ? "Press capture to solve. Double-tap to explain, double press to check, swipe for the next problem. "
+          + "Tap once to pause, touch and hold to end."
+        : "Press capture to answer the page. Double press to check your answer sheet, double-tap to repeat, "
+          + "swipe to replay a question. Tap once to pause, touch and hold to end."
     case .unavailable(let reason, _):
       return "Capture button unavailable. \(reason) The Solve button above still works."
     }
@@ -504,10 +594,17 @@ private struct AdvancedSettingsView: View {
   var body: some View {
     Form {
       Section {
+        Toggle("Reverse swipe direction", isOn: $model.reverseSwipes)
+      } footer: {
+        Text("Turn on if swiping the touchpad moves to the previous problem instead of the next.")
+      }
+
+      Section {
         Toggle("Test mode (no Claude)", isOn: $model.testMode)
       } footer: {
         Text(
-          "Runs the glasses, photo and speech but skips Claude, so it's free, and plays a sample answer. "
+          "Runs the glasses, photo and speech but skips Claude, so it's free, and plays a sample answer "
+            + "(in math, two sample problems, so every button can be tried). "
             + "With the phone locked it waits 35 seconds first, to show the app keeps running.")
       }
 
@@ -542,25 +639,35 @@ struct StartSessionView: View {
   var body: some View {
     NavigationStack {
       Form {
-        Section {
-          TextField("Prompt", text: $prompt, axis: .vertical)
-            .lineLimit(3...10)
-          if prompt != model.subject.defaultPrompt {
-            Button("Reset to default") { prompt = model.subject.defaultPrompt }
+        // Math is driven by the buttons alone; chemistry still sends an editable prompt.
+        if model.subject == .chemistry {
+          Section {
+            TextField("Prompt", text: $prompt, axis: .vertical)
+              .lineLimit(3...10)
+            if prompt != model.subject.defaultPrompt {
+              Button("Reset to default") { prompt = model.subject.defaultPrompt }
+            }
+          } header: {
+            Text("Prompt for this session")
+          } footer: {
+            Text("Sent to Claude with every page you photograph with the capture button. Check photos send their own request.")
           }
-        } header: {
-          Text("Prompt for this session")
-        } footer: {
-          Text("Sent to Claude with every Solve photo you take with the capture button. Check photos send their own request.")
         }
 
         Section {
-          Label("Press the capture button on the glasses frame to solve.", systemImage: "camera")
+          if model.subject == .math {
+            Label("Press capture: the answer to the first problem.", systemImage: "camera")
+            Label("Double-tap the touchpad: why.", systemImage: "hand.tap.fill")
+            Label("Double press capture: check the answer, or your own work.", systemImage: "checkmark.seal")
+            Label("Swipe the touchpad: next or previous problem.", systemImage: "hand.draw")
+            Label("Hold capture: say it again.", systemImage: "speaker.wave.2")
+          } else {
+            Label("Press capture: every question on the page.", systemImage: "camera")
+            Label("Double press capture: check your filled-in answer sheet.", systemImage: "checkmark.seal")
+            Label("Double-tap the touchpad: the last answer again.", systemImage: "hand.tap.fill")
+            Label("Swipe the touchpad: replay the previous or next question.", systemImage: "hand.draw")
+          }
           Label("Tap the touchpad once to pause or resume.", systemImage: "hand.tap")
-          Label(
-            model.subject == .math
-              ? "Double-tap to hear the last line again." : "Double-tap to hear the last answer or line again.",
-            systemImage: "hand.tap.fill")
           Label("Touch and hold the touchpad to end the session.", systemImage: "hand.raised")
           Label("You can leave the app or lock your phone.", systemImage: "lock.iphone")
         } header: {
@@ -575,12 +682,12 @@ struct StartSessionView: View {
         }
         ToolbarItem(placement: .confirmationAction) {
           Button("Start") {
-            let prompt = trimmedPrompt
+            let prompt = model.subject == .chemistry ? trimmedPrompt : model.subject.defaultPrompt
             // Dismiss first so a camera-permission alert can appear on the main screen.
             dismiss()
             Task { await model.startSession(prompt: prompt) }
           }
-          .disabled(trimmedPrompt.isEmpty)
+          .disabled(model.subject == .chemistry && trimmedPrompt.isEmpty)
         }
       }
       .onAppear { if prompt.isEmpty { prompt = model.subject.defaultPrompt } }

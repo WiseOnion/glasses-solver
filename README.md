@@ -1,13 +1,29 @@
 # Glasses Solver
 
-A small iPhone app. Tap **Solve**, and it takes a photo with your Ray-Ban Meta glasses, sends it to Claude (`claude-opus-5-5`), and speaks the answer through the glasses. **Settings → Subject** picks what the photos are:
+A small iPhone app that works like a calculator you wear. Look at a problem, press the capture button on your Ray-Ban Meta glasses, and hear the answer. You never talk to it: the camera replaces typing and the glasses' buttons replace prompting. The phone is only for starting a session, settings, and looking at the written work. It sends the photo to Claude (`claude-opus-5-5`). **Settings → Subject** picks one of two modes, which share the app but work differently (see `Downloads\Chemistry_vs_Math_Glasses_Solver.md` for why):
 
-- **Math:** each problem's worked solution is dictated line by line, with time to copy it by hand (see "How the voice dictates").
-- **Chemistry:** a multiple-choice question gets its letter, said with a word so B, D and E can't be confused, and the choice read back, with a pause to fill in the bubble; a question that needs work shown (the dimensional analysis quiz) is dictated line by line like math, with units, unit cancellations and significant figures (see "Chemistry").
+- **Math (MATH 131, Test 3):** answer first. A press says the first problem's answer in a few words ("x equals 4."). The rest waits for a button: an explanation, an independent check, or the next problem in the same photo. The written work goes to the phone, never read aloud.
+- **Chemistry (CHM 106):** the whole page at once. A press answers every complete question: a multiple-choice letter said with a word so B, D and E can't be confused, and the choice read back, with a pause to fill in the bubble; a question that needs work shown (the dimensional analysis quiz) is dictated line by line, with units, unit cancellations and significant figures (see "Chemistry"). One request per page, not one per question.
 
-The picker above the button sets what a photo is for: **Solve** (the above) or **Check**, which goes through your finished work and says "This one is right." or names the first wrong line and what's wrong, without a corrected solution, then "You got 4 of 6 right." Check's rules (`ClaudeClient.checkRules`) are in both system prompts, so the prompt and its cache are the same either way.
+### Glasses controls
 
-You can also tap **Start Session** for hands-free use: the session stays open in the background, and each press of the **capture button** on the glasses frame does the same thing as Solve, with a prompt you can edit for that session.
+Tap **Start Session** once; after that the glasses run everything, with the phone locked.
+
+| Control | Math | Chemistry |
+|---|---|---|
+| Capture button, press | Solve: the first problem's answer | Answer every question on the page |
+| Touchpad, double-tap | Explain: why, in a few sentences | Repeat the last answer |
+| Capture button, double press | Check: Correct, Incorrect (with the right answer and why) or Unclear | Check a photo of your filled-in answer sheet |
+| Touchpad, swipe | Next or previous problem in the same photo | Replay the next or previous question already answered |
+| Capture button, hold | Repeat the last answer, explanation or check | Nothing |
+| Touchpad, one tap | Pause or resume (speech waits) | Same |
+| Touchpad, touch and hold | End the session | Same |
+
+- **Math keeps a workspace** (`MathWorkspace.swift`): the photo, its problems, and each one's answer, explanation, written work and check. Explain, Check, Repeat and swipes use it, so none takes a new photo. The photo is cached with Claude for five minutes, so asking about the next problem doesn't pay to read it again. After the first answer, the next problem is prepared in the background, so a swipe finds it ready.
+- **Math Check is independent.** If the photo shows your own handwritten work, it checks your lines and names the first mistake. Otherwise Claude solves the problem again without seeing the first answer (a model re-solving with its earlier answer in view leans toward agreeing with it; S²R, arXiv 2502.12853), then a second request compares the two.
+- **Physical input is treated as noisy.** Each kind of gesture is debounced (0.8 s for presses), a gesture that reaches the phone over 5 seconds late is dropped, and a press while the last photo is still being taken or solved does nothing, so one press never starts two solves. If the glasses report a double press as a short press then the double press, the photo the short press started is dropped. Every event is logged.
+- **Untested on the glasses:** Meta lists capture double press, hold and touchpad swipes as delivered to apps (SDK 1.0.0 `InputEvent`), but none has been tried on these glasses. A hold normally starts a video and may never reach the app. Swipe direction depends on the glasses' settings: **Settings → Advanced → Reverse swipe direction** flips it. The phone's answer card has the same actions as buttons (Explain, Check, Repeat, Previous, Next).
+- **Chemistry's** Solve / Check picker stays on the phone too, and its session still takes an editable prompt.
 
 - Glasses access: [Meta Wearables Device Access Toolkit](https://github.com/facebook/meta-wearables-dat-ios) **1.0.0** (`MWDATCore`, `MWDATCamera`, `MWDATInputs`) via Swift Package Manager.
 - Project file: generated by [XcodeGen](https://github.com/yonaskolb/XcodeGen) from `project.yml`. No `.pbxproj` is committed.
@@ -166,6 +182,8 @@ Caveats:
 - Each Solve is one paid API request with one image. Typical cost is a few cents, depending on answer length.
 
 ## How the voice dictates
+
+Since the button redesign, math no longer dictates its work (it goes to the phone), so line-by-line dictation is used by chemistry's worked problems and by **Test voice**. The findings below still decide how those are read.
 
 What the research says, and the setting each finding led to (`Speaker.swift`):
 

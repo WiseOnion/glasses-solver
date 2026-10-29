@@ -31,6 +31,7 @@ final class AppModel {
   private static let azureKeyAccount = "azure-speech-key"
   private static let azureRegionDefaultsKey = "azureRegion"
   private static let azureVoiceDefaultsKey = "azureVoice"
+  private static let reverseSwipesDefaultsKey = "reverseSwipes"
   /// A sample in the style the system prompt asks for, including dictated Write lines.
   private static let sampleAnswer = """
     I can see problem 3.
@@ -140,6 +141,20 @@ final class AppModel {
     let line: Int
   }
   private(set) var hasAPIKey: Bool
+
+  // Math: the current photo's problems, which the glasses' buttons act on (MathWorkspace).
+  private(set) var workspace: MathWorkspace?
+  /// The problem being shown and acted on, for the phone.
+  var currentProblem: (label: String, problem: MathProblem?)? {
+    guard let label = workspace?.currentLabel else { return nil }
+    return (label, workspace?.problems[label])
+  }
+  /// True while Check is working on the current photo.
+  private(set) var isChecking = false
+  /// Which way a touchpad swipe moves: the glasses' settings can flip it.
+  var reverseSwipes: Bool {
+    didSet { UserDefaults.standard.set(reverseSwipes, forKey: Self.reverseSwipesDefaultsKey) }
+  }
   /// True while speech is paused because the glasses' audio disconnected (see `Speaker.heldForRoute`).
   private(set) var speechHeld = false
 
@@ -180,6 +195,7 @@ final class AppModel {
       if sessionPrompt == oldValue.defaultPrompt { sessionPrompt = subject.defaultPrompt }
       // A photo after switching is never a follow-up to an answer in the other subject.
       lastAnswerTime = nil
+      if subject != oldValue { clearWorkspace() }
       warmCache()
     }
   }
@@ -320,7 +336,9 @@ final class AppModel {
   private(set) var solveInFlight = false
   /// True while the Solve button is checking camera permission, before the solve starts.
   private var checkingPermission = false
-  var isBusy: Bool { phase != .idle || solveInFlight || checkingPermission }
+  /// For math, a solve stops being busy once its answer is spoken: the rest of the reply
+  /// (explanation, work) keeps arriving while the next photo can already be taken.
+  var isBusy: Bool { phase != .idle || checkingPermission || (subject == .chemistry && solveInFlight) }
   var isRegistered: Bool { registrationState == .registered }
 
   var statusText: String {
@@ -331,12 +349,12 @@ final class AppModel {
       if sessionActive {
         return sessionPaused
           ? "Session paused. Tap the glasses' touchpad once to resume."
-          : "Session active. Look at the page and press the capture button."
+          : "Session active. Look at the problem and press the capture button."
       }
       if !canSolve { return "Add your Anthropic API key in Settings, or turn on Test mode." }
       if !isRegistered { return "Connect your glasses to get started." }
       if !hasActiveDevice { return "Put on your glasses (hinges open)." }
-      return "Ready. Look at the page and tap \(photoAction.name)."
+      return subject == .math ? "Ready. Look at the problem and tap Solve." : "Ready. Look at the page and tap \(photoAction.name)."
     }
   }
 
@@ -363,11 +381,6 @@ final class AppModel {
   @ObservationIgnored private var shutterProblemReported = false
   /// Attempts to (re)attach button events before telling the wearer they're unavailable.
   private static let maxShutterAttempts = 4
-  /// Presses closer together than this (by the glasses' clock) count as one. Covers a
-  /// burst delivered at once when the app wakes, and a fast double press that may arrive
-  /// as two short presses.
-  private static let pressDebounceMs: Int64 = 800
-  @ObservationIgnored private var lastPressTimestampMs: Int64?
   /// Smallest (phone clock − glasses clock) seen, i.e. the fastest delivery so far. A press
   /// whose offset is well above it waited somewhere, likely while iOS had the app suspended.
   @ObservationIgnored private var pressOffsetBaselineMs: Int64?
@@ -414,6 +427,7 @@ final class AppModel {
       min(max($0, Speaker.writingTimeRange.lowerBound), Speaker.writingTimeRange.upperBound)
     } ?? 1
     self.voiceIdentifier = UserDefaults.standard.string(forKey: Self.voiceDefaultsKey)
+    self.reverseSwipes = UserDefaults.standard.bool(forKey: Self.reverseSwipesDefaultsKey)
     self.dictateInParts = UserDefaults.standard.object(forKey: Self.dictateInPartsDefaultsKey) as? Bool ?? true
     let hasAzureKey = Keychain.read(Self.azureKeyAccount) != nil
     self.hasAzureKey = hasAzureKey
@@ -587,6 +601,10 @@ final class AppModel {
   }
 
   func repeatAnswer() {
+    if subject == .math {
+      repeatLastSpoken()
+      return
+    }
     guard !lastAnswer.isEmpty else { return }
     shownAnswer = lastAnswer
     speaker.speak(lastAnswer, isAnswer: true)
@@ -700,7 +718,9 @@ final class AppModel {
     speaker.speak(answer)
   }
 
-  private func run() async {
+  /// A chemistry photo: the whole page answered in one request and spoken as it arrives.
+  /// `action` overrides the phone's Solve / Check picker (a double press checks).
+  private func run(action override: ClaudeClient.PhotoAction? = nil) async {
     let apiKey = Keychain.read(Self.apiKeyAccount)
     guard apiKey != nil || testMode else {
       hasAPIKey = false
@@ -729,7 +749,7 @@ final class AppModel {
       phase = .idle
       backgroundActivity.end()
     }
-    let action = photoAction
+    let action = override ?? photoAction
     let prompt =
       action == .check ? ClaudeClient.PhotoAction.checkPrompt : sessionActive ? sessionPrompt : subject.defaultPrompt
     // Captured now, so an answer that arrives after the session ends still files under it.
@@ -829,6 +849,7 @@ final class AppModel {
         .compactMap { $0 }.joined(separator: "\n")
       lastAnswer = answer
       shownAnswer = answer
+      replayIndex = nil
       lastAnswerStoppedAt = nil
       // A Test mode sample isn't a real answer, so it's never sent as one to follow up on.
       lastAnswerTime = testMode ? nil : .now
@@ -855,7 +876,7 @@ final class AppModel {
   /// starts when it has finished cleaning up. Its place in the answer is kept, so the new
   /// photo goes to Claude as a follow-up that says how far the listener got.
   @discardableResult
-  private func startSolve(reason: String) -> Task<Void, Never> {
+  private func startSolve(reason: String, action: ClaudeClient.PhotoAction? = nil) -> Task<Void, Never> {
     let previous = solveTask
     if let previous {
       diag("solve", "\(reason) while still working on the last photo: stopping that answer to answer the new photo")
@@ -868,7 +889,7 @@ final class AppModel {
     let task = Task { [weak self] in
       await previous?.value
       guard let self, self.solveGeneration == generation else { return }
-      await self.run()
+      if self.subject == .math { await self.runMath() } else { await self.run(action: action) }
       if self.solveGeneration == generation {
         self.solveInFlight = false
         self.solveTask = nil
@@ -1043,6 +1064,550 @@ final class AppModel {
     speaker.speak("Sorry. \(error.localizedDescription)")
   }
 
+  // MARK: - Math: answer first, then Explain, Check and swipes
+
+  /// Requests running for problems after the first, by label.
+  @ObservationIgnored private var mathTasks: [String: Task<Void, Never>] = [:]
+  @ObservationIgnored private var checkTask: Task<Void, Never>?
+  @ObservationIgnored private var explainTask: Task<Void, Never>?
+  /// The workspace a check or explanation request belongs to, so a stale one can't clear a
+  /// newer one's state.
+  @ObservationIgnored private var checkWorkspaceID: UUID?
+  @ObservationIgnored private var explainWorkspaceID: UUID?
+  /// A problem whose explanation was asked for before it arrived; it's said when it does.
+  @ObservationIgnored private var pendingExplain: String?
+  /// Problems whose answer has been said since they became the current one.
+  @ObservationIgnored private var announced: Set<String> = []
+  /// Problems whose name was said on a swipe before their answer was ready, so the answer
+  /// doesn't repeat it.
+  @ObservationIgnored private var introduced: Set<String> = []
+  /// The last answer, explanation or check result said, for Repeat. Status words aren't kept.
+  @ObservationIgnored private var lastSpoken: String?
+  /// Math requests running (photo, problems, checks, explanations). While any is, silent
+  /// audio keeps the app running with the phone locked.
+  @ObservationIgnored private var mathWork = 0
+
+  private func beginMathWork() {
+    if mathWork == 0 { speaker.beginKeepAlive() }
+    mathWork += 1
+  }
+
+  private func endMathWork() {
+    mathWork = max(mathWork - 1, 0)
+    if mathWork == 0 { speaker.endKeepAliveAfterSpeech() }
+  }
+
+  /// A math photo: taken, then its first problem solved, with the answer said the moment it
+  /// arrives. The rest of the reply (explanation, written work) keeps arriving after that, and
+  /// the next problem is prepared in the background.
+  private func runMath() async {
+    guard Keychain.read(Self.apiKeyAccount) != nil || testMode else {
+      hasAPIKey = false
+      return
+    }
+    // A press may wake the app in the background, with about 30 seconds to run. If that runs
+    // out mid-photo, stop the camera rather than be suspended with a stream running (#231).
+    let backgroundActivity = BackgroundActivity(name: "Solve") { [weak self] in
+      self?.camera.abortCapture()
+    }
+    defer { backgroundActivity.end() }
+    timing = SolveTiming(start: pressedAt ?? .now, pressed: pressedAt != nil)
+    pressedAt = nil
+    cancelMathWork()
+    speaker.stop("a new photo was taken")
+    beginMathWork()
+    defer { endMathWork() }
+    let chatSessionID = conversation.currentSessionID
+    diag("solve", "math photo (app \(Self.appStateDescription), hands-free \(sessionActive), test mode \(testMode))")
+
+    let photo: Data
+    do {
+      phase = .capturing
+      // A refresh started after the previous photo must finish before this one.
+      if let refresh = sessionRefreshTask {
+        await refresh.value
+        timing.mark("waited for the glasses to reconnect")
+      }
+      photo = try await captureWithRecovery()
+      timing.mark("photo taken")
+      try Task.checkCancellation()
+    } catch where Task.isCancelled {
+      phase = .idle
+      diag("solve", "the photo was dropped (a double press asked for Check, or a newer photo came)")
+      if sessionActive { startSessionRefresh(reason: "fresh camera for the next photo") } else { camera.endSession() }
+      return
+    } catch {
+      phase = .idle
+      scheduleShutterRevive("after a failed photo", force: true)
+      diag("solve", "FAILED: \(ErrorDetail.describe(error))")
+      errorMessage = ErrorDetail.alertText(error)
+      say("Couldn't take the photo. Capture again.", meaningful: false)
+      conversation.add(
+        prompt: "Solve", photo: nil, answer: nil, error: error.localizedDescription, isTest: testMode,
+        sessionID: chatSessionID)
+      return
+    }
+    lastPhoto = UIImage(data: photo)
+    // A fresh glasses session for the next photo (SDK issue #260), while Claude works.
+    if sessionActive { startSessionRefresh(reason: "fresh camera for the next photo") } else { camera.endSession() }
+    guard let jpeg = ClaudeClient.preparedJPEG(from: photo) else {
+      phase = .idle
+      say("Couldn't read that photo. Capture again.", meaningful: false)
+      return
+    }
+    let space = MathWorkspace(photo: photo, jpeg: jpeg)
+    workspace = space
+    showWorkspace()
+    phase = .thinking
+    let cue = stillWorkingCue()
+    defer { cue.cancel() }
+    await prepare(nil, in: space.id, sessionID: chatSessionID)
+    if phase == .thinking { phase = .idle }
+  }
+
+  /// "Still working." once a wait passes 20 seconds, then every 40, until the answer comes.
+  private func stillWorkingCue() -> Task<Void, Never> {
+    Task { [weak self] in
+      var wait = Self.stillWorkingInterval
+      while true {
+        try? await Task.sleep(for: wait)
+        guard !Task.isCancelled, let self, self.phase == .thinking else { return }
+        self.speaker.announce("Still working.", ifBusy: .skip)
+        wait = .seconds(40)
+      }
+    }
+  }
+
+  /// Streams one problem's reply into the workspace. `label` nil is a photo's first request,
+  /// which also lists the photo's problems; otherwise it's that problem.
+  private func prepare(_ label: String?, in id: UUID, sessionID: UUID?) async {
+    guard let space = workspace, space.id == id else { return }
+    let buffer = ReplyBuffer()
+    let ask = label.map(ClaudeClient.problemAsk) ?? ClaudeClient.solveAsk
+    do {
+      let reply = try await askClaude(
+        .photo(jpeg: space.jpeg, ask: ask), simulated: Self.simulatedMathReply(label: label),
+        onText: { [weak self] piece in
+          buffer.text += piece
+          self?.apply(MathReply.parse(ClaudeClient.completeLines(buffer.text)), asked: label, in: id, final: false)
+        },
+        onRestartLine: { buffer.text = ClaudeClient.completeLines(buffer.text) })
+      try Task.checkCancellation()
+      let parsed = MathReply.parse(reply.text)
+      apply(parsed, asked: label, in: id, final: true)
+      finished(parsed, asked: label, in: id, stopReason: reply.stopReason, sessionID: sessionID)
+    } catch where Task.isCancelled {
+      diag("solve", "math request stopped (a newer photo, or the subject changed)")
+    } catch {
+      failed(error, asked: label, in: id, sessionID: sessionID)
+    }
+  }
+
+  /// Stores what a reply says so far. Says the answer the moment its line is complete, if
+  /// it's the problem being looked at, and an explanation that was asked for early.
+  private func apply(_ reply: MathReply, asked: String?, in id: UUID, final: Bool) {
+    guard var space = workspace, space.id == id else { return }
+    if asked == nil {
+      if space.labels.isEmpty, !reply.labels.isEmpty { space.labels = reply.labels }
+      if let unclear = reply.unclear { space.unclear = unclear }
+    }
+    guard let label = asked ?? reply.label else {
+      workspace = space
+      return
+    }
+    if !space.labels.contains(label) { space.labels.append(label) }
+    // The first reply decides which problem is current: the one it solved.
+    if asked == nil, space.problems[label] == nil, let at = space.labels.firstIndex(of: label) { space.index = at }
+    var problem = space.problems[label] ?? MathProblem()
+    if !reply.question.isEmpty { problem.question = reply.question }
+    if !reply.answer.isEmpty { problem.answer = reply.answer }
+    if !reply.explanation.isEmpty { problem.explanation = reply.explanation }
+    if !reply.work.isEmpty { problem.work = reply.work }
+    problem.ownWork = reply.ownWork
+    if final { problem.status = problem.answer.isEmpty ? .failed : .ready }
+    space.problems[label] = problem
+    workspace = space
+    showWorkspace()
+    guard space.currentLabel == label else { return }
+    if !problem.answer.isEmpty, !announced.contains(label) {
+      announced.insert(label)
+      if phase == .thinking {
+        phase = .idle
+        timing.mark("answer arrived")
+      }
+      let named = space.labels.count > 1 && !introduced.contains(label)
+      introduced.remove(label)
+      say((named ? "\(Speaker.itemName(label, itemWord: "Problem")). " : "") + problem.answer)
+    }
+    if pendingExplain == label, !problem.explanation.isEmpty {
+      pendingExplain = nil
+      say(problem.explanation, after: true)
+    }
+  }
+
+  /// A reply is complete: files it, says what went wrong if there's no answer, and starts on
+  /// the next problem so a swipe finds it ready.
+  private func finished(_ reply: MathReply, asked: String?, in id: UUID, stopReason: String?, sessionID: UUID?) {
+    guard let space = workspace, space.id == id else { return }
+    if phase == .thinking { phase = .idle }
+    let label = asked ?? reply.label
+    guard let label, let problem = space.problems[label], !problem.answer.isEmpty else {
+      if asked == nil {
+        let why = space.unclear.map { "Couldn't read that: " + Self.withoutFinalStop($0) + "." } ?? "Couldn't read that."
+        say(why + " Capture again.", meaningful: false)
+        conversation.add(
+          prompt: "Solve", photo: space.photo, answer: nil, error: why, isTest: testMode, sessionID: sessionID)
+      } else if space.currentLabel == asked {
+        say("Couldn't solve \(Speaker.itemName(label ?? "", itemWord: "problem")). Swipe back to it to try again.", meaningful: false)
+      }
+      return
+    }
+    if stopReason != "end_turn" && stopReason != "stop_sequence" {
+      diag("solve", "problem \(label)'s reply ended early (\(stopReason ?? "dropped connection")); keeping what came")
+    }
+    conversation.add(
+      prompt: "Problem \(label)", photo: space.photo, answer: problem.summary(label: label), error: nil,
+      isTest: testMode, sessionID: sessionID)
+    // Explain was pressed, but this reply had no explanation (it was cut off): ask for one.
+    if pendingExplain == label, problem.explanation.isEmpty {
+      pendingExplain = nil
+      explainCurrentProblem()
+    }
+    if let at = space.labels.firstIndex(of: label), at == space.index, space.labels.indices.contains(at + 1) {
+      ensurePrepared(space.labels[at + 1])
+    }
+  }
+
+  /// A request failed. An answer already said is kept (only the rest is missing); otherwise
+  /// the problem is marked so a later swipe or press tries again.
+  private func failed(_ error: Error, asked: String?, in id: UUID, sessionID: UUID?) {
+    diag("solve", "math request FAILED: \(ErrorDetail.describe(error))")
+    guard var space = workspace, space.id == id else { return }
+    let wasWaiting = phase == .thinking
+    if wasWaiting { phase = .idle }
+    for (label, problem) in space.problems where problem.status == .preparing && (asked == nil || asked == label) {
+      space.problems[label]?.status = problem.answer.isEmpty ? .failed : .ready
+    }
+    workspace = space
+    showWorkspace()
+    if asked == nil, wasWaiting {
+      errorMessage = ErrorDetail.alertText(error)
+      say(Self.withoutFinalStop(error.localizedDescription) + ". Capture again.", meaningful: false)
+      conversation.add(
+        prompt: "Solve", photo: space.photo, answer: nil, error: error.localizedDescription, isTest: testMode,
+        sessionID: sessionID)
+    } else if let asked, space.currentLabel == asked, space.problems[asked]?.answer.isEmpty ?? true {
+      say("Couldn't solve \(Speaker.itemName(asked, itemWord: "problem")). Swipe back to it to try again.", meaningful: false)
+    }
+  }
+
+  /// Starts solving a problem from the current photo, unless it's ready or already underway.
+  private func ensurePrepared(_ label: String) {
+    guard var space = workspace, mathTasks[label] == nil else { return }
+    if let problem = space.problems[label], problem.status != .failed { return }
+    space.problems[label] = MathProblem()
+    workspace = space
+    let id = space.id
+    let sessionID = conversation.currentSessionID
+    diag("solve", "preparing problem \(label) in the background")
+    mathTasks[label] = Task { [weak self] in
+      guard let self else { return }
+      self.beginMathWork()
+      defer { self.endMathWork() }
+      await self.prepare(label, in: id, sessionID: sessionID)
+      if self.workspace?.id == id { self.mathTasks[label] = nil }
+    }
+  }
+
+  /// Swipe: the next or previous problem in the same photo, with no new photo. A problem
+  /// that's ready is said at once; one that isn't is named and prepared.
+  func moveProblem(by step: Int) {
+    guard subject == .math else { return }
+    guard var space = workspace, !space.labels.isEmpty else {
+      say("No problem yet. Press capture first.", meaningful: false)
+      return
+    }
+    guard space.labels.count > 1 else {
+      say("This photo has one problem.", meaningful: false)
+      return
+    }
+    let target = space.index + step
+    guard space.labels.indices.contains(target) else {
+      say(step > 0 ? "That's the last problem." : "That's the first problem.", meaningful: false)
+      return
+    }
+    space.index = target
+    workspace = space
+    pendingExplain = nil
+    showWorkspace()
+    let label = space.labels[target]
+    let name = Speaker.itemName(label, itemWord: "Problem") + "."
+    if let problem = space.problems[label], !problem.answer.isEmpty {
+      announced.insert(label)
+      say(name + " " + problem.answer)
+      if space.labels.indices.contains(target + 1) { ensurePrepared(space.labels[target + 1]) }
+    } else {
+      announced.remove(label)
+      introduced.insert(label)
+      say(name, meaningful: false)
+      ensurePrepared(label)
+    }
+  }
+
+  /// Explain: the stored explanation of the current problem. If it hasn't arrived yet it's
+  /// said when it does; if the reply had none, it's asked for from the stored work, with no
+  /// new photo.
+  func explainCurrentProblem() {
+    guard subject == .math else { return }
+    guard let space = workspace, let label = space.currentLabel, let problem = space.problems[label] else {
+      say(phase == .idle ? "Nothing to explain yet." : "Still working.", meaningful: false)
+      return
+    }
+    if !problem.explanation.isEmpty {
+      say(problem.explanation)
+      return
+    }
+    if problem.status == .preparing {
+      pendingExplain = label
+      if problem.answer.isEmpty { say("Still working.", meaningful: false) }
+      return
+    }
+    guard !problem.answer.isEmpty else {
+      say("Nothing to explain yet.", meaningful: false)
+      return
+    }
+    guard explainTask == nil else { return }
+    let id = space.id
+    explainWorkspaceID = id
+    explainTask = Task { [weak self] in
+      guard let self else { return }
+      self.beginMathWork()
+      defer {
+        self.endMathWork()
+        if self.explainWorkspaceID == id {
+          self.explainTask = nil
+          self.explainWorkspaceID = nil
+        }
+      }
+      do {
+        let reply = try await self.askClaude(
+          .text(ClaudeClient.explainAsk(label: label, question: problem.question, solution: problem.solution)),
+          simulated: "Explain: " + Self.simulatedExplanation)
+        let explanation = MathReply.parse(reply.text).explanation
+        guard var space = self.workspace, space.id == id, !explanation.isEmpty else { throw ClaudeError.emptyAnswer }
+        space.problems[label]?.explanation = explanation
+        self.workspace = space
+        self.showWorkspace()
+        if space.currentLabel == label { self.say(explanation) }
+      } catch where Task.isCancelled {
+      } catch {
+        diag("solve", "explanation FAILED: \(ErrorDetail.describe(error))")
+        if self.workspace?.id == id { self.say("Couldn't get an explanation. Double-tap to try again.", meaningful: false) }
+      }
+    }
+  }
+
+  /// Check, independently: when the photo shows the listener's own work, their lines are
+  /// checked against the problem. Otherwise the problem is solved again without seeing the
+  /// first answer (a model re-solving with its earlier solution in view leans toward agreeing
+  /// with it), and a second request compares the two. The result is Correct, Incorrect (with
+  /// the corrected answer and why) or Unclear.
+  func checkCurrentProblem() {
+    guard subject == .math else { return }
+    guard let space = workspace, let label = space.currentLabel, let problem = space.problems[label],
+      !problem.answer.isEmpty
+    else {
+      let working = phase != .idle || workspace?.current?.status == .preparing
+      say(working ? "Still working." : "Nothing to check yet. Press capture first.", meaningful: false)
+      return
+    }
+    if let check = problem.check {
+      say(check)
+      return
+    }
+    guard checkTask == nil else {
+      say("Still checking.", meaningful: false)
+      return
+    }
+    say("Checking.", meaningful: false)
+    isChecking = true
+    let id = space.id
+    let jpeg = space.jpeg
+    let sessionID = conversation.currentSessionID
+    checkWorkspaceID = id
+    checkTask = Task { [weak self] in
+      guard let self else { return }
+      self.beginMathWork()
+      defer {
+        self.endMathWork()
+        if self.checkWorkspaceID == id {
+          self.checkTask = nil
+          self.checkWorkspaceID = nil
+          self.isChecking = false
+        }
+      }
+      let verdict: String
+      do {
+        if problem.ownWork {
+          let reply = try await self.askClaude(
+            .photo(jpeg: jpeg, ask: ClaudeClient.ownWorkAsk(label: label, reference: problem.solution)),
+            simulated: "Verdict: Correct. Your work is right.")
+          verdict = MathReply.parse(reply.text).verdict ?? "Unclear. The check didn't give a result."
+        } else {
+          let again = try await self.askClaude(
+            .photo(jpeg: jpeg, ask: ClaudeClient.resolveAsk(label)), simulated: Self.simulatedMathReply(label: label))
+          let second = MathReply.parse(again.text)
+          if second.answer.isEmpty {
+            verdict = "Unclear. The problem couldn't be solved a second time."
+          } else {
+            let secondSolution = (["Answer: \(second.answer)"] + second.work).joined(separator: "\n")
+            let compared = try await self.askClaude(
+              .text(
+                ClaudeClient.compareAsk(
+                  label: label, question: problem.question, first: problem.solution, second: secondSolution)),
+              simulated: "Verdict: Correct. \(problem.answer)")
+            verdict = MathReply.parse(compared.text).verdict ?? "Unclear. The check didn't give a result."
+          }
+        }
+      } catch {
+        if !Task.isCancelled {
+          diag("solve", "check FAILED: \(ErrorDetail.describe(error))")
+          if self.workspace?.id == id { self.say("Couldn't check it. Double press to try again.", meaningful: false) }
+        }
+        return
+      }
+      guard var space = self.workspace, space.id == id else { return }
+      space.problems[label]?.check = verdict
+      self.workspace = space
+      self.showWorkspace()
+      diag("solve", "check of problem \(label): \(verdict)")
+      self.conversation.add(
+        prompt: "Check problem \(label)", photo: nil, answer: "Problem: \(label)\nCheck: \(verdict)", error: nil,
+        isTest: self.testMode, sessionID: sessionID)
+      if space.currentLabel == label { self.say(verdict) }
+    }
+  }
+
+  /// Repeat: the last answer, explanation or check result again, with nothing recalculated.
+  func repeatLastSpoken() {
+    guard let lastSpoken else {
+      say("Nothing to repeat yet.", meaningful: false)
+      return
+    }
+    speaker.speak(lastSpoken, isAnswer: true)
+  }
+
+  /// Says `text`. An answer, explanation or check result is kept for Repeat and replaces what's
+  /// being said; a status ("Checking.", "That's the last problem.") waits its turn. With
+  /// `after`, it's said once what's playing ends.
+  private func say(_ text: String, meaningful: Bool = true, after: Bool = false) {
+    if meaningful {
+      lastSpoken = text
+      if after && speaker.isActive {
+        speaker.announce(text, ifBusy: .after)
+      } else {
+        speaker.speak(text, isAnswer: true)
+      }
+    } else {
+      speaker.announce(text, ifBusy: .after)
+    }
+  }
+
+  /// Stops everything still being worked out for the last photo.
+  private func cancelMathWork() {
+    mathTasks.values.forEach { $0.cancel() }
+    mathTasks.removeAll()
+    checkTask?.cancel()
+    checkTask = nil
+    checkWorkspaceID = nil
+    isChecking = false
+    explainTask?.cancel()
+    explainTask = nil
+    explainWorkspaceID = nil
+    pendingExplain = nil
+    announced.removeAll()
+    introduced.removeAll()
+  }
+
+  /// Forgets the math photo (the subject changed).
+  private func clearWorkspace() {
+    cancelMathWork()
+    workspace = nil
+    lastSpoken = nil
+    shownAnswer = ""
+  }
+
+  /// The written answer page shows every problem solved from the photo, in printed order.
+  private func showWorkspace() {
+    guard let space = workspace else { return }
+    linePosition = nil
+    shownAnswer = space.labels.compactMap { label in
+      space.problems[label].flatMap { $0.answer.isEmpty ? nil : $0.written(label: label) }
+    }.joined(separator: "\n")
+  }
+
+  /// A math request, to Claude or, in Test mode, a sample reply after a wait (35 seconds with
+  /// the phone locked, longer than iOS's background allowance).
+  private func askClaude(
+    _ request: ClaudeClient.MathRequest, simulated: String,
+    onText: @escaping @MainActor @Sendable (String) -> Void = { _ in },
+    onRestartLine: @escaping @MainActor @Sendable () -> Void = {}
+  ) async throws -> ClaudeClient.Answer {
+    if testMode {
+      let inBackground = UIApplication.shared.applicationState != .active
+      try await Task.sleep(for: inBackground ? .seconds(35) : Self.testModeWait)
+      onText(simulated)
+      return ClaudeClient.Answer(text: simulated, stopReason: "end_turn")
+    }
+    guard let apiKey = Keychain.read(Self.apiKeyAccount) else {
+      hasAPIKey = false
+      throw ClaudeError.http(status: 401, message: "No API key")
+    }
+    return try await ClaudeClient(apiKey: apiKey, subject: subject, fast: fastAnswers).respond(
+      to: request, onText: onText, onRestartLine: onRestartLine)
+  }
+
+  private static func withoutFinalStop(_ text: String) -> String {
+    var text = text.trimmingCharacters(in: .whitespaces)
+    while text.hasSuffix(".") { text.removeLast() }
+    return text
+  }
+
+  /// Test mode's math photo: two problems, so swipes, Explain and Check can all be tried
+  /// without Claude.
+  static func simulatedMathReply(label: String?) -> String {
+    if label == "2" {
+      return """
+        Problem: 2
+        Question: test mode sample, solve 3 x plus 7 equals 19
+        Answer: x equals 4.
+        Explain: Test mode. Subtract 7 from both sides to get 3 x equals 12, then divide by 3.
+        Own work: no
+        Work:
+        Write: 3 x plus 7 equals 19 || 3x + 7 = 19
+        Write: 3 x equals 12 || 3x = 12
+        Write: x equals 4 || x = 4
+        Mark: Draw a box around line 3.
+        """
+    }
+    return """
+      Problems: 1, 2
+      Problem: 1
+      Question: test mode sample, solve 2 x squared plus 7 x plus 3 equals 0
+      Answer: x equals negative 1 half, or x equals negative 3.
+      Explain: \(simulatedExplanation)
+      Own work: no
+      Work:
+      Write: 2 x squared plus 7 x plus 3 equals 0 || 2x^2 + 7x + 3 = 0
+      Write: 2 x plus 1, times x plus 3, equals 0 || (2x + 1)(x + 3) = 0
+      Write: x equals negative 1 half, or x equals negative 3 || x = -\\frac{1}{2} \\quad\\text{or}\\quad x = -3
+      Mark: Draw a box around line 3.
+      """
+  }
+
+  static let simulatedExplanation =
+    "Test mode. The left side factors into 2 x plus 1, times x plus 3. Each factor set to 0 gives one answer."
+
   // MARK: - Hands-free session
 
   /// Starts a session that stays open (also in the background) and solves on each press
@@ -1089,6 +1654,7 @@ final class AppModel {
     camera.endSession()
     resetSessionState()
     conversation.endSession()
+    speaker.resumeForWearer()
   }
 
   private func beginSession(prompt: String) async {
@@ -1111,7 +1677,7 @@ final class AppModel {
     sessionPaused = session.state == .paused
     observeSessionState(session)
     attachShutter(to: session)
-    speaker.speak("Session started. Press the capture button to solve.")
+    speaker.speak(subject == .math ? "Session started." : "Session started. Press the capture button to solve.")
   }
 
   private func observeSessionState(_ session: DeviceSession) {
@@ -1131,12 +1697,14 @@ final class AppModel {
     case .started:
       if sessionPaused {
         sessionPaused = false
+        speaker.resumeForWearer()
         // Button events may have dropped while paused; a resume earns a fresh set of tries.
         shutterAttempts = 0
         scheduleShutterRevive("session resumed")
       }
     case .paused:
       sessionPaused = true
+      speaker.pauseForWearer()
     case .stopped:
       // Ended from the glasses (touchpad tap-and-hold, hinges closed) or lost connection.
       sessionActive = false
@@ -1146,6 +1714,7 @@ final class AppModel {
       shutter.detach(from: nil)
       resetSessionState()
       conversation.endSession()
+      speaker.resumeForWearer()
       speaker.announce("Glasses session ended.", ifBusy: .after)
     case .idle, .starting, .stopping:
       break
@@ -1156,8 +1725,7 @@ final class AppModel {
     shutterAttempts += 1
     shutter.attach(
       to: session,
-      onPress: { [weak self] timestampMs in self?.shutterPressed(at: timestampMs) },
-      onSelect: { [weak self] in self?.repeatWriteLine() },
+      onGesture: { [weak self] gesture, timestampMs in self?.gestureArrived(gesture, at: timestampMs) },
       onStatus: { [weak self] status in self?.shutterStatusChanged(status) }
     )
     shutterStatus = shutter.status
@@ -1245,36 +1813,151 @@ final class AppModel {
     speaker.announce("The capture button isn't available. Use the Solve button in the app.", ifBusy: .after)
   }
 
-  private func shutterPressed(at timestampMs: Int64) {
+  // MARK: - Glasses gestures
+
+  /// Gestures of one kind closer together than this (by the glasses' clock) count as one.
+  private static func debounceMs(for gesture: ShutterButton.Gesture) -> Int64 {
+    switch gesture {
+    case .capturePress, .captureDoublePress: 800
+    case .captureHold: 1000
+    case .touchpadDoubleTap: 600
+    case .swipe: 350
+    }
+  }
+  @ObservationIgnored private var lastGestureMs: [String: Int64] = [:]
+  /// The glasses' time of the last short press, to spot a double press reported after it.
+  @ObservationIgnored private var lastCapturePressMs: Int64?
+  /// A double press this soon after a short press means that press was its first half.
+  private static let doublePressWindowMs: Int64 = 1500
+
+  /// Every gesture from the glasses comes through here. Physical input is noisy, so a gesture
+  /// that arrived late, repeats one just handled, or comes while the session is paused does
+  /// nothing: doing nothing beats doing the wrong thing. The rest goes to the subject's own
+  /// controls (math: per problem; chemistry: per page).
+  private func gestureArrived(_ gesture: ShutterButton.Gesture, at timestampMs: Int64) {
     let lateness = pressLateness(timestampMs)
     diag(
       "inputs",
-      "capture press: app \(Self.appStateDescription), \(lateness) ms later than the fastest delivery, "
-        + "active \(sessionActive), busy \(isBusy), paused \(sessionPaused)")
+      "\(gesture): app \(Self.appStateDescription), \(lateness) ms later than the fastest delivery, "
+        + "active \(sessionActive), phase \(phase), paused \(sessionPaused), \(subject.name)")
     guard sessionActive else { return }
     if lateness > Self.latePressThresholdMs {
-      // The view has likely changed since; a photo now wouldn't show what was pressed for.
-      if lastLateNotice.map({ Date.now.timeIntervalSince($0) > 10 }) ?? true {
+      // The view has likely changed since; acting on it now would surprise the wearer.
+      if gesture == .capturePress, lastLateNotice.map({ Date.now.timeIntervalSince($0) > 10 }) ?? true {
         lastLateNotice = .now
         speaker.announce("That button press reached the phone late. Press again.", ifBusy: .skip)
       }
       return
     }
-    if timestampMs > 0, let last = lastPressTimestampMs, timestampMs >= last,
-      timestampMs - last < Self.pressDebounceMs
+    let kind = if case .swipe = gesture { "swipe" } else { "\(gesture)" }
+    if timestampMs > 0, let last = lastGestureMs[kind], timestampMs >= last,
+      timestampMs - last < Self.debounceMs(for: gesture)
     {
-      diag("inputs", "press ignored: \(timestampMs - last) ms after the previous one")
+      diag("inputs", "\(gesture) ignored: \(timestampMs - last) ms after the previous one")
       return
     }
-    lastPressTimestampMs = timestampMs
+    lastGestureMs[kind] = timestampMs
     guard !sessionPaused else {
       speaker.announce("The session is paused. Tap the touchpad once to resume.", ifBusy: .skip)
       return
     }
-    // A press while it's still working means a new photo: the current answer stops and the
-    // new photo is answered.
+    // The glasses may report a double press as a short press, then the double press. If so,
+    // the photo the short press started isn't wanted.
+    var replacesPhoto = false
+    if gesture == .captureDoublePress, phase == .capturing, let press = lastCapturePressMs,
+      timestampMs - press < Self.doublePressWindowMs
+    {
+      diag("inputs", "the double press came \(timestampMs - press) ms after a short press; dropping that photo")
+      replacesPhoto = true
+      if subject == .math { solveTask?.cancel() }
+    }
+    if gesture == .capturePress { lastCapturePressMs = timestampMs }
+    if subject == .math { mathGesture(gesture) } else { chemistryGesture(gesture, replacesPhoto: replacesPhoto) }
+  }
+
+  /// Math: press to solve, double-tap to explain, double press to check, swipe to move,
+  /// hold to repeat.
+  private func mathGesture(_ gesture: ShutterButton.Gesture) {
+    switch gesture {
+    case .capturePress: pressSolve()
+    case .captureDoublePress: checkCurrentProblem()
+    case .captureHold: repeatLastSpoken()
+    case .touchpadDoubleTap: explainCurrentProblem()
+    case .swipe(let direction): moveProblem(by: isForward(direction) ? 1 : -1)
+    }
+  }
+
+  /// Chemistry: press to answer the whole page, double press to check a filled-in answer
+  /// sheet, double-tap to repeat the last answer, swipe to replay a question already answered.
+  private func chemistryGesture(_ gesture: ShutterButton.Gesture, replacesPhoto: Bool) {
+    switch gesture {
+    case .capturePress: pressSolve()
+    case .captureDoublePress: pressSolve(action: .check, replacingPhoto: replacesPhoto)
+    case .touchpadDoubleTap: repeatWriteLine()
+    case .swipe(let direction): replayQuestion(by: isForward(direction) ? 1 : -1)
+    case .captureHold: diag("inputs", "capture hold has no job in chemistry; ignored")
+    }
+  }
+
+  /// Which swipe means "next". The glasses report up, down, left or right, and their own
+  /// settings can flip that, so Settings can too.
+  private func isForward(_ direction: ShutterButton.Gesture.Swipe) -> Bool {
+    (direction == .right || direction == .down) != reverseSwipes
+  }
+
+  /// A new photo. Ignored while the last one is still being taken, or before its answer has
+  /// started, so one physical press never starts two solves.
+  private func pressSolve(action: ClaudeClient.PhotoAction? = nil, replacingPhoto: Bool = false) {
+    let starting = phase == .capturing || (phase == .thinking && (subject == .math || !answerStarted))
+    if starting && !replacingPhoto {
+      diag("inputs", "press ignored: the last photo is still being taken or solved")
+      return
+    }
     pressedAt = .now
-    startSolve(reason: "capture press")
+    startSolve(reason: action == .check ? "capture double press" : "capture press", action: action)
+  }
+
+  // MARK: - Chemistry: replaying the page
+
+  /// The question a swipe last replayed; nil until one does, after each new answer.
+  @ObservationIgnored private var replayIndex: Int?
+
+  /// Swipe in chemistry: says an already-answered question again, from the last answer, with
+  /// no new request. Starts from the question heard last.
+  func replayQuestion(by step: Int) {
+    guard subject == .chemistry else { return }
+    let questions = Self.questions(in: lastAnswer)
+    guard !questions.isEmpty else {
+      speaker.announce("Nothing to replay yet.", ifBusy: .skip)
+      return
+    }
+    guard !solveInFlight else {
+      speaker.announce("Still answering.", ifBusy: .skip)
+      return
+    }
+    let heard = speaker.progress.flatMap { progress in questions.firstIndex { $0.label == progress.problem } }
+    let from = replayIndex ?? heard ?? questions.count - 1
+    let target = from + step
+    guard questions.indices.contains(target) else {
+      speaker.announce(step > 0 ? "That's the last question." : "That's the first question.", ifBusy: .after)
+      return
+    }
+    replayIndex = target
+    diag("audio", "replaying \(Speaker.itemName(questions[target].label, itemWord: subject.itemWord))")
+    speaker.speak(questions[target].text, isAnswer: true)
+  }
+
+  /// An answer split into its questions: each "Problem:" line and the lines after it.
+  static func questions(in answer: String) -> [(label: String, text: String)] {
+    var questions: [(label: String, text: String)] = []
+    for line in answer.components(separatedBy: "\n") {
+      if let label = Speaker.problemLabel(in: Speaker.spokenPart(line)) {
+        questions.append((label, line))
+      } else if !questions.isEmpty, line.trimmingCharacters(in: .whitespaces) != "Done." {
+        questions[questions.count - 1].text += "\n" + line
+      }
+    }
+    return questions
   }
 
   private func resetSessionState() {
@@ -1282,7 +1965,8 @@ final class AppModel {
     shutterStatus = .off
     shutterAttempts = 0
     shutterProblemReported = false
-    lastPressTimestampMs = nil
+    lastGestureMs.removeAll()
+    lastCapturePressMs = nil
     lastSeenPressTimestampMs = nil
     pressOffsetBaselineMs = nil
     sessionPrompt = subject.defaultPrompt
@@ -1345,4 +2029,10 @@ private final class BackgroundActivity {
     UIApplication.shared.endBackgroundTask(identifier)
     identifier = .invalid
   }
+}
+
+/// The text of a reply as it arrives, shared with the closure that receives it.
+@MainActor
+final class ReplyBuffer {
+  var text = ""
 }

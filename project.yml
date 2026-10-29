@@ -33,6 +33,9 @@ targets:
       # The written-answer page and KaTeX (MIT), which typesets its math offline.
       - path: Math
         type: folder
+      # The current math unit's course notes, appended to Claude's math instructions.
+      - path: Courses
+        type: folder
     settings:
       base:
         INFOPLIST_FILE: Support/Info.plist

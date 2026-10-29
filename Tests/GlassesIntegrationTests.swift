@@ -67,34 +67,30 @@ final class GlassesIntegrationTests: XCTestCase {
     camera.endSession()
   }
 
-  /// A short capture press and a touchpad double-tap reach the app; hold and double press
-  /// of the capture button are ignored.
-  func testCapturePressAndDoubleTapReachTheApp() async throws {
+  /// Every gesture reaches the app as its own kind: capture short press, double press and
+  /// hold, touchpad double-tap and swipes.
+  func testEveryGestureReachesTheApp() async throws {
     let (camera, _) = await makeCamera()
     let session = try await camera.startedSession()
     let shutter = ShutterButton()
     let events = EventCounter()
     shutter.attach(
       to: session,
-      onPress: { _ in events.presses += 1 },
-      onSelect: { events.selects += 1 },
+      onGesture: { gesture, _ in events.gestures.append(gesture) },
       onStatus: { _ in })
     let active = await waitUntil(15) { shutter.status == .active }
     XCTAssertTrue(active, "button events never became active (status \(shutter.status))")
 
     let input = try XCTUnwrap(glasses).services.input
     input.capture(pressType: MWDATMockDevice.CapturePressType.shortPress)
-    let pressed = await waitUntil(5) { events.presses == 1 }
-    XCTAssertTrue(pressed, "capture press didn't arrive")
-
-    input.select(source: MWDATMockDevice.InputSource.captouch)
-    let selected = await waitUntil(5) { events.selects == 1 }
-    XCTAssertTrue(selected, "touchpad double-tap (select) didn't arrive")
-
-    input.capture(pressType: MWDATMockDevice.CapturePressType.hold)
     input.capture(pressType: MWDATMockDevice.CapturePressType.doublePress)
-    try await Task.sleep(for: .seconds(1))
-    XCTAssertEqual(events.presses, 1, "hold or double press was treated as a solve")
+    input.capture(pressType: MWDATMockDevice.CapturePressType.hold)
+    input.select(source: MWDATMockDevice.InputSource.captouch)
+    input.navRight(source: MWDATMockDevice.InputSource.captouch)
+    let arrived = await waitUntil(5) { events.gestures.count == 5 }
+    XCTAssertTrue(arrived, "gestures that arrived: \(events.gestures)")
+    XCTAssertEqual(
+      events.gestures, [.capturePress, .captureDoublePress, .captureHold, .touchpadDoubleTap, .swipe(.right)])
 
     shutter.detach(from: session)
     camera.endSession()
@@ -105,8 +101,13 @@ final class GlassesIntegrationTests: XCTestCase {
   func testHandsFreeSessionInTestMode() async throws {
     let model = AppModel()
     let wasTestMode = model.testMode
+    let wasSubject = model.subject
     model.testMode = true
-    defer { model.testMode = wasTestMode }
+    model.subject = .math
+    defer {
+      model.testMode = wasTestMode
+      model.subject = wasSubject
+    }
 
     let ready = await waitUntil(10) { model.isRegistered && model.hasActiveDevice }
     XCTAssertTrue(ready, "registered \(model.isRegistered), glasses \(model.hasActiveDevice)")
@@ -114,17 +115,19 @@ final class GlassesIntegrationTests: XCTestCase {
     XCTAssertTrue(model.sessionActive, "session didn't start: \(model.errorMessage ?? "no error")")
     let sessionID = try XCTUnwrap(model.conversation.currentSessionID)
     let input = try XCTUnwrap(glasses).services.input
+    // Each problem is filed on its own; the sample photo's second problem is prepared too.
+    func firstProblems() -> [ConversationEntry] {
+      model.conversation.entries(inSession: sessionID).filter { $0.prompt == "Problem 1" }
+    }
 
     for press in 1...2 {
       let buttonReady = await waitUntil(20) { model.shutterStatus == .active && !model.isBusy }
       XCTAssertTrue(buttonReady, "press \(press): button not ready (\(model.shutterStatus), busy \(model.isBusy))")
       try await Task.sleep(for: .seconds(1))  // clear of the press debounce
       input.capture(pressType: MWDATMockDevice.CapturePressType.shortPress)
-      let answered = await waitUntil(60) {
-        model.conversation.entries(inSession: sessionID).count == press && !model.isBusy
-      }
+      let answered = await waitUntil(60) { firstProblems().count == press && !model.isBusy }
       XCTAssertTrue(answered, "press \(press): no answer filed")
-      let entry = try XCTUnwrap(model.conversation.entries(inSession: sessionID).last)
+      let entry = try XCTUnwrap(firstProblems().last)
       XCTAssertNil(entry.error, "press \(press) failed: \(entry.error ?? "")")
       XCTAssertNotNil(entry.answer)
       XCTAssertNotNil(entry.photoFile, "press \(press): photo wasn't saved")
@@ -136,71 +139,89 @@ final class GlassesIntegrationTests: XCTestCase {
     XCTAssertTrue(model.conversation.pastSessions.contains { $0.id == sessionID })
   }
 
-  /// A press while it's still working on the last photo stops that answer, takes a new
-  /// photo, and answers the new one (it used to say "Still working on the last one").
-  func testANewPhotoWhileWorkingIsAnswered() async throws {
+  /// A press while the last photo is still being solved is ignored (one physical press never
+  /// starts two solves). Once the answer has come, the buttons work on it: a swipe moves to
+  /// the second problem, a double press checks it, and a new press takes a new photo.
+  func testMathButtonsInTestMode() async throws {
     let model = AppModel()
     let wasTestMode = model.testMode
+    let wasSubject = model.subject
     model.testMode = true
+    model.subject = .math
     // A long stand-in for Claude, so the second press comes while the first is still working.
-    AppModel.testModeWait = .seconds(20)
+    AppModel.testModeWait = .seconds(15)
     defer {
       model.testMode = wasTestMode
+      model.subject = wasSubject
       AppModel.testModeWait = .seconds(2)
     }
 
     let ready = await waitUntil(10) { model.isRegistered && model.hasActiveDevice }
     XCTAssertTrue(ready, "registered \(model.isRegistered), glasses \(model.hasActiveDevice)")
-    await model.startSession(prompt: "Test prompt")
+    await model.startSession(prompt: model.subject.defaultPrompt)
     XCTAssertTrue(model.sessionActive, "session didn't start: \(model.errorMessage ?? "no error")")
     let sessionID = try XCTUnwrap(model.conversation.currentSessionID)
     let input = try XCTUnwrap(glasses).services.input
+    func entries(_ prompt: String) -> [ConversationEntry] {
+      model.conversation.entries(inSession: sessionID).filter { $0.prompt == prompt }
+    }
+    func buttonBack() async -> Bool {
+      await waitUntil(30) { model.shutterStatus == .active }
+    }
 
     let buttonReady = await waitUntil(20) { model.shutterStatus == .active && !model.isBusy }
     XCTAssertTrue(buttonReady, "button not ready (\(model.shutterStatus), busy \(model.isBusy))")
     try await Task.sleep(for: .seconds(1))
     input.capture(pressType: MWDATMockDevice.CapturePressType.shortPress)
     let thinking = await waitUntil(30) { model.phase == .thinking }
-    XCTAssertTrue(thinking, "the first photo never got to Claude (phase \(model.phase))")
+    XCTAssertTrue(thinking, "the photo never got to Claude (phase \(model.phase))")
 
-    // The second photo, while the first is still being answered.
-    // After each photo the glasses session is replaced and the button re-attached.
-    let buttonBack = await waitUntil(30) {
+    // A second press while it's solving does nothing.
+    let backAfterPhoto = await waitUntil(30) {
       DiagnosticsLog.shared.text.contains("glasses session refreshed") && model.shutterStatus == .active
     }
-    XCTAssertTrue(buttonBack, "button didn't come back after the first photo (\(model.shutterStatus))")
-    try await Task.sleep(for: .seconds(1))  // clear of the press debounce
-    AppModel.testModeWait = .seconds(2)
-    input.capture(pressType: MWDATMockDevice.CapturePressType.shortPress)
-
-    let answered = await waitUntil(60) {
-      model.conversation.entries(inSession: sessionID).count == 2 && !model.isBusy
-    }
-    XCTAssertTrue(answered, "the new photo wasn't answered (\(model.conversation.entries(inSession: sessionID).count) entries)")
-    let entries = model.conversation.entries(inSession: sessionID)
-    XCTAssertEqual(entries.first?.error, "Stopped for a new photo.")
-    XCTAssertNil(entries.last?.error, "the new photo failed: \(entries.last?.error ?? "")")
-    XCTAssertNotNil(entries.last?.answer)
-    XCTAssertNotNil(entries.last?.photoFile, "the new photo wasn't saved")
-    XCTAssertTrue(DiagnosticsLog.shared.text.contains("stopping that answer to answer the new photo"))
-
-    // A third photo while the second answer is still being spoken (the sample takes minutes
-    // to say) is answered too.
-    let buttonAgain = await waitUntil(30) { model.shutterStatus == .active && !model.isBusy }
-    XCTAssertTrue(buttonAgain, "button not ready for the third photo (\(model.shutterStatus))")
+    XCTAssertTrue(backAfterPhoto, "button didn't come back after the photo (\(model.shutterStatus))")
     try await Task.sleep(for: .seconds(1))
     input.capture(pressType: MWDATMockDevice.CapturePressType.shortPress)
-    let third = await waitUntil(60) { model.conversation.entries(inSession: sessionID).count == 3 && !model.isBusy }
-    XCTAssertTrue(third, "a photo taken while the answer was being spoken wasn't answered")
-    XCTAssertNil(model.conversation.entries(inSession: sessionID).last?.error)
+    let ignored = await waitUntil(5) { DiagnosticsLog.shared.text.contains("press ignored") }
+    XCTAssertTrue(ignored, "a press while solving wasn't ignored")
+    AppModel.testModeWait = .seconds(2)
+
+    let answered = await waitUntil(60) { model.workspace?.current?.answer.isEmpty == false }
+    XCTAssertTrue(answered, "the first problem wasn't answered")
+    XCTAssertEqual(model.workspace?.labels, ["1", "2"])
+    XCTAssertEqual(entries("Problem 1").count, 1)
+
+    // Swipe: the second problem, from the same photo.
+    let backForSwipe = await buttonBack()
+    XCTAssertTrue(backForSwipe)
+    input.navRight(source: MWDATMockDevice.InputSource.captouch)
+    let moved = await waitUntil(10) { model.workspace?.index == 1 }
+    XCTAssertTrue(moved, "the swipe didn't move to problem 2")
+    let second = await waitUntil(60) { model.workspace?.current?.answer == "x equals 4." }
+    XCTAssertTrue(second, "problem 2 wasn't prepared")
+
+    // Double press: Check, with no new photo.
+    try await Task.sleep(for: .seconds(1))
+    input.capture(pressType: MWDATMockDevice.CapturePressType.doublePress)
+    let checked = await waitUntil(60) { model.workspace?.current?.check != nil }
+    XCTAssertTrue(checked, "the check didn't finish")
+    XCTAssertEqual(model.workspace?.current?.check?.hasPrefix("Correct"), true)
+    XCTAssertEqual(entries("Check problem 2").count, 1)
+
+    // A new press after the answer: a new photo.
+    try await Task.sleep(for: .seconds(1))
+    input.capture(pressType: MWDATMockDevice.CapturePressType.shortPress)
+    let newPhoto = await waitUntil(60) { entries("Problem 1").count == 2 }
+    XCTAssertTrue(newPhoto, "a press after the answer didn't take a new photo")
+    XCTAssertEqual(model.workspace?.index, 0)
     model.stopSession()
   }
 }
 
 @MainActor
 private final class EventCounter {
-  var presses = 0
-  var selects = 0
+  var gestures: [ShutterButton.Gesture] = []
 }
 
 /// Media files for the simulated camera.

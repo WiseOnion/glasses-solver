@@ -2,14 +2,15 @@ import Foundation
 import MWDATCore
 import MWDATInputs
 
-/// Listens for the physical capture (shutter) button on the glasses frame, using the
-/// SDK 1.0 Inputs capability (experimental).
+/// Listens for the glasses' physical controls (capture button and touchpad), using the SDK
+/// 1.0 Inputs capability (experimental). Every gesture an app can receive is passed on; the
+/// owner decides what each one does.
 ///
 /// Field notes from Meta's BirdSpotter sample, which this follows:
 /// - Requested alone, `.captureButton` once reported `active` and then delivered nothing,
-///   so the temple touchpad and action button are requested too. Their events are only
-///   logged. The touchpad's single tap (pause/resume) and tap-and-hold (end session) stay
-///   reserved by the glasses either way, and volume stays with the system.
+///   so the temple touchpad and action button are requested too. The touchpad's single tap
+///   (pause/resume) and tap-and-hold (end session) stay reserved by the glasses either way,
+///   and volume stays with the system.
 /// - Taking a photo can drop the capability (it goes `inactive` after being `active`), and
 ///   it doesn't come back by itself. That is reported as `.off` so the owner can re-add it.
 @MainActor
@@ -22,6 +23,33 @@ final class ShutterButton {
     case unavailable(reason: String, retryable: Bool)
   }
 
+  /// A gesture the glasses deliver to apps (Meta's Inputs page). Whether each one reaches
+  /// the app on a given model and firmware is only known from real glasses, so every event is
+  /// logged.
+  enum Gesture: Equatable, CustomStringConvertible {
+    case capturePress
+    case captureDoublePress
+    case captureHold
+    /// A touchpad double-tap, delivered as Select (Meta, SDK issue #312). It doesn't pause
+    /// the session, unlike a single tap.
+    case touchpadDoubleTap
+    /// A touchpad swipe. Which direction is "forward" depends on the model and the wearer's
+    /// settings (they can invert it), so the owner maps it.
+    case swipe(Swipe)
+
+    enum Swipe: String, Equatable { case up, down, left, right }
+
+    var description: String {
+      switch self {
+      case .capturePress: "capture button, short press"
+      case .captureDoublePress: "capture button, double press"
+      case .captureHold: "capture button, hold"
+      case .touchpadDoubleTap: "touchpad double-tap"
+      case .swipe(let direction): "touchpad swipe \(direction.rawValue)"
+      }
+    }
+  }
+
   private(set) var status: Status = .off
   private var inputs: Inputs?
   private var hasActivated = false
@@ -29,22 +57,18 @@ final class ShutterButton {
   private var generation = 0
   private var eventsTask: Task<Void, Never>?
   private let tokens = ListenerTokenBag()
-  private var onPress: ((Int64) -> Void)?
-  private var onSelect: (() -> Void)?
+  private var onGesture: ((Gesture, Int64) -> Void)?
   private var onStatus: ((Status) -> Void)?
 
-  /// Attaches Inputs to a started session. Presses arrive on `onPress` with the glasses'
-  /// own timestamp in milliseconds; a touchpad double-tap (delivered as Select, per Meta in
-  /// SDK issue #312) arrives on `onSelect`; activation progress and failures on `onStatus`.
+  /// Attaches Inputs to a started session. Gestures arrive on `onGesture` with the glasses'
+  /// own timestamp in milliseconds; activation progress and failures on `onStatus`.
   func attach(
     to session: DeviceSession,
-    onPress: @escaping (Int64) -> Void,
-    onSelect: @escaping () -> Void,
+    onGesture: @escaping (Gesture, Int64) -> Void,
     onStatus: @escaping (Status) -> Void
   ) {
     detach(from: session)
-    self.onPress = onPress
-    self.onSelect = onSelect
+    self.onGesture = onGesture
     self.onStatus = onStatus
 
     // consumeBack keeps a back gesture from ending the session (real glasses don't send
@@ -94,21 +118,15 @@ final class ShutterButton {
     let events = added.events
     eventsTask = Task { [weak self] in
       for await event in events {
-        // Everything is logged, including ignored events: whether presses arrive at all,
+        // Everything is logged, including ignored events: whether a gesture arrives at all,
         // and as which type, is only known from real glasses.
-        if case .select(.captouch, _) = event {
-          diag("inputs", "event: touchpad select (double-tap)")
-          guard self?.generation == current else { return }
-          self?.onSelect?()
-          continue
-        }
-        guard case .capture(.shortPress, .captureButton, let timestampMs) = event else {
+        guard let gesture = Self.gesture(for: event) else {
           diag("inputs", "event (ignored): \(event)")
           continue
         }
-        diag("inputs", "event: capture button, short press at \(timestampMs) ms")
+        diag("inputs", "event: \(gesture) at \(event.timestampMs) ms")
         guard self?.generation == current else { return }
-        self?.onPress?(timestampMs)
+        self?.onGesture?(gesture, event.timestampMs)
       }
       // A stream that ends on its own means no more presses, even without an `inactive`.
       guard !Task.isCancelled, self?.generation == current else { return }
@@ -156,9 +174,32 @@ final class ShutterButton {
     inputs = nil
     hasActivated = false
     status = .off
-    onPress = nil
-    onSelect = nil
+    onGesture = nil
     onStatus = nil
+  }
+
+  /// The gesture an event stands for; nil for events this app doesn't use (the action button,
+  /// Back, drags, and anything from a source other than the temple and the capture button).
+  nonisolated static func gesture(for event: InputEvent) -> Gesture? {
+    switch event {
+    case .capture(let press, .captureButton, _):
+      switch press {
+      case .shortPress: .capturePress
+      case .doublePress: .captureDoublePress
+      case .hold: .captureHold
+      }
+    case .select(.captouch, _):
+      .touchpadDoubleTap
+    case .nav(let direction, .captouch, _):
+      switch direction {
+      case .up: .swipe(.up)
+      case .down: .swipe(.down)
+      case .left: .swipe(.left)
+      case .right: .swipe(.right)
+      }
+    default:
+      nil
+    }
   }
 
   private func stateChanged(_ state: InputsState) {
