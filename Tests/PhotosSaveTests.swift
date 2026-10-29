@@ -1,4 +1,3 @@
-import Photos
 import XCTest
 
 @testable import GlassesSolver
@@ -34,21 +33,21 @@ final class PhotosSaveTests: XCTestCase {
     XCTAssertEqual(saved, [photo])
   }
 
-  /// The real thing: a photo added through PhotoKit shows up in the library.
-  func testPhotoAppearsInThePhotosLibrary() async throws {
+  /// The real thing: PhotoKit adds the photo to the simulator's library. (The app only has
+  /// add-only access, by design, so it can't count the library; PhotoKit's own report that the
+  /// change was applied is the check.)
+  func testPhotoIsAddedToThePhotosLibrary() async throws {
     let model = AppModel()
     await model.setSavePhotos(true)
     defer { Task { await model.setSavePhotos(false) } }
-    XCTAssertTrue(model.savePhotosToLibrary)
-    let readAccess = await PHPhotoLibrary.requestAuthorization(for: .readWrite)
-    try XCTSkipUnless(readAccess == .authorized, "can't read the library to check (access \(readAccess.rawValue))")
-    let before = PHAsset.fetchAssets(with: .image, options: nil).count
+    XCTAssertTrue(model.savePhotosToLibrary, "access wasn't granted: \(model.errorMessage ?? "no error")")
+    DiagnosticsLog.shared.clear()
     model.saveToPhotos(TestImages.jpeg())
-    var after = before
-    for _ in 0..<50 where after == before {
+    var added = false
+    for _ in 0..<50 where !added {
       try await Task.sleep(for: .milliseconds(100))
-      after = PHAsset.fetchAssets(with: .image, options: nil).count
+      added = DiagnosticsLog.shared.text.contains("[photos] added the photo to Photos")
     }
-    XCTAssertEqual(after, before + 1, "the photo didn't appear in Photos")
+    XCTAssertTrue(added, "PhotoKit didn't add the photo: \(DiagnosticsLog.shared.text)")
   }
 }
