@@ -151,6 +151,14 @@ final class AppModel {
   }
   /// True while Check is working on the current photo.
   private(set) var isChecking = false
+  /// Counts photos started, so the phone can open the written answer for each new one.
+  private(set) var photosStarted = 0
+  /// The photo a new capture just replaced, kept only so a double press the glasses reported
+  /// as a short press plus a double press can still check it (see `gestureArrived`).
+  @ObservationIgnored private var displacedWorkspace: MathWorkspace?
+  /// A new photo can start unless the camera is already taking one: latest capture wins, but
+  /// captures never queue up.
+  var canStartPhoto: Bool { phase != .capturing && !checkingPermission }
   /// Which way a touchpad swipe moves: the glasses' settings can flip it.
   var reverseSwipes: Bool {
     didSet { UserDefaults.standard.set(reverseSwipes, forKey: Self.reverseSwipesDefaultsKey) }
@@ -196,6 +204,7 @@ final class AppModel {
       // A photo after switching is never a follow-up to an answer in the other subject.
       lastAnswerTime = nil
       if subject != oldValue { clearWorkspace() }
+      conversation.subjectForNewEntries = subject.rawValue
       warmCache()
     }
   }
@@ -448,6 +457,7 @@ final class AppModel {
     speaker.onHoldChanged = { [weak self] held in self?.speechHeld = held }
     speaker.onIdle = { [weak self] in self?.updateActivity() }
     speaker.onAnswerAudio = { [weak self] in self?.firstWordsHeard() }
+    conversation.subjectForNewEntries = subject.rawValue
     speaker.onLineStarted = { [weak self] problem, line in
       self?.linePosition = LinePosition(problem: problem, line: line)
     }
@@ -539,7 +549,7 @@ final class AppModel {
   // MARK: - Solve
 
   func solve() async {
-    guard !isBusy else { return }
+    guard canStartPhoto else { return }
     checkingPermission = true
     defer { checkingPermission = false }
     guard canSolve else {
@@ -714,8 +724,23 @@ final class AppModel {
   /// Speaks a past answer again from the Conversation screen.
   func replay(_ entry: ConversationEntry) {
     guard let answer = entry.answer else { return }
+    // A math answer is filed with its written work, which is for reading, not dictating.
+    if entry.subject == ClaudeClient.Subject.math.rawValue, let spoken = Self.spokenMathResult(answer) {
+      speaker.speak(spoken, isAnswer: true)
+      return
+    }
     shownAnswer = answer
     speaker.speak(answer)
+  }
+
+  /// What a filed math answer says aloud: "Problem 4. x equals 4." (or a check's result).
+  static func spokenMathResult(_ summary: String) -> String? {
+    let lines = summary.components(separatedBy: "\n")
+    func value(_ prefix: String) -> String? {
+      lines.first { $0.hasPrefix(prefix) }.map { String($0.dropFirst(prefix.count)) }
+    }
+    let name = Speaker.problemLabel(in: lines.first ?? "").map { Speaker.itemName($0, itemWord: "Problem") + ". " } ?? ""
+    return (value("The answer: ") ?? value("Check: ")).map { name + $0 }
   }
 
   /// A chemistry photo: the whole page answered in one request and spoken as it arrives.
@@ -883,16 +908,23 @@ final class AppModel {
       previous.cancel()
       speaker.stop("a new photo was taken")
     }
+    // Latest capture wins: the photo before this one stops counting now, not when the new photo
+    // arrives, so nothing from it can be shown, said or filed, even if its answer comes later.
+    if subject == .math { displaceWorkspace() }
+    lastPhoto = nil
+    phase = .capturing
+    photosStarted += 1
     solveInFlight = true
     solveGeneration += 1
     let generation = solveGeneration
     let task = Task { [weak self] in
       await previous?.value
-      guard let self, self.solveGeneration == generation else { return }
+      guard let self, self.solveGeneration == generation, !Task.isCancelled else { return }
       if self.subject == .math { await self.runMath() } else { await self.run(action: action) }
       if self.solveGeneration == generation {
         self.solveInFlight = false
         self.solveTask = nil
+        if self.phase == .capturing { self.phase = .idle }
       }
     }
     solveTask = task
@@ -1162,6 +1194,7 @@ final class AppModel {
     }
     let space = MathWorkspace(photo: photo, jpeg: jpeg)
     workspace = space
+    displacedWorkspace = nil
     showWorkspace()
     phase = .thinking
     let cue = stillWorkingCue()
@@ -1193,6 +1226,7 @@ final class AppModel {
       let reply = try await askClaude(
         .photo(jpeg: space.jpeg, ask: ask), simulated: Self.simulatedMathReply(label: label),
         onText: { [weak self] piece in
+          guard !Task.isCancelled else { return }
           buffer.text += piece
           self?.apply(MathReply.parse(buffer.text, complete: false), asked: label, in: id, final: false)
         },
@@ -1283,7 +1317,7 @@ final class AppModel {
         + reply.tagsSeen.joined(separator: ", "))
     conversation.add(
       prompt: "Problem \(label)", photo: space.photo, answer: problem.summary(label: label), error: nil,
-      isTest: testMode, sessionID: sessionID)
+      isTest: testMode, sessionID: sessionID, title: problem.question)
     // Explain was pressed, but this reply had no explanation (it was cut off): ask for one.
     if pendingExplain == label, problem.explanation.isEmpty {
       pendingExplain = nil
@@ -1508,7 +1542,7 @@ final class AppModel {
       diag("solve", "check of problem \(label): \(verdict)")
       self.conversation.add(
         prompt: "Check problem \(label)", photo: nil, answer: "Problem: \(label)\nCheck: \(verdict)", error: nil,
-        isTest: self.testMode, sessionID: sessionID)
+        isTest: self.testMode, sessionID: sessionID, title: "Check · " + (problem.question.isEmpty ? "problem \(label)" : problem.question))
       if space.currentLabel == label { self.say(verdict) }
     }
   }
@@ -1526,6 +1560,7 @@ final class AppModel {
   /// being said; a status ("Checking.", "That's the last problem.") waits its turn. With
   /// `after`, it's said once what's playing ends.
   private func say(_ text: String, meaningful: Bool = true, after: Bool = false) {
+    diag("audio", "say (\(meaningful ? "result" : "status")): \"\(text.prefix(80))\"")
     if meaningful {
       lastSpoken = text
       if after && speaker.isActive {
@@ -1536,6 +1571,19 @@ final class AppModel {
     } else {
       speaker.announce(text, ifBusy: .after)
     }
+  }
+
+  /// A new photo was asked for: the current one is set aside (its requests stopped), so no
+  /// later result from it can reach the screen, the voice or the history.
+  private func displaceWorkspace() {
+    cancelMathWork()
+    if let space = workspace {
+      diag("solve", "photo \(space.id.uuidString.prefix(8)) replaced by a new capture; its results no longer count")
+      displacedWorkspace = space
+    }
+    workspace = nil
+    shownAnswer = ""
+    linePosition = nil
   }
 
   /// Stops everything still being worked out for the last photo.
@@ -1580,9 +1628,16 @@ final class AppModel {
   ) async throws -> ClaudeClient.Answer {
     if testMode {
       let inBackground = UIApplication.shared.applicationState != .active
-      try await Task.sleep(for: inBackground ? .seconds(35) : Self.testModeWait)
-      onText(simulated)
-      return ClaudeClient.Answer(text: simulated, stopReason: "end_turn")
+      let wait = inBackground ? .seconds(35) : Self.testModeWait
+      if Self.testModeIgnoresCancellation {
+        // As a real reply can: it arrives even though its photo was replaced meanwhile.
+        await Task.detached { try? await Task.sleep(for: wait) }.value
+      } else {
+        try await Task.sleep(for: wait)
+      }
+      let reply = Self.simulatedReplyOverride?(request) ?? ClaudeClient.Answer(text: simulated, stopReason: "end_turn")
+      onText(reply.text)
+      return reply
     }
     guard let apiKey = Keychain.read(Self.apiKeyAccount) else {
       hasAPIKey = false
@@ -1647,6 +1702,12 @@ final class AppModel {
     while text.hasSuffix(".") { text.removeLast() }
     return text
   }
+
+  /// For tests: a Test mode reply that keeps going after its request is stopped, the way a
+  /// late answer from Claude can.
+  static var testModeIgnoresCancellation = false
+  /// For tests: the Test mode reply to give for a request, instead of the sample.
+  static var simulatedReplyOverride: (@MainActor (ClaudeClient.MathRequest) -> ClaudeClient.Answer)?
 
   /// Test mode's math photo: two problems, so swipes, Explain and Check can all be tried
   /// without Claude.
@@ -1944,7 +2005,14 @@ final class AppModel {
     {
       diag("inputs", "the double press came \(timestampMs - press) ms after a short press; dropping that photo")
       replacesPhoto = true
-      if subject == .math { solveTask?.cancel() }
+      if subject == .math {
+        solveTask?.cancel()
+        if workspace == nil, let displaced = displacedWorkspace {
+          workspace = displaced
+          displacedWorkspace = nil
+          showWorkspace()
+        }
+      }
     }
     if gesture == .capturePress { lastCapturePressMs = timestampMs }
     if subject == .math { mathGesture(gesture) } else { chemistryGesture(gesture, replacesPhoto: replacesPhoto) }
@@ -1983,9 +2051,10 @@ final class AppModel {
   /// A new photo. Ignored while the last one is still being taken, or before its answer has
   /// started, so one physical press never starts two solves.
   private func pressSolve(action: ClaudeClient.PhotoAction? = nil, replacingPhoto: Bool = false) {
-    let starting = phase == .capturing || (phase == .thinking && (subject == .math || !answerStarted))
-    if starting && !replacingPhoto {
-      diag("inputs", "press ignored: the last photo is still being taken or solved")
+    // A press while Claude is working replaces that photo (latest capture wins). A press while
+    // the camera is still taking one is ignored, never queued, so presses can't pile up.
+    if !canStartPhoto && !replacingPhoto {
+      diag("inputs", "press ignored: the camera is still taking the last photo")
       return
     }
     pressedAt = .now

@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import WebKit
 
 /// An answer as a student would write it on paper: each problem's lines in written math (the
@@ -301,54 +302,244 @@ struct WrittenAnswerView: UIViewRepresentable {
   }
 }
 
-/// The written answer and nothing else, full screen, white on black: the math the listener
-/// copies, for the current answer (or one from the chats). A single Done button returns.
+/// The written answer: a clean worksheet on near-black, the heart of the app. Live, it follows
+/// the current photo: the problem and its photo at the top, the work, then the answer exactly
+/// as the glasses say it, with the same actions as the glasses along the bottom. A saved answer
+/// opens in the same layout.
 struct WrittenAnswerScreen: View {
   private let model: AppModel?
-  private let answer: String?
+  private let saved: Saved?
   @Environment(\.dismiss) private var dismiss
+  @State private var showPhoto = false
+
+  /// An answer from History.
+  struct Saved {
+    let answer: String
+    let photo: UIImage?
+    let title: String
+    let onReplay: (() -> Void)?
+  }
 
   /// The current answer, following along as it arrives and as it's read.
   init(model: AppModel) {
     self.model = model
-    answer = nil
+    saved = nil
   }
 
   /// A saved answer.
-  init(answer: String) {
+  init(answer: String, photo: UIImage? = nil, title: String = "Written Answer", onReplay: (() -> Void)? = nil) {
     model = nil
-    self.answer = answer
+    saved = Saved(answer: answer, photo: photo, title: title, onReplay: onReplay)
   }
 
   var body: some View {
     NavigationStack {
-      WrittenAnswerView(data: data, emptyMessage: emptyMessage)
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbarBackground(.black, for: .navigationBar)
-        .toolbarBackground(.visible, for: .navigationBar)
-        .toolbar {
-          ToolbarItem(placement: .topBarTrailing) {
-            Button("Done") { dismiss() }
-              .foregroundStyle(.white)
-          }
+      VStack(spacing: 0) {
+        header
+        WrittenAnswerView(data: data, emptyMessage: emptyMessage)
+        result
+        controls
+      }
+      .background(Color.black.ignoresSafeArea())
+      .navigationBarTitleDisplayMode(.inline)
+      .toolbarBackground(.black, for: .navigationBar)
+      .toolbarBackground(.visible, for: .navigationBar)
+      .toolbar {
+        ToolbarItem(placement: .principal) {
+          Text(title)
+            .font(.headline)
+            .foregroundStyle(.white)
         }
+        ToolbarItem(placement: .confirmationAction) {
+          Button("Done") { dismiss() }
+            .foregroundStyle(.white)
+        }
+      }
+      .sheet(isPresented: $showPhoto) { PhotoDetailView(image: photo) }
     }
     .preferredColorScheme(.dark)
     .tint(.white)
-    .background(Color.black)
   }
 
-  /// The steps to show. While an answer arrives, only its complete lines; while a new photo is
-  /// being worked on, none (so the old answer isn't shown as if it were the new one).
+  // MARK: - Top: the photo and what the problem asks
+
+  @ViewBuilder
+  private var header: some View {
+    if photo != nil || !subtitle.isEmpty {
+      HStack(alignment: .center, spacing: 12) {
+        if let photo {
+          Button {
+            showPhoto = true
+          } label: {
+            Image(uiImage: photo)
+              .resizable()
+              .scaledToFill()
+              .frame(width: 44, height: 44)
+              .clipShape(RoundedRectangle(cornerRadius: 8))
+          }
+          .accessibilityLabel("Photo. Opens it full screen.")
+        }
+        Text(subtitle)
+          .font(.subheadline)
+          .foregroundStyle(Color(white: 0.62))
+          .lineLimit(2)
+        Spacer(minLength: 0)
+      }
+      .padding(.horizontal, 20)
+      .padding(.vertical, 10)
+      .overlay(alignment: .bottom) { Rectangle().fill(Color(white: 0.14)).frame(height: 0.5) }
+    }
+  }
+
+  private var photo: UIImage? { model?.lastPhoto ?? saved?.photo }
+
+  private var title: String {
+    guard let model else { return saved?.title ?? "Written Answer" }
+    switch model.phase {
+    case .capturing: return "Taking Photo…"
+    case .thinking where model.subject == .chemistry || model.currentProblem?.problem?.answer.isEmpty != false:
+      return "Solving…"
+    default: break
+    }
+    if model.subject == .chemistry { return "Chemistry" }
+    guard let current = model.currentProblem, let space = model.workspace else { return "Math 131" }
+    return space.labels.count > 1
+      ? "Problem \(current.label) · \(space.index + 1) of \(space.labels.count)" : "Problem \(current.label)"
+  }
+
+  private var subtitle: String {
+    guard let model else { return Self.savedLine("Question: ", in: saved?.answer ?? "") ?? "" }
+    if model.subject == .chemistry {
+      let names = AppModel.questions(in: model.shownAnswer).map(\.label)
+      return names.isEmpty ? "" : (names.count == 1 ? "Question " : "Questions ") + names.joined(separator: ", ")
+    }
+    return model.currentProblem?.problem?.question ?? ""
+  }
+
+  // MARK: - Middle: the work
+
+  /// The work to show: the same parsed lines the voice uses. While an answer arrives, only its
+  /// complete lines; while a new photo is being worked on, none.
   private var data: String {
-    guard let model else { return WrittenAnswer.parse(answer ?? "").pageData(now: nil) }
+    guard let model else { return WrittenAnswer.parse(saved?.answer ?? "").pageData(now: nil) }
     let text = model.phase == .thinking ? ClaudeClient.completeLines(model.shownAnswer) : model.shownAnswer
     return WrittenAnswer.parse(text).pageData(now: model.linePosition.map { ($0.problem, $0.line) })
   }
 
   private var emptyMessage: String {
-    guard let model else { return "This answer has no written math." }
+    guard let model else { return "This answer has no written work." }
     if model.phase != .idle { return "Working on it\u{2026}" }
-    return model.shownAnswer.isEmpty ? "No answer yet. Take a photo of the page." : "This answer has no written math."
+    return model.shownAnswer.isEmpty && model.currentProblem == nil
+      ? "No answer yet. Take a photo of a problem." : "This answer has no written work."
+  }
+
+  // MARK: - Bottom: the answer, as it's spoken
+
+  @ViewBuilder
+  private var result: some View {
+    let lines = resultLines
+    if !lines.answer.isEmpty || !lines.notes.isEmpty {
+      ScrollView {
+        VStack(alignment: .leading, spacing: 10) {
+          if !lines.answer.isEmpty {
+            Text(lines.answer)
+              .font(.title3.weight(.semibold))
+              .foregroundStyle(.white)
+          }
+          ForEach(lines.notes, id: \.self) { note in
+            Text(note)
+              .font(.callout)
+              .foregroundStyle(Color(white: 0.62))
+          }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .textSelection(.enabled)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 14)
+      }
+      .frame(maxHeight: 200)
+      .fixedSize(horizontal: false, vertical: true)
+      .overlay(alignment: .top) { Rectangle().fill(Color(white: 0.14)).frame(height: 0.5) }
+    }
+  }
+
+  /// The spoken answer, then the explanation and check result, from the same stored problem
+  /// the voice reads (math). Chemistry's answers are on the page itself.
+  private var resultLines: (answer: String, notes: [String]) {
+    guard let model else {
+      let text = saved?.answer ?? ""
+      return (
+        Self.savedLine("The answer: ", in: text) ?? "",
+        [Self.savedLine("Why: ", in: text), Self.savedLine("Check: ", in: text)].compactMap { $0 }
+      )
+    }
+    guard model.subject == .math, let problem = model.currentProblem?.problem else { return ("", []) }
+    var notes: [String] = []
+    if !problem.explanation.isEmpty { notes.append(problem.explanation) }
+    if let check = problem.check { notes.append("Check: " + check) }
+    return (problem.answer, notes)
+  }
+
+  private static func savedLine(_ prefix: String, in text: String) -> String? {
+    text.components(separatedBy: "\n").first { $0.hasPrefix(prefix) }.map { String($0.dropFirst(prefix.count)) }
+  }
+
+  // MARK: - Controls
+
+  @ViewBuilder
+  private var controls: some View {
+    if let model {
+      HStack(spacing: 0) {
+        if model.subject == .math {
+          let space = model.workspace
+          ControlButton(title: "Previous", symbol: "chevron.left") { model.moveProblem(by: -1) }
+            .disabled((space?.index ?? 0) == 0)
+          ControlButton(title: "Explain", symbol: "text.bubble") { model.explainCurrentProblem() }
+          ControlButton(title: "Check", symbol: "checkmark.seal") { model.checkCurrentProblem() }
+            .disabled(model.isChecking)
+          ControlButton(title: "Repeat", symbol: "arrow.counterclockwise") { model.repeatAnswer() }
+          ControlButton(title: "Stop", symbol: "stop.fill") { model.stopSpeaking() }
+          ControlButton(title: "Next", symbol: "chevron.right") { model.moveProblem(by: 1) }
+            .disabled(space.map { $0.index >= $0.labels.count - 1 } ?? true)
+        } else {
+          ControlButton(title: "Previous", symbol: "chevron.left") { model.replayQuestion(by: -1) }
+          ControlButton(title: "Repeat", symbol: "arrow.counterclockwise") { model.repeatWriteLine() }
+          ControlButton(title: "Stop", symbol: "stop.fill") { model.stopSpeaking() }
+          ControlButton(title: "Next", symbol: "chevron.right") { model.replayQuestion(by: 1) }
+        }
+      }
+      .padding(.horizontal, 8)
+      .padding(.vertical, 6)
+      .overlay(alignment: .top) { Rectangle().fill(Color(white: 0.14)).frame(height: 0.5) }
+    } else if let onReplay = saved?.onReplay {
+      Button(action: onReplay) {
+        Label("Play Again", systemImage: "speaker.wave.2")
+          .frame(maxWidth: .infinity, minHeight: 44)
+      }
+      .buttonStyle(.bordered)
+      .padding(.horizontal, 20)
+      .padding(.vertical, 8)
+    }
+  }
+}
+
+/// One quiet action in the written answer's toolbar.
+private struct ControlButton: View {
+  let title: String
+  let symbol: String
+  let action: () -> Void
+
+  var body: some View {
+    Button(action: action) {
+      VStack(spacing: 4) {
+        Image(systemName: symbol)
+          .font(.body)
+        Text(title)
+          .font(.caption2)
+      }
+      .frame(maxWidth: .infinity, minHeight: 44)
+      .foregroundStyle(Color(white: 0.75))
+    }
+    .buttonStyle(.plain)
   }
 }

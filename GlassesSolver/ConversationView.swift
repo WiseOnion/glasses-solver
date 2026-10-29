@@ -1,146 +1,199 @@
 import SwiftUI
 import UIKit
 
-/// The list of chats: the session in progress, past sessions (each archived when it ended),
-/// and in-app Solve-button answers by day. Opens straight into the current session's chat
-/// when one is running.
-struct ConversationView: View {
+/// History: every hands-free session and the iPhone's Solve answers, grouped by day, newest
+/// first. A utility list, not a chat.
+struct HistoryView: View {
   let model: AppModel
   @Environment(\.dismiss) private var dismiss
-  @State private var path: [ChatRoute] = []
   @State private var confirmClear = false
-  @State private var didOpenCurrentSession = false
 
-  enum ChatRoute: Hashable {
+  enum Route: Hashable {
     case session(UUID)
     case solveButton(Date)
   }
 
+  struct Row: Identifiable {
+    let route: Route
+    let date: Date
+    let subject: String
+    let topic: String
+    let isLive: Bool
+    var id: Route { route }
+  }
+
+  struct DayGroup: Identifiable {
+    let title: String
+    var rows: [Row]
+    var id: String { title }
+  }
+
   private var store: ConversationStore { model.conversation }
 
+  private var rows: [Row] {
+    var sessions = store.pastSessions
+    if let current = store.currentSession, !store.entries(inSession: current.id).isEmpty {
+      sessions.insert(current, at: 0)
+    }
+    var rows = sessions.map { session in
+      let entries = store.entries(inSession: session.id)
+      return Row(
+        route: .session(session.id), date: session.started, subject: Self.subjectTitle(entries),
+        topic: Self.topic(entries), isLive: session.id == store.currentSessionID)
+    }
+    rows += store.solveButtonDays.map { day in
+      let entries = store.solveButtonEntries(on: day)
+      return Row(
+        route: .solveButton(day), date: entries.last?.date ?? day, subject: Self.subjectTitle(entries),
+        topic: Self.topic(entries), isLive: false)
+    }
+    return rows.sorted { $0.date > $1.date }
+  }
+
+  private var groups: [DayGroup] {
+    var groups: [DayGroup] = []
+    for row in rows {
+      let title = Self.dayTitle(row.date)
+      if groups.last?.title == title {
+        groups[groups.count - 1].rows.append(row)
+      } else {
+        groups.append(DayGroup(title: title, rows: [row]))
+      }
+    }
+    return groups
+  }
+
   var body: some View {
-    NavigationStack(path: $path) {
+    NavigationStack {
       List {
-        if let current = store.currentSession {
-          Section("Now") {
-            NavigationLink(value: ChatRoute.session(current.id)) {
-              SessionRow(
-                title: "Current session", subtitle: current.prompt,
-                count: store.entries(inSession: current.id).count, isLive: true)
-            }
-          }
-        }
-        if !store.pastSessions.isEmpty {
-          Section("Past sessions") {
-            ForEach(store.pastSessions) { session in
-              NavigationLink(value: ChatRoute.session(session.id)) {
-                SessionRow(
-                  title: Self.sessionTitle(session), subtitle: session.prompt,
-                  count: store.entries(inSession: session.id).count, isLive: false)
-              }
-            }
-            .onDelete { offsets in
-              let doomed = offsets.map { store.pastSessions[$0].id }
-              doomed.forEach(store.deleteSession)
-            }
-          }
-        }
-        if !store.solveButtonDays.isEmpty {
-          Section("Solve button") {
-            ForEach(store.solveButtonDays, id: \.self) { day in
-              NavigationLink(value: ChatRoute.solveButton(day)) {
-                SessionRow(
-                  title: day.formatted(date: .complete, time: .omitted), subtitle: nil,
-                  count: store.solveButtonEntries(on: day).count, isLive: false)
-              }
-            }
-            .onDelete { offsets in
-              let doomed = offsets.map { store.solveButtonDays[$0] }
-              doomed.forEach(store.deleteSolveButtonDay)
-            }
-          }
-        }
-        if store.currentSession == nil && store.pastSessions.isEmpty && store.solveButtonDays.isEmpty {
+        if groups.isEmpty {
           ContentUnavailableView(
-            "No answers yet", systemImage: "bubble.left.and.bubble.right",
-            description: Text("Each session gets its own chat here, saved when the session ends."))
+            "No History", systemImage: "clock",
+            description: Text("Solved problems appear here."))
+          .listRowBackground(Color.clear)
+        }
+        ForEach(groups) { group in
+          Section(group.title) {
+            ForEach(group.rows) { row in
+              NavigationLink(value: row.route) { HistoryRow(row: row) }
+            }
+            .onDelete { offsets in offsets.map { group.rows[$0].route }.forEach(delete) }
+          }
         }
       }
-      .navigationTitle("Conversations")
+      .navigationTitle("History")
       .navigationBarTitleDisplayMode(.inline)
-      .navigationDestination(for: ChatRoute.self) { route in
-        switch route {
-        case .session(let id):
-          let session = store.sessions.first { $0.id == id }
-          ChatView(
-            model: model,
-            title: session.map { $0.id == store.currentSessionID ? "Current session" : Self.sessionTitle($0) }
-              ?? "Session",
-            route: route)
-        case .solveButton(let day):
-          ChatView(
-            model: model, title: day.formatted(date: .abbreviated, time: .omitted), route: route)
-        }
+      .navigationDestination(for: Route.self) { route in
+        HistoryDetailView(model: model, route: route)
       }
       .toolbar {
         ToolbarItem(placement: .cancellationAction) {
-          Button("Clear all", role: .destructive) { confirmClear = true }
+          Button("Delete All", role: .destructive) { confirmClear = true }
             .disabled(store.entries.isEmpty)
         }
         ToolbarItem(placement: .confirmationAction) {
           Button("Done") { dismiss() }
         }
       }
-      .confirmationDialog("Delete every saved chat, answer and photo?", isPresented: $confirmClear) {
-        Button("Delete all", role: .destructive) { store.clear() }
+      .alert("Delete All History?", isPresented: $confirmClear) {
+        Button("Cancel", role: .cancel) {}
+        Button("Delete", role: .destructive) { store.clear() }
+      } message: {
+        Text("This cannot be undone.")
       }
-      .onAppear {
-        // Once per opening; Back from the chat should stay on the list.
-        guard !didOpenCurrentSession else { return }
-        didOpenCurrentSession = true
-        if let current = store.currentSessionID { path = [.session(current)] }
-      }
+    }
+    .preferredColorScheme(.dark)
+  }
+
+  private func delete(_ route: Route) {
+    switch route {
+    case .session(let id): store.deleteSession(id)
+    case .solveButton(let day): store.deleteSolveButtonDay(day)
     }
   }
 
-  static func sessionTitle(_ session: ConversationSession) -> String {
-    let start = session.started.formatted(date: .abbreviated, time: .shortened)
-    guard let ended = session.ended else { return start }
-    return start + " – " + ended.formatted(date: .omitted, time: .shortened)
+  /// "Math 131" or "Chemistry", from what the answers were filed under.
+  static func subjectTitle(_ entries: [ConversationEntry]) -> String {
+    switch entries.first(where: { $0.subject != nil })?.subject {
+    case ClaudeClient.Subject.math.rawValue: ClaudeClient.Subject.math.title
+    case ClaudeClient.Subject.chemistry.rawValue: ClaudeClient.Subject.chemistry.title
+    default: "Solved"
+    }
+  }
+
+  /// What was solved, in a few words: the first answer's title, and how many more.
+  static func topic(_ entries: [ConversationEntry]) -> String {
+    let titles = entries.compactMap(entryTitle)
+    guard let first = titles.first else { return entries.count == 1 ? "1 answer" : "\(entries.count) answers" }
+    return titles.count > 1 ? "\(first) + \(titles.count - 1) more" : first
+  }
+
+  /// A few words for one answer: its saved title, the question it answered, or the questions on
+  /// its page.
+  static func entryTitle(_ entry: ConversationEntry) -> String? {
+    if let title = entry.title, !title.isEmpty { return title.prefix(1).uppercased() + title.dropFirst() }
+    guard let answer = entry.answer else { return nil }
+    let lines = answer.components(separatedBy: "\n")
+    if let question = lines.first(where: { $0.hasPrefix("Question: ") }) {
+      let text = question.dropFirst("Question: ".count)
+      return text.prefix(1).uppercased() + text.dropFirst()
+    }
+    let labels = AppModel.questions(in: answer).map(\.label)
+    guard !labels.isEmpty else { return nil }
+    return (labels.count == 1 ? "Question " : "Questions ") + labels.prefix(6).joined(separator: ", ")
+  }
+
+  static func dayTitle(_ date: Date) -> String {
+    let calendar = Calendar.current
+    if calendar.isDateInToday(date) { return "Today" }
+    if calendar.isDateInYesterday(date) { return "Yesterday" }
+    return date.formatted(.dateTime.weekday(.wide).month().day())
   }
 }
 
-private struct SessionRow: View {
-  let title: String
-  let subtitle: String?
-  let count: Int
-  let isLive: Bool
+private struct HistoryRow: View {
+  let row: HistoryView.Row
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 4) {
-      HStack {
-        if isLive {
-          Circle().fill(.green).frame(width: 8, height: 8)
+    HStack(alignment: .firstTextBaseline) {
+      VStack(alignment: .leading, spacing: 3) {
+        HStack(spacing: 6) {
+          if row.isLive {
+            Circle()
+              .fill(Theme.accent)
+              .frame(width: 6, height: 6)
+              .accessibilityLabel("In progress")
+          }
+          Text(row.subject)
+            .font(.headline)
         }
-        Text(title).font(.headline)
-        Spacer()
-        Text(count == 1 ? "1 answer" : "\(count) answers")
-          .font(.caption)
-          .foregroundStyle(.secondary)
+        Text(row.topic)
+          .font(.subheadline)
+          .foregroundStyle(Theme.secondary)
+          .lineLimit(1)
       }
-      if let subtitle {
-        Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-      }
+      Spacer()
+      Text(row.date.formatted(date: .omitted, time: .shortened))
+        .font(.subheadline)
+        .foregroundStyle(Theme.secondary)
     }
+    .padding(.vertical, 4)
   }
 }
 
-/// One chat: your photo and prompt on the right, the answer on the left.
-private struct ChatView: View {
+/// One session's (or one day's) solved problems: photo, result, written answer, play again.
+private struct HistoryDetailView: View {
   let model: AppModel
-  let title: String
-  let route: ConversationView.ChatRoute
-  @State private var enlargedPhoto: URL?
+  let route: HistoryView.Route
+  @State private var written: WrittenItem?
+  @State private var photo: UIImage?
+  @State private var showPhoto = false
+
+  struct WrittenItem: Identifiable {
+    let id = UUID()
+    let entry: ConversationEntry
+    let photo: UIImage?
+  }
 
   /// Read live, so answers arriving during the current session appear as they come in.
   private var entries: [ConversationEntry] {
@@ -150,147 +203,117 @@ private struct ChatView: View {
     }
   }
 
-  var body: some View {
-    ScrollView {
-      LazyVStack(alignment: .leading, spacing: 20) {
-        if entries.isEmpty {
-          ContentUnavailableView(
-            "No answers yet", systemImage: "camera.viewfinder",
-            description: Text("Press the capture button on your glasses; answers in this session show up here."))
-        }
-        ForEach(entries) { entry in
-          EntryView(
-            entry: entry, photoURL: model.conversation.photoURL(for: entry),
-            onReplay: { model.replay(entry) },
-            onPhotoTap: { enlargedPhoto = model.conversation.photoURL(for: entry) })
-        }
-      }
-      .padding()
+  private var title: String {
+    switch route {
+    case .session(let id):
+      let started = model.conversation.sessions.first { $0.id == id }?.started ?? .now
+      return HistoryView.subjectTitle(entries) + " · " + started.formatted(date: .omitted, time: .shortened)
+    case .solveButton(let day):
+      return HistoryView.dayTitle(day)
     }
-    .defaultScrollAnchor(.bottom)
+  }
+
+  var body: some View {
+    List {
+      if entries.isEmpty {
+        ContentUnavailableView(
+          "Nothing Solved Yet", systemImage: "camera.viewfinder",
+          description: Text("Answers from this session appear here."))
+        .listRowBackground(Color.clear)
+      }
+      ForEach(entries) { entry in
+        HistoryEntryRow(
+          entry: entry, photo: image(for: entry),
+          onPhoto: {
+            photo = image(for: entry)
+            showPhoto = true
+          },
+          onWritten: { written = WrittenItem(entry: entry, photo: image(for: entry)) },
+          onReplay: { model.replay(entry) })
+      }
+    }
     .navigationTitle(title)
     .navigationBarTitleDisplayMode(.inline)
-    .sheet(item: $enlargedPhoto) { url in
-      PhotoView(url: url)
+    .sheet(isPresented: $showPhoto) { PhotoDetailView(image: photo) }
+    .fullScreenCover(item: $written) { item in
+      WrittenAnswerScreen(
+        answer: item.entry.answer ?? "", photo: item.photo,
+        title: HistoryView.entryTitle(item.entry) ?? item.entry.prompt,
+        onReplay: { model.replay(item.entry) })
     }
+  }
+
+  private func image(for entry: ConversationEntry) -> UIImage? {
+    model.conversation.photoURL(for: entry).flatMap { UIImage(contentsOfFile: $0.path()) }
   }
 }
 
-private struct EntryView: View {
+private struct HistoryEntryRow: View {
   let entry: ConversationEntry
-  @State private var showWritten = false
-  let photoURL: URL?
+  let photo: UIImage?
+  let onPhoto: () -> Void
+  let onWritten: () -> Void
   let onReplay: () -> Void
-  let onPhotoTap: () -> Void
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 8) {
-      Text(entry.date.formatted(date: .abbreviated, time: .shortened))
-        .font(.caption)
-        .foregroundStyle(.secondary)
-        .frame(maxWidth: .infinity)
-
-      // You: the photo and the prompt.
-      VStack(alignment: .trailing, spacing: 6) {
-        if let photoURL, let image = UIImage(contentsOfFile: photoURL.path()) {
-          Image(uiImage: image)
+    HStack(alignment: .top, spacing: 12) {
+      if let photo {
+        Button(action: onPhoto) {
+          Image(uiImage: photo)
             .resizable()
             .scaledToFill()
-            .frame(width: 180, height: 135)
-            .clipShape(RoundedRectangle(cornerRadius: 12))
-            .onTapGesture(perform: onPhotoTap)
-            .accessibilityLabel("Photo from the glasses. Tap to enlarge.")
+            .frame(width: 52, height: 52)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
         }
-        Text(entry.prompt)
-          .font(.subheadline)
-          .padding(10)
-          .foregroundStyle(.white)
-          .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 14))
+        .buttonStyle(.borderless)
+        .accessibilityLabel("Photo. Opens it full screen.")
       }
-      .frame(maxWidth: .infinity, alignment: .trailing)
-      .padding(.leading, 48)
-
-      // Claude: the answer, or what went wrong.
-      VStack(alignment: .leading, spacing: 8) {
+      VStack(alignment: .leading, spacing: 6) {
+        Text(heading)
+          .font(.caption)
+          .foregroundStyle(Theme.secondary)
+        if let result {
+          Text(result)
+            .lineLimit(3)
+        }
+        if let error = entry.error {
+          Text(ContentView.shortError(error))
+            .font(.subheadline)
+            .foregroundStyle(.red)
+        }
         if entry.isTest {
-          Label("Test mode sample, not from Claude", systemImage: "testtube.2")
-            .font(.caption.bold())
+          Text("Test Mode sample")
+            .font(.caption2)
             .foregroundStyle(.orange)
         }
         if let answer = entry.answer {
-          ForEach(Array(answer.components(separatedBy: "\n").enumerated()), id: \.offset) { _, line in
-            AnswerLine(line: Speaker.spokenPart(line))
+          HStack(spacing: 20) {
+            if !WrittenAnswer.parse(answer).isEmpty {
+              Button("Written Answer", action: onWritten)
+            }
+            Button("Play Again", action: onReplay)
           }
-          if !WrittenAnswer.parse(answer).isEmpty {
-            Button("Written answer", systemImage: "doc.text") { showWritten = true }
-              .font(.caption)
-              .buttonStyle(.bordered)
-              .fullScreenCover(isPresented: $showWritten) {
-                WrittenAnswerScreen(answer: answer)
-              }
-          }
-          Button("Play again", systemImage: "speaker.wave.2", action: onReplay)
-            .font(.caption)
-            .buttonStyle(.bordered)
-        } else if let error = entry.error {
-          Label(error, systemImage: "exclamationmark.triangle")
-            .foregroundStyle(.red)
-        }
-      }
-      .textSelection(.enabled)
-      .padding(12)
-      .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14))
-      .padding(.trailing, 32)
-    }
-  }
-}
-
-/// One line of an answer. "Write:" lines are shown as the line to copy, and a multiple-choice
-/// "Answer:" as the bubble to fill in.
-private struct AnswerLine: View {
-  let line: String
-
-  var body: some View {
-    let trimmed = line.trimmingCharacters(in: .whitespaces)
-    let tag = ["write:", "answer:"].first { trimmed.lowercased().hasPrefix($0) }
-    if let tag {
-      Label {
-        Text(Speaker.spokenPart(String(trimmed.dropFirst(tag.count))).trimmingCharacters(in: .whitespaces))
-          .font(.body.monospaced().weight(.semibold))
-      } icon: {
-        Image(systemName: tag == "write:" ? "pencil.line" : "checkmark.circle")
-      }
-      .padding(8)
-      .frame(maxWidth: .infinity, alignment: .leading)
-      .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
-    } else if !trimmed.isEmpty {
-      Text(trimmed)
-    }
-  }
-}
-
-private struct PhotoView: View {
-  let url: URL
-  @Environment(\.dismiss) private var dismiss
-
-  var body: some View {
-    NavigationStack {
-      Group {
-        if let image = UIImage(contentsOfFile: url.path()) {
-          Image(uiImage: image).resizable().scaledToFit()
-        } else {
-          ContentUnavailableView("Photo not found", systemImage: "photo")
-        }
-      }
-      .toolbar {
-        ToolbarItem(placement: .confirmationAction) {
-          Button("Done") { dismiss() }
+          .font(.subheadline)
+          .buttonStyle(.borderless)
         }
       }
     }
+    .padding(.vertical, 6)
   }
-}
 
-extension URL: @retroactive Identifiable {
-  public var id: String { absoluteString }
+  private var heading: String {
+    (HistoryView.entryTitle(entry) ?? entry.prompt) + " · " + entry.date.formatted(date: .omitted, time: .shortened)
+  }
+
+  /// The result in a line: the answer or check result, or a chemistry page's first answer.
+  private var result: String? {
+    guard let answer = entry.answer else { return nil }
+    let lines = answer.components(separatedBy: "\n")
+    for prefix in ["The answer: ", "Check: "] {
+      if let line = lines.first(where: { $0.hasPrefix(prefix) }) { return String(line.dropFirst(prefix.count)) }
+    }
+    let answers = lines.filter { $0.lowercased().hasPrefix("answer:") }.map { Speaker.spokenPart(String($0.dropFirst(7))) }
+    guard let first = answers.first else { return nil }
+    return answers.count > 1 ? "\(first.trimmingCharacters(in: .whitespaces)) + \(answers.count - 1) more" : first
+  }
 }

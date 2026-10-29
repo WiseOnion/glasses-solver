@@ -2,152 +2,104 @@ import AVFoundation
 import SwiftUI
 import UIKit
 
+/// The app's look: near-black, white text, muted gray, one restrained accent.
+enum Theme {
+  static let background = Color(red: 0.035, green: 0.035, blue: 0.04)
+  static let surface = Color(white: 0.09)
+  static let secondary = Color(white: 0.6)
+  static let accent = Color(red: 0.66, green: 0.84, blue: 0.42)
+}
+
+extension ClaudeClient.Subject {
+  /// The subject as the app shows it.
+  var title: String { self == .math ? "Math 131" : "Chemistry" }
+}
+
+/// Solve: connection, subject, and one dominant action. History and Settings sit in the
+/// toolbar; the glasses are the main controls, so nothing else competes for attention.
 struct ContentView: View {
   @Bindable var model: AppModel
   @State private var showSettings = false
+  @State private var showHistory = false
+  @State private var showWorkspace = false
   @State private var showStartSession = false
-  @State private var showConversation = false
-  @State private var showWritten = false
+  @State private var showSessionControls = false
+
+  private var connected: Bool { model.isRegistered && model.hasActiveDevice }
 
   var body: some View {
     NavigationStack {
       ScrollView {
-        VStack(spacing: 20) {
-          statusCard
-
-          if !model.isRegistered {
-            Button {
-              model.connectGlasses()
-            } label: {
-              Label("Connect glasses", systemImage: "eyeglasses")
-                .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .disabled(model.registrationState == .registering)
+        VStack(alignment: .leading, spacing: 0) {
+          connection
+          subjectMenu
+            .padding(.top, 28)
+          if model.sessionActive {
+            sessionRow
+              .padding(.top, 8)
           }
-
-          // Math checks from the glasses (double press) or the answer card; chemistry checks a
-          // photo of the filled-in answer sheet.
+          solveButton
+            .padding(.top, 48)
           if model.subject == .chemistry {
             Picker("A photo", selection: $model.photoAction) {
               ForEach(ClaudeClient.PhotoAction.allCases, id: \.self) { Text($0.name).tag($0) }
             }
             .pickerStyle(.segmented)
             .disabled(model.isBusy)
+            .padding(.top, 16)
           }
-
-          Button {
-            Task { await model.solve() }
-          } label: {
-            Group {
-              if model.isBusy {
-                ProgressView().tint(.white)
-              } else {
-                Label(
-                  model.subject == .math ? "Solve" : model.photoAction.name,
-                  systemImage: model.subject == .math ? "camera.viewfinder" : model.photoAction.systemImage)
-              }
-            }
-            .font(.title2.bold())
-            .frame(maxWidth: .infinity, minHeight: 64)
-          }
-          .buttonStyle(.borderedProminent)
-          .disabled(model.isBusy || !model.isRegistered || !model.canSolve)
-
+          Text(hint)
+            .font(.footnote)
+            .foregroundStyle(Theme.secondary)
+            .frame(maxWidth: .infinity)
+            .multilineTextAlignment(.center)
+            .padding(.top, 14)
           if model.speechHeld {
-            VStack(alignment: .leading, spacing: 10) {
-              Label("Paused: the glasses' audio disconnected", systemImage: "speaker.slash.fill")
-                .font(.headline)
-                .foregroundStyle(.orange)
-              Text("So it isn't read out loud on the phone. It carries on when the glasses reconnect.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-              HStack {
-                Button("Play on phone", systemImage: "iphone.radiowaves.left.and.right") { model.playOnPhone() }
-                Spacer()
-                Button("Stop", systemImage: "stop.fill") { model.stopSpeaking() }
-              }
-              .buttonStyle(.bordered)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding()
-            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 12))
+            audioHeld
+              .padding(.top, 28)
           }
-
-          sessionSection
-
-          if let photo = model.lastPhoto {
-            Image(uiImage: photo)
-              .resizable()
-              .scaledToFit()
-              .frame(maxHeight: 240)
-              .clipShape(RoundedRectangle(cornerRadius: 12))
-          }
-
-          if model.subject == .math {
-            mathCard
-          } else if !model.shownAnswer.isEmpty || !model.lastAnswer.isEmpty {
-            VStack(alignment: .leading, spacing: 12) {
-              Text(Self.withoutWrittenMath(model.shownAnswer.isEmpty ? model.lastAnswer : model.shownAnswer))
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .textSelection(.enabled)
-              HStack {
-                Button("Repeat", systemImage: "speaker.wave.2") { model.repeatAnswer() }
-                Button(
-                  model.subject == .math ? "Repeat line" : "Repeat last",
-                  systemImage: model.subject == .math ? "pencil.line" : "checkmark.circle"
-                ) { model.repeatWriteLine() }
-                Spacer()
-                Button("Stop", systemImage: "stop.fill") { model.stopSpeaking() }
+          latestResult
+            .padding(.top, 36)
+          if !model.sessionActive {
+            Button {
+              showStartSession = true
+            } label: {
+              Group {
+                if model.isStartingSession {
+                  ProgressView()
+                } else {
+                  Label("Start Hands-Free Session", systemImage: "eyeglasses")
+                }
               }
-              .buttonStyle(.bordered)
+              .frame(maxWidth: .infinity, minHeight: 44)
             }
-            .padding()
-            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 12))
+            .buttonStyle(.bordered)
+            .disabled(model.isStartingSession || model.isBusy || !model.isRegistered || !model.canSolve)
+            .padding(.top, 24)
           }
         }
-        .padding()
+        .padding(.horizontal, 24)
+        .padding(.bottom, 32)
       }
-      .navigationTitle("Glasses Solver")
+      .background(Theme.background.ignoresSafeArea())
       .toolbar {
-        if model.sessionActive {
-          ToolbarItem(placement: .topBarLeading) {
-            Label(model.sessionPaused ? "Paused" : "Session", systemImage: "circle.fill")
-              .labelStyle(.titleAndIcon)
-              .font(.caption.bold())
-              .foregroundStyle(model.sessionPaused ? .orange : .green)
-          }
+        ToolbarItem(placement: .topBarLeading) {
+          Button("History", systemImage: "clock.arrow.circlepath") { showHistory = true }
         }
-        ToolbarItemGroup(placement: .topBarTrailing) {
-          Button("Written answer", systemImage: "doc.text") { showWritten = true }
-          Button("Conversation", systemImage: "bubble.left.and.bubble.right") { showConversation = true }
+        ToolbarItem(placement: .topBarTrailing) {
           Button("Settings", systemImage: "gearshape") { showSettings = true }
         }
       }
-      .sheet(isPresented: $showSettings) {
-        SettingsView(model: model)
-      }
-      .sheet(isPresented: $showConversation) {
-        ConversationView(model: model)
-      }
-      .fullScreenCover(isPresented: $showWritten) {
-        WrittenAnswerScreen(model: model)
-      }
-      .sheet(isPresented: $showStartSession) {
-        StartSessionView(model: model)
-      }
-      .alert(
-        "Allow camera access?",
-        isPresented: $model.showCameraPermissionPrompt
-      ) {
+      .sheet(isPresented: $showSettings) { SettingsView(model: model) }
+      .sheet(isPresented: $showHistory) { HistoryView(model: model) }
+      .sheet(isPresented: $showStartSession) { StartSessionView(model: model) }
+      .sheet(isPresented: $showSessionControls) { SessionControlsView(model: model) }
+      .fullScreenCover(isPresented: $showWorkspace) { WrittenAnswerScreen(model: model) }
+      .alert("Allow camera access?", isPresented: $model.showCameraPermissionPrompt) {
         Button("Open Meta AI") { Task { await model.confirmCameraPermission() } }
         Button("Cancel", role: .cancel) { model.cancelCameraPermission() }
       } message: {
-        Text(
-          "The Meta AI app will open so you can let this app use your glasses' camera. "
-            + "Choose Allow always: Allow once ends with the session, and it can't be granted again while your phone is locked."
-        )
+        Text("Meta AI opens so you can let Glasses Solver use your glasses' camera. Choose Allow Always.")
       }
       .alert(
         "Something went wrong",
@@ -156,185 +108,323 @@ struct ContentView: View {
           set: { if !$0 { model.errorMessage = nil } }
         )
       ) {
-        Button("Copy log") { UIPasteboard.general.string = DiagnosticsLog.shared.text }
+        Button("Copy Log") { UIPasteboard.general.string = DiagnosticsLog.shared.text }
         Button("OK", role: .cancel) {}
       } message: {
-        Text(model.errorMessage ?? "")
+        Text(Self.shortError(model.errorMessage))
       }
     }
+    .preferredColorScheme(.dark)
+    .tint(Theme.accent)
+    // Each new photo opens its written answer, so what the glasses say is on the screen too.
+    .onChange(of: model.photosStarted) { showWorkspace = true }
   }
 
-  /// The math problem the glasses' buttons act on: its answer, explanation and check, with
-  /// the same actions as the glasses.
-  @ViewBuilder
-  private var mathCard: some View {
-    if let current = model.currentProblem, let space = model.workspace {
-      VStack(alignment: .leading, spacing: 12) {
-        Text(
-          space.labels.count > 1
-            ? "Problem \(current.label), \(space.index + 1) of \(space.labels.count)" : "Problem \(current.label)"
-        )
-        .font(.caption.bold())
-        .foregroundStyle(.secondary)
-        if let problem = current.problem, !problem.question.isEmpty {
-          Text(problem.question)
-            .font(.subheadline)
-            .foregroundStyle(.secondary)
-        }
-        if let problem = current.problem, !problem.answer.isEmpty {
-          Text(problem.answer)
-            .font(.title3.bold())
-            .textSelection(.enabled)
-          if !problem.explanation.isEmpty {
-            Text(problem.explanation)
-              .font(.callout)
-              .textSelection(.enabled)
-          }
-          if let check = problem.check {
-            Label(check, systemImage: Self.checkSymbol(check))
-              .font(.callout)
-          }
-        } else if current.problem?.status == .failed {
-          Text("Couldn't solve this one. Tap Next, then Previous, to try it again.")
-            .foregroundStyle(.secondary)
-        } else {
-          ProgressView("Working it out…")
-        }
-        HStack {
-          Button("Explain", systemImage: "text.bubble") { model.explainCurrentProblem() }
-          Button("Check", systemImage: "checkmark.seal") { model.checkCurrentProblem() }
-            .disabled(model.isChecking)
-          Spacer()
-          Button("Repeat", systemImage: "speaker.wave.2") { model.repeatAnswer() }
-            .labelStyle(.iconOnly)
-          Button("Stop", systemImage: "stop.fill") { model.stopSpeaking() }
-            .labelStyle(.iconOnly)
-        }
-        .buttonStyle(.bordered)
-        if space.labels.count > 1 {
-          HStack {
-            Button("Previous", systemImage: "chevron.left") { model.moveProblem(by: -1) }
-              .disabled(space.index == 0)
-            Spacer()
-            Button("Next", systemImage: "chevron.right") { model.moveProblem(by: 1) }
-              .disabled(space.index == space.labels.count - 1)
-          }
-          .buttonStyle(.bordered)
-        }
-      }
-      .frame(maxWidth: .infinity, alignment: .leading)
-      .padding()
-      .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 12))
-    } else if let unclear = model.workspace?.unclear {
-      Label("Couldn't read that: \(unclear)", systemImage: "eye.slash")
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding()
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 12))
-    }
-  }
-
-  private static func checkSymbol(_ check: String) -> String {
-    let result = check.lowercased()
-    if result.hasPrefix("correct") { return "checkmark.circle" }
-    if result.hasPrefix("incorrect") { return "xmark.circle" }
-    return "questionmark.circle"
-  }
-
-  /// An answer's text without the written math after "||" on its lines.
-  static func withoutWrittenMath(_ text: String) -> String {
-    text.components(separatedBy: "\n").map(Speaker.spokenPart).joined(separator: "\n")
-  }
-
-  @ViewBuilder
-  private var sessionSection: some View {
-    if model.sessionActive {
-      VStack(alignment: .leading, spacing: 10) {
-        HStack(spacing: 8) {
-          Circle()
-            .fill(model.sessionPaused ? Color.orange : Color.green)
-            .frame(width: 10, height: 10)
-          Text(model.sessionPaused ? "Session paused" : "Session active")
-            .font(.headline)
-        }
-        Text(shutterText)
+  private var connection: some View {
+    VStack(alignment: .leading, spacing: 14) {
+      HStack(spacing: 8) {
+        Circle()
+          .fill(connected ? Theme.accent : Color(white: 0.3))
+          .frame(width: 8, height: 8)
+        Text("Ray-Ban Meta")
+          .font(.subheadline.weight(.semibold))
+        Text(connectionText)
           .font(.subheadline)
-          .foregroundStyle(isShutterUnavailable ? Color.red : Color.secondary)
-        if model.subject == .chemistry {
-          Text(model.photoAction == .solve ? "Prompt: \(model.sessionPrompt)" : "Photos: Check")
-            .font(.footnote)
-            .foregroundStyle(.secondary)
-        }
-        Button("Stop session", systemImage: "stop.circle", role: .destructive) {
-          model.stopSession()
-        }
-        .buttonStyle(.bordered)
+          .foregroundStyle(Theme.secondary)
       }
-      .frame(maxWidth: .infinity, alignment: .leading)
-      .padding()
-      .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 12))
+      .accessibilityElement(children: .combine)
+      if !model.isRegistered {
+        Button {
+          model.connectGlasses()
+        } label: {
+          Text("Connect Glasses")
+            .font(.headline)
+            .frame(maxWidth: .infinity, minHeight: 50)
+        }
+        .buttonStyle(.borderedProminent)
+        .foregroundStyle(.black)
+        .disabled(model.registrationState == .registering)
+      }
+    }
+  }
+
+  private var connectionText: String {
+    if !model.isRegistered { return model.registrationState == .registering ? "Connecting…" : "Not connected" }
+    return model.hasActiveDevice ? "Connected" : "Put on your glasses"
+  }
+
+  private var subjectMenu: some View {
+    Menu {
+      Picker("Subject", selection: $model.subject) {
+        ForEach(ClaudeClient.Subject.allCases, id: \.self) { Text($0.title).tag($0) }
+      }
+    } label: {
+      HStack(spacing: 8) {
+        Text(model.subject.title)
+          .font(.largeTitle.bold())
+        Image(systemName: "chevron.down")
+          .font(.headline)
+          .foregroundStyle(Theme.secondary)
+      }
+      .foregroundStyle(.white)
+    }
+    .disabled(model.isBusy)
+    .accessibilityLabel("Subject, \(model.subject.title)")
+  }
+
+  private var sessionRow: some View {
+    Button {
+      showSessionControls = true
+    } label: {
+      HStack(spacing: 6) {
+        Circle()
+          .fill(model.sessionPaused ? Color.orange : Theme.accent)
+          .frame(width: 6, height: 6)
+        Text("\(model.subject.title) · \(model.sessionPaused ? "Session Paused" : "Session Active")")
+        Image(systemName: "chevron.right")
+          .font(.caption2.weight(.semibold))
+      }
+      .font(.subheadline)
+      .foregroundStyle(Theme.secondary)
+      .frame(minHeight: 44)
+    }
+    .accessibilityHint("Shows the glasses controls and ends the session")
+  }
+
+  private var solveButton: some View {
+    Button {
+      Task { await model.solve() }
+    } label: {
+      HStack(spacing: 10) {
+        if model.phase != .idle {
+          ProgressView().tint(.black)
+        } else {
+          Image(systemName: "camera.viewfinder")
+        }
+        Text(solveLabel)
+      }
+      .font(.title2.weight(.semibold))
+      .foregroundStyle(.black)
+      .frame(maxWidth: .infinity, minHeight: 76)
+      .background(Theme.accent.opacity(solveEnabled ? 1 : 0.3), in: RoundedRectangle(cornerRadius: 20))
+    }
+    .buttonStyle(.plain)
+    .disabled(!solveEnabled)
+  }
+
+  private var solveEnabled: Bool { model.canStartPhoto && model.isRegistered && model.canSolve }
+
+  private var solveLabel: String {
+    switch model.phase {
+    case .capturing: "Taking Photo…"
+    case .thinking: "Solving…"
+    case .idle: model.subject == .chemistry && model.photoAction == .check ? "Check" : "Solve"
+    }
+  }
+
+  private var hint: String {
+    var text: String
+    if !model.canSolve {
+      text = "Add your API key in Settings → Advanced."
+    } else if !model.isRegistered {
+      text = "Connect your glasses to start."
+    } else if !model.hasActiveDevice {
+      text = "Unfold your glasses and put them on."
+    } else if model.phase == .thinking {
+      text = "Tap again to replace this photo with a new one."
+    } else if model.sessionActive {
+      text = "Press capture on your glasses, or tap Solve."
     } else {
+      text = "Look at the problem, then tap Solve."
+    }
+    if model.testMode { text += "\nTest Mode" }
+    return text
+  }
+
+  private var audioHeld: some View {
+    VStack(alignment: .leading, spacing: 10) {
+      Label("Glasses audio disconnected", systemImage: "speaker.slash")
+        .font(.subheadline.weight(.semibold))
+      Text("Speech is paused so it doesn't play out loud. It continues when the glasses reconnect.")
+        .font(.footnote)
+        .foregroundStyle(Theme.secondary)
+      HStack {
+        Button("Play on iPhone") { model.playOnPhone() }
+        Spacer()
+        Button("Stop") { model.stopSpeaking() }
+      }
+      .font(.subheadline)
+    }
+    .padding(16)
+    .background(Theme.surface, in: RoundedRectangle(cornerRadius: 14))
+  }
+
+  /// The answer being worked on, one row: tap to open the written answer.
+  @ViewBuilder
+  private var latestResult: some View {
+    if let result = latest {
       Button {
-        showStartSession = true
+        showWorkspace = true
       } label: {
-        Group {
-          if model.isStartingSession {
-            ProgressView()
-          } else {
-            Label("Start Session", systemImage: "button.programmable")
+        HStack(spacing: 14) {
+          if let photo = model.lastPhoto {
+            Image(uiImage: photo)
+              .resizable()
+              .scaledToFill()
+              .frame(width: 48, height: 48)
+              .clipShape(RoundedRectangle(cornerRadius: 8))
+              .accessibilityHidden(true)
           }
+          VStack(alignment: .leading, spacing: 3) {
+            Text(result.title)
+              .font(.caption)
+              .foregroundStyle(Theme.secondary)
+            Text(result.text)
+              .font(.body)
+              .foregroundStyle(.white)
+              .lineLimit(2)
+              .multilineTextAlignment(.leading)
+          }
+          Spacer(minLength: 0)
+          Image(systemName: "chevron.right")
+            .font(.footnote.weight(.semibold))
+            .foregroundStyle(Theme.secondary)
         }
-        .frame(maxWidth: .infinity)
+        .padding(.vertical, 12)
+        .contentShape(Rectangle())
       }
-      .buttonStyle(.bordered)
-      .controlSize(.large)
-      .disabled(model.isStartingSession || model.isBusy || !model.isRegistered || !model.canSolve)
+      .buttonStyle(.plain)
+      .overlay(alignment: .top) { Divider() }
+      .overlay(alignment: .bottom) { Divider() }
+      .accessibilityHint("Opens the written answer")
     }
   }
 
-  private var isShutterUnavailable: Bool {
-    if case .unavailable = model.shutterStatus { return true }
-    return false
+  private var latest: (title: String, text: String)? {
+    if model.subject == .math {
+      guard let current = model.currentProblem else { return nil }
+      let answer = current.problem?.answer ?? ""
+      return ("Problem \(current.label)", answer.isEmpty ? "Solving…" : answer)
+    }
+    let questions = AppModel.questions(in: model.lastAnswer)
+    guard !questions.isEmpty else { return nil }
+    let names = questions.map(\.label).prefix(6).joined(separator: ", ")
+    return ("Last page", questions.count == 1 ? "Question \(names)" : "Questions \(names)")
   }
 
-  private var shutterText: String {
-    switch model.shutterStatus {
-    case .off, .activating:
-      return "Connecting to the capture button…"
-    case .active:
-      return model.subject == .math
-        ? "Press capture to solve. Double-tap to explain, double press to check, swipe for the next problem. "
-          + "Tap once to pause, touch and hold to end."
-        : "Press capture to answer the page. Double press to check your answer sheet, double-tap to repeat, "
-          + "swipe to replay a question. Tap once to pause, touch and hold to end."
-    case .unavailable(let reason, _):
-      return "Capture button unavailable. \(reason) The Solve button above still works."
-    }
-  }
-
-  private var statusCard: some View {
-    VStack(alignment: .leading, spacing: 8) {
-      Text(model.statusText).font(.headline)
-      Text("Meta AI: \(model.registrationState.description)")
-        .font(.subheadline)
-        .foregroundStyle(.secondary)
-      Text(model.hasActiveDevice ? "Glasses: connected" : "Glasses: not detected")
-        .font(.subheadline)
-        .foregroundStyle(.secondary)
-      if model.testMode {
-        Label("Test mode: Claude isn't called (Settings)", systemImage: "testtube.2")
-          .font(.subheadline.bold())
-          .foregroundStyle(.orange)
-      }
-    }
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .padding()
-    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 12))
+  /// The first paragraph of an error: the details stay in the log.
+  static func shortError(_ message: String?) -> String {
+    guard let message else { return "" }
+    return message.components(separatedBy: "\n\n").first ?? message
   }
 }
 
-/// Settings, organized the usual way (Nielsen Norman Group on progressive disclosure; Android's
-/// settings guidelines): the few things changed most on the first screen, each showing its
-/// current value; details one level down, never deeper; rarely used options under Advanced.
+/// What the glasses' controls do in the current subject, and ending the session.
+struct SessionControlsView: View {
+  @Bindable var model: AppModel
+  @Environment(\.dismiss) private var dismiss
+
+  var body: some View {
+    NavigationStack {
+      List {
+        Section {
+          LabeledContent(model.subject.title, value: model.sessionPaused ? "Paused" : "Active")
+          if let problem = buttonProblem {
+            Text(problem)
+              .font(.footnote)
+              .foregroundStyle(Theme.secondary)
+          }
+        }
+        Section("Glasses Controls") {
+          GlassesControlsList(subject: model.subject)
+        }
+        if model.subject == .chemistry {
+          Section("Prompt") {
+            Text(model.sessionPrompt)
+              .foregroundStyle(Theme.secondary)
+          }
+        }
+        Section {
+          Button("End Session", role: .destructive) {
+            model.stopSession()
+            dismiss()
+          }
+        }
+      }
+      .navigationTitle("Session")
+      .navigationBarTitleDisplayMode(.inline)
+      .toolbar {
+        ToolbarItem(placement: .confirmationAction) {
+          Button("Done") { dismiss() }
+        }
+      }
+    }
+    .preferredColorScheme(.dark)
+  }
+
+  private var buttonProblem: String? {
+    switch model.shutterStatus {
+    case .active: nil
+    case .off, .activating: "Connecting to the glasses' buttons…"
+    case .unavailable: "The glasses' buttons aren't available. Solve on the iPhone still works."
+    }
+  }
+}
+
+/// Each glasses control and what it does, for the subject.
+struct GlassesControlsList: View {
+  let subject: ClaudeClient.Subject
+
+  private var rows: [[String]] {
+    subject == .math
+      ? [
+        ["Capture", "Solve"], ["Double Tap", "Explain"], ["Double Press", "Check"], ["Hold", "Repeat"],
+        ["Swipe", "Previous / Next"], ["Tap", "Pause / Resume"], ["Touch and Hold", "End Session"],
+      ]
+      : [
+        ["Capture", "Solve the Page"], ["Double Tap", "Repeat Last Answer"], ["Double Press", "Check Answer Sheet"],
+        ["Swipe", "Replay Previous / Next"], ["Tap", "Pause / Resume"], ["Touch and Hold", "End Session"],
+      ]
+  }
+
+  var body: some View {
+    ForEach(rows, id: \.self) { row in
+      LabeledContent(row[0], value: row[1])
+    }
+  }
+}
+
+/// A photo, full screen.
+struct PhotoDetailView: View {
+  let image: UIImage?
+  @Environment(\.dismiss) private var dismiss
+
+  var body: some View {
+    NavigationStack {
+      Group {
+        if let image {
+          Image(uiImage: image)
+            .resizable()
+            .scaledToFit()
+            .accessibilityLabel("Photo from the glasses")
+        } else {
+          ContentUnavailableView("Photo not found", systemImage: "photo")
+        }
+      }
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
+      .background(Color.black.ignoresSafeArea())
+      .toolbar {
+        ToolbarItem(placement: .confirmationAction) {
+          Button("Done") { dismiss() }
+        }
+      }
+    }
+    .preferredColorScheme(.dark)
+  }
+}
+
+/// Settings in a few groups, each showing its current value; details one level down, and the
+/// technical controls under Advanced (Nielsen Norman Group on progressive disclosure).
 struct SettingsView: View {
   @Bindable var model: AppModel
   @Environment(\.dismiss) private var dismiss
@@ -342,82 +432,46 @@ struct SettingsView: View {
   var body: some View {
     NavigationStack {
       Form {
-        Section {
+        Section("General") {
           Picker("Subject", selection: $model.subject) {
-            ForEach(ClaudeClient.Subject.allCases, id: \.self) { Text($0.name).tag($0) }
+            ForEach(ClaudeClient.Subject.allCases, id: \.self) { Text($0.title).tag($0) }
           }
-        } footer: {
-          Text(
-            model.subject == .math
-              ? "Each problem is dictated line by line for you to copy."
-              : "Multiple choice is a letter (\"B, as in boy\") and the choice, with time to fill in the bubble. Work-shown problems are dictated line by line, units and all."
-          )
         }
 
         Section {
-          Toggle("Fast answers", isOn: $model.fastAnswers)
-          Toggle("Sharper photos", isOn: $model.useHighResPhoto)
+          Toggle("Fast Answers", isOn: $model.fastAnswers)
+          Toggle("Sharper Photos", isOn: $model.useHighResPhoto)
         } header: {
-          Text("Answers")
+          Text("Solving")
         } footer: {
-          Text(
-            "Fast answers start about twice as soon and cost twice as much. Sharper photos read small print "
-              + "better but take a few seconds longer.")
+          Text("Fast Answers start sooner and cost more. Sharper Photos read small print better but take longer.")
         }
 
-        Section {
+        Section("Voice") {
           NavigationLink {
             VoiceSettingsView(model: model)
           } label: {
             LabeledContent("Voice", value: model.voiceEngine.shortName)
           }
-          VStack(alignment: .leading) {
-            Text("Speaking speed")
-            Slider(value: $model.speechRate, in: Speaker.rateRange) {
-              Text("Speaking speed")
-            } minimumValueLabel: {
-              Image(systemName: "tortoise")
-            } maximumValueLabel: {
-              Image(systemName: "hare")
-            }
-          }
-          NavigationLink("Writing pauses") { WritingSettingsView(model: model) }
-          Button("Test voice", systemImage: "speaker.wave.2") { model.testVoice() }
-        } header: {
-          Text("Voice")
-        } footer: {
-          Text(
-            model.subject == .math
-              ? "Double-tap the glasses' touchpad to hear the last line again."
-              : "Double-tap the glasses' touchpad to hear the last answer or line again.")
+        }
+
+        Section("Writing") {
+          NavigationLink("Writing Pauses") { WritingSettingsView(model: model) }
         }
 
         Section {
-          NavigationLink {
-            APIKeySettingsView(model: model)
-          } label: {
-            LabeledContent("Anthropic API key") {
-              Text(model.hasAPIKey ? "Saved" : "Not set")
-                .foregroundStyle(model.hasAPIKey ? Color.secondary : Color.red)
-            }
-          }
-          NavigationLink {
-            AdvancedSettingsView(model: model)
-          } label: {
-            VStack(alignment: .leading, spacing: 2) {
-              Text("Advanced")
-              Text("Test mode, diagnostics, disconnect")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-            }
-          }
+          NavigationLink("Advanced") { AdvancedSettingsView(model: model) }
         }
       }
       .navigationTitle("Settings")
+      .navigationBarTitleDisplayMode(.inline)
       .toolbar {
-        Button("Done") { dismiss() }
+        ToolbarItem(placement: .confirmationAction) {
+          Button("Done") { dismiss() }
+        }
       }
     }
+    .preferredColorScheme(.dark)
   }
 }
 
@@ -431,6 +485,20 @@ private struct VoiceSettingsView: View {
 
   var body: some View {
     Form {
+      Section {
+        VStack(alignment: .leading) {
+          Text("Speaking Speed")
+          Slider(value: $model.speechRate, in: Speaker.rateRange) {
+            Text("Speaking Speed")
+          } minimumValueLabel: {
+            Image(systemName: "tortoise")
+          } maximumValueLabel: {
+            Image(systemName: "hare")
+          }
+        }
+        Button("Test Voice", systemImage: "speaker.wave.2") { model.testVoice() }
+      }
+
       Section {
         Picker("Voice", selection: $model.voiceEngine) {
           Text("Azure (online, clearest)").tag(AppModel.VoiceEngine.azure)
@@ -496,13 +564,13 @@ private struct VoiceSettingsView: View {
       }
 
       Section {
-        Button("Preview voice", systemImage: "play.circle") { model.previewVoice() }
-        Button("Compare voices", systemImage: "person.2.wave.2") { model.compareVoices() }
-        Button("Match speed to 150 words a minute", systemImage: "gauge.with.needle") { model.matchSpeed() }
-        Button("Reset speed") { model.speechRate = Speaker.defaultRate }
+        Button("Preview", systemImage: "play.circle") { model.previewVoice() }
+        Button("Compare Voices", systemImage: "person.2.wave.2") { model.compareVoices() }
+        Button("Match Speed", systemImage: "gauge.with.needle") { model.matchSpeed() }
+        Button("Reset Speed") { model.speechRate = Speaker.defaultRate }
           .disabled(model.speechRate == Speaker.defaultRate)
       } footer: {
-        Text("Compare voices reads the same line in each voice, so you can choose by ear.")
+        Text("Compare Voices reads the same line in each voice. Match Speed sets about 150 words a minute.")
       }
     }
     .navigationTitle("Voice")
@@ -530,32 +598,32 @@ private struct WritingSettingsView: View {
     Form {
       Section {
         VStack(alignment: .leading) {
-          Text("Time to write each line")
+          Text("Time per Line")
           Slider(value: $model.writingTime, in: Speaker.writingTimeRange) {
-            Text("Time to write each line")
+            Text("Time per Line")
           } minimumValueLabel: {
             Text("Less").font(.caption)
           } maximumValueLabel: {
             Text("More").font(.caption)
           }
         }
-        Toggle("Pause after each part of a line", isOn: $model.dictateInParts)
-        Button("Reset writing time") { model.writingTime = 1 }
+        Toggle("Pause After Each Part", isOn: $model.dictateInParts)
+        Button("Reset") { model.writingTime = 1 }
           .disabled(model.writingTime == 1)
       } footer: {
-        Text("Each line is read a few words at a time, pausing while you write each part. Turn off part pauses to hear the whole line, then one pause.")
+        Text("When a line is read aloud for you to copy, these set how long it waits while you write.")
       }
 
       // The practice answer is calculus; chemistry's Test voice already has a worked part.
       if model.subject == .math {
         Section {
-          Button("Test limit definition", systemImage: "function") { model.testLimitDefinition() }
+          Button("Test Limit Definition", systemImage: "function") { model.testLimitDefinition() }
         } footer: {
           Text("A long worked answer (about 7 minutes) to practice copying.")
         }
       }
     }
-    .navigationTitle("Writing pauses")
+    .navigationTitle("Writing Pauses")
     .navigationBarTitleDisplayMode(.inline)
   }
 }
@@ -582,44 +650,48 @@ private struct APIKeySettingsView: View {
         Text(model.hasAPIKey ? "A key is saved in the Keychain on this phone." : "No key saved yet.")
       }
     }
-    .navigationTitle("Anthropic API key")
+    .navigationTitle("Anthropic API Key")
     .navigationBarTitleDisplayMode(.inline)
   }
 }
 
-/// Rarely used: testing without Claude, the log, and disconnecting.
+/// Rarely changed controls, then the developer tools: the API key, Test Mode and diagnostics.
 private struct AdvancedSettingsView: View {
   @Bindable var model: AppModel
 
   var body: some View {
     Form {
       Section {
-        Toggle("Reverse swipe direction", isOn: $model.reverseSwipes)
+        Toggle("Reverse Swipe Direction", isOn: $model.reverseSwipes)
       } footer: {
-        Text("Turn on if swiping the touchpad moves to the previous problem instead of the next.")
-      }
-
-      Section {
-        Toggle("Test mode (no Claude)", isOn: $model.testMode)
-      } footer: {
-        Text(
-          "Runs the glasses, photo and speech but skips Claude, so it's free, and plays a sample answer "
-            + "(in math, two sample problems, so every button can be tried). "
-            + "With the phone locked it waits 35 seconds first, to show the app keeps running.")
-      }
-
-      Section {
-        NavigationLink("Diagnostics log") { DiagnosticsView() }
-      } footer: {
-        Text("Copy it and send it along when reporting a problem.")
+        Text("Turn on if swiping on the glasses moves the wrong way.")
       }
 
       if model.isRegistered {
         Section {
-          Button("Disconnect glasses from this app", role: .destructive) {
+          Button("Disconnect Glasses", role: .destructive) {
             model.disconnectGlasses()
           }
         }
+      }
+
+      Section {
+        NavigationLink {
+          APIKeySettingsView(model: model)
+        } label: {
+          LabeledContent("Anthropic API Key") {
+            Text(model.hasAPIKey ? "Saved" : "Not Set")
+              .foregroundStyle(model.hasAPIKey ? Theme.secondary : Color.red)
+          }
+        }
+        Toggle("Test Mode", isOn: $model.testMode)
+        NavigationLink("Diagnostics") { DiagnosticsView() }
+      } header: {
+        Text("Developer")
+      } footer: {
+        Text(
+          "Test Mode runs the glasses, photo and voice but skips Claude, and plays a sample answer (two sample "
+            + "problems in math). It doesn't call Claude, so it's free.")
       }
     }
     .navigationTitle("Advanced")
@@ -639,42 +711,30 @@ struct StartSessionView: View {
   var body: some View {
     NavigationStack {
       Form {
-        // Math is driven by the buttons alone; chemistry still sends an editable prompt.
+        Section {
+          GlassesControlsList(subject: model.subject)
+        } header: {
+          Text("Glasses Controls")
+        } footer: {
+          Text("You can lock your iPhone. The glasses keep working.")
+        }
+
+        // Math runs on the buttons alone; chemistry still sends an editable prompt.
         if model.subject == .chemistry {
           Section {
             TextField("Prompt", text: $prompt, axis: .vertical)
               .lineLimit(3...10)
             if prompt != model.subject.defaultPrompt {
-              Button("Reset to default") { prompt = model.subject.defaultPrompt }
+              Button("Reset to Default") { prompt = model.subject.defaultPrompt }
             }
           } header: {
-            Text("Prompt for this session")
+            Text("Prompt")
           } footer: {
-            Text("Sent to Claude with every page you photograph with the capture button. Check photos send their own request.")
+            Text("Sent with every page you photograph.")
           }
-        }
-
-        Section {
-          if model.subject == .math {
-            Label("Press capture: the answer to the first problem.", systemImage: "camera")
-            Label("Double-tap the touchpad: why.", systemImage: "hand.tap.fill")
-            Label("Double press capture: check the answer, or your own work.", systemImage: "checkmark.seal")
-            Label("Swipe the touchpad: next or previous problem.", systemImage: "hand.draw")
-            Label("Hold capture: say it again.", systemImage: "speaker.wave.2")
-          } else {
-            Label("Press capture: every question on the page.", systemImage: "camera")
-            Label("Double press capture: check your filled-in answer sheet.", systemImage: "checkmark.seal")
-            Label("Double-tap the touchpad: the last answer again.", systemImage: "hand.tap.fill")
-            Label("Swipe the touchpad: replay the previous or next question.", systemImage: "hand.draw")
-          }
-          Label("Tap the touchpad once to pause or resume.", systemImage: "hand.tap")
-          Label("Touch and hold the touchpad to end the session.", systemImage: "hand.raised")
-          Label("You can leave the app or lock your phone.", systemImage: "lock.iphone")
-        } header: {
-          Text("On your glasses")
         }
       }
-      .navigationTitle("Start Session")
+      .navigationTitle(model.subject.title)
       .navigationBarTitleDisplayMode(.inline)
       .toolbar {
         ToolbarItem(placement: .cancellationAction) {
@@ -692,6 +752,7 @@ struct StartSessionView: View {
       }
       .onAppear { if prompt.isEmpty { prompt = model.subject.defaultPrompt } }
     }
+    .preferredColorScheme(.dark)
   }
 }
 

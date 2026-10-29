@@ -67,6 +67,196 @@ final class GlassesIntegrationTests: XCTestCase {
     camera.endSession()
   }
 
+  // MARK: - Latest capture wins
+
+  /// How many times the diagnostics log has `text`.
+  static func count(_ text: String) -> Int {
+    DiagnosticsLog.shared.text.components(separatedBy: text).count - 1
+  }
+
+  /// A one-problem math reply whose answer is `answer`.
+  static func reply(_ answer: String) -> String {
+    "Problems: 1\nProblem: 1\nQuestion: which photo\nAnswer: \(answer)\nExplain: e\nOwn work: no\nWork:\nWrite: x || x"
+  }
+
+  /// Photo A is solving when photo B is taken. A's reply (`aReply`) still arrives, after B's
+  /// answer, as a real one can. Nothing of A may reach the screen, the voice or the history.
+  private func newPhotoWhileSolving(aReply: ClaudeClient.Answer) async throws {
+    let model = AppModel()
+    let wasTestMode = model.testMode
+    let wasSubject = model.subject
+    model.testMode = true
+    model.subject = .math
+    final class Requests { var photos = 0 }
+    let requests = Requests()
+    AppModel.simulatedReplyOverride = { request in
+      guard case .photo(_, let ask) = request, ask == ClaudeClient.solveAsk else {
+        return .init(text: Self.reply("unused."), stopReason: "end_turn")
+      }
+      requests.photos += 1
+      return requests.photos == 1 ? aReply : .init(text: Self.reply("photo B answer."), stopReason: "end_turn")
+    }
+    AppModel.testModeIgnoresCancellation = true
+    AppModel.testModeWait = .seconds(12)
+    defer {
+      model.testMode = wasTestMode
+      model.subject = wasSubject
+      AppModel.simulatedReplyOverride = nil
+      AppModel.testModeIgnoresCancellation = false
+      AppModel.testModeWait = .seconds(2)
+    }
+
+    let ready = await waitUntil(10) { model.isRegistered && model.hasActiveDevice }
+    XCTAssertTrue(ready, "registered \(model.isRegistered), glasses \(model.hasActiveDevice)")
+    await model.startSession(prompt: model.subject.defaultPrompt)
+    XCTAssertTrue(model.sessionActive, "session didn't start: \(model.errorMessage ?? "no error")")
+    let sessionID = try XCTUnwrap(model.conversation.currentSessionID)
+    let input = try XCTUnwrap(glasses).services.input
+    let buttonReady = await waitUntil(20) { model.shutterStatus == .active && !model.isBusy }
+    XCTAssertTrue(buttonReady, "button not ready (\(model.shutterStatus))")
+    try await Task.sleep(for: .seconds(1))
+
+    // Photo A: taken, and Claude is working on it.
+    input.capture(pressType: MWDATMockDevice.CapturePressType.shortPress)
+    let aSolving = await waitUntil(30) { model.phase == .thinking && model.workspace != nil }
+    XCTAssertTrue(aSolving, "photo A never got to Claude (phase \(model.phase))")
+    let photoA = try XCTUnwrap(model.workspace?.id)
+    let aStarted = Date()
+
+    // Photo B, while A is still solving.
+    let buttonBack = await waitUntil(30) {
+      Self.count("glasses session refreshed") >= 1 && model.shutterStatus == .active
+    }
+    XCTAssertTrue(buttonBack, "button didn't come back after photo A (\(model.shutterStatus))")
+    try await Task.sleep(for: .seconds(1))
+    AppModel.testModeWait = .seconds(2)
+    input.capture(pressType: MWDATMockDevice.CapturePressType.shortPress)
+    let displaced = await waitUntil(5) { model.workspace?.id != photoA }
+    XCTAssertTrue(displaced, "photo A stayed current after photo B was taken")
+    XCTAssertTrue(DiagnosticsLog.shared.text.contains("replaced by a new capture"))
+
+    // B is answered.
+    let bAnswered = await waitUntil(60) { model.workspace?.current?.answer == "photo B answer." }
+    XCTAssertTrue(bAnswered, "photo B wasn't answered (\(model.workspace?.current?.answer ?? "nothing"))")
+    let photoB = try XCTUnwrap(model.workspace)
+    XCTAssertNotEqual(photoB.id, photoA)
+    XCTAssertEqual(ClaudeClient.preparedJPEG(from: photoB.photo), photoB.jpeg, "B's requests use B's own photo")
+
+    // A's reply arrives late (12 s after A started). Give it time, plus a margin.
+    let late = 14 - Date().timeIntervalSince(aStarted)
+    if late > 0 { try await Task.sleep(for: .seconds(late)) }
+    XCTAssertEqual(model.workspace?.id, photoB.id, "photo A came back")
+    XCTAssertEqual(model.workspace?.current?.answer, "photo B answer.", "photo A's answer replaced B's")
+    XCTAssertFalse(model.shownAnswer.contains("photo A"), "photo A's work reached the written answer")
+    XCTAssertFalse(DiagnosticsLog.shared.text.contains("say (result): \"photo A"), "photo A was spoken")
+    XCTAssertFalse(DiagnosticsLog.shared.text.contains("say (result): \"Problem 1. photo A"), "photo A was spoken")
+    let filed = model.conversation.entries(inSession: sessionID)
+    XCTAssertFalse(filed.contains { $0.answer?.contains("photo A") == true }, "photo A reached the history")
+    XCTAssertEqual(filed.filter { $0.prompt == "Problem 1" }.count, 1, "history has more than B's answer")
+    XCTAssertTrue(filed.last?.answer?.contains("photo B answer.") == true)
+    model.stopSession()
+  }
+
+  /// Photo A is replaced by photo B while solving, and A's full answer arrives late: ignored.
+  func testANewPhotoReplacesOneStillSolving() async throws {
+    try await newPhotoWhileSolving(aReply: .init(text: Self.reply("photo A answer."), stopReason: "end_turn"))
+  }
+
+  /// The same with A's reply cut off partway: nothing of it leaks into B.
+  func testACutOffReplyFromAReplacedPhotoDoesNotLeak() async throws {
+    try await newPhotoWhileSolving(
+      aReply: .init(text: "Problems: 1\nProblem: 1\nQuestion: which photo\nAnswer: photo A ans", stopReason: "max_tokens"))
+  }
+
+  /// Presses in quick succession start one photo, never several at once.
+  func testRapidPressesStartOnePhoto() async throws {
+    let model = AppModel()
+    let wasTestMode = model.testMode
+    let wasSubject = model.subject
+    model.testMode = true
+    model.subject = .math
+    defer {
+      model.testMode = wasTestMode
+      model.subject = wasSubject
+    }
+    let ready = await waitUntil(10) { model.isRegistered && model.hasActiveDevice }
+    XCTAssertTrue(ready)
+    await model.startSession(prompt: model.subject.defaultPrompt)
+    let sessionID = try XCTUnwrap(model.conversation.currentSessionID)
+    let input = try XCTUnwrap(glasses).services.input
+    let buttonReady = await waitUntil(20) { model.shutterStatus == .active && !model.isBusy }
+    XCTAssertTrue(buttonReady)
+    try await Task.sleep(for: .seconds(1))
+
+    for _ in 1...3 {
+      input.capture(pressType: MWDATMockDevice.CapturePressType.shortPress)
+      try await Task.sleep(for: .milliseconds(100))
+    }
+    let answered = await waitUntil(60) {
+      model.conversation.entries(inSession: sessionID).contains { $0.prompt == "Problem 1" } && !model.isBusy
+    }
+    XCTAssertTrue(answered, "the photo wasn't answered")
+    try await Task.sleep(for: .seconds(1))
+    XCTAssertEqual(Self.count("solve: math photo ("), 1, "rapid presses started more than one photo")
+    XCTAssertEqual(model.conversation.entries(inSession: sessionID).filter { $0.prompt == "Problem 1" }.count, 1)
+    model.stopSession()
+  }
+
+  /// Chemistry keeps its own guard (`currentRunID`): a new photo while a page is being solved
+  /// stops that page, which never answers, and the new page is answered. A swipe afterwards
+  /// replays from the answer, with no new photo.
+  func testChemistryANewPhotoWhileSolvingAndReplay() async throws {
+    let model = AppModel()
+    let wasTestMode = model.testMode
+    let wasSubject = model.subject
+    model.testMode = true
+    model.subject = .chemistry
+    AppModel.testModeWait = .seconds(20)
+    defer {
+      model.testMode = wasTestMode
+      model.subject = wasSubject
+      AppModel.testModeWait = .seconds(2)
+    }
+    let ready = await waitUntil(10) { model.isRegistered && model.hasActiveDevice }
+    XCTAssertTrue(ready)
+    await model.startSession(prompt: model.subject.defaultPrompt)
+    let sessionID = try XCTUnwrap(model.conversation.currentSessionID)
+    let input = try XCTUnwrap(glasses).services.input
+    let buttonReady = await waitUntil(20) { model.shutterStatus == .active && !model.isBusy }
+    XCTAssertTrue(buttonReady)
+    try await Task.sleep(for: .seconds(1))
+
+    input.capture(pressType: MWDATMockDevice.CapturePressType.shortPress)
+    let solving = await waitUntil(30) { model.phase == .thinking }
+    XCTAssertTrue(solving, "page A never got to Claude")
+    let buttonBack = await waitUntil(30) {
+      Self.count("glasses session refreshed") >= 1 && model.shutterStatus == .active
+    }
+    XCTAssertTrue(buttonBack)
+    try await Task.sleep(for: .seconds(1))
+    AppModel.testModeWait = .seconds(2)
+    input.capture(pressType: MWDATMockDevice.CapturePressType.shortPress)
+
+    let answered = await waitUntil(60) {
+      model.conversation.entries(inSession: sessionID).count == 2 && !model.isBusy
+    }
+    XCTAssertTrue(answered, "page B wasn't answered")
+    let filed = model.conversation.entries(inSession: sessionID)
+    XCTAssertEqual(filed.first?.error, "Stopped for a new photo.", "page A answered after it was replaced")
+    XCTAssertNil(filed.last?.error)
+    XCTAssertNotNil(filed.last?.answer)
+
+    // Swipe: a replay, with no new photo.
+    let back = await waitUntil(30) { model.shutterStatus == .active }
+    XCTAssertTrue(back)
+    let photosBefore = Self.count("solve: start (")
+    input.navLeft(source: MWDATMockDevice.InputSource.captouch)
+    let replayed = await waitUntil(10) { DiagnosticsLog.shared.text.contains("replaying") }
+    XCTAssertTrue(replayed, "the swipe didn't replay a question")
+    XCTAssertEqual(Self.count("solve: start ("), photosBefore, "a swipe took a photo")
+    model.stopSession()
+  }
+
   /// Every gesture reaches the app as its own kind: capture short press, double press and
   /// hold, touchpad double-tap and swipes.
   func testEveryGestureReachesTheApp() async throws {
@@ -153,12 +343,9 @@ final class GlassesIntegrationTests: XCTestCase {
     let wasSubject = model.subject
     model.testMode = true
     model.subject = .math
-    // A long stand-in for Claude, so the second press comes while the first is still working.
-    AppModel.testModeWait = .seconds(15)
     defer {
       model.testMode = wasTestMode
       model.subject = wasSubject
-      AppModel.testModeWait = .seconds(2)
     }
 
     let ready = await waitUntil(10) { model.isRegistered && model.hasActiveDevice }
@@ -181,28 +368,19 @@ final class GlassesIntegrationTests: XCTestCase {
     let thinking = await waitUntil(30) { model.phase == .thinking }
     XCTAssertTrue(thinking, "the photo never got to Claude (phase \(model.phase))")
 
-    // A second press while it's solving does nothing.
-    let backAfterPhoto = await waitUntil(30) {
-      DiagnosticsLog.shared.text.contains("glasses session refreshed") && model.shutterStatus == .active
-    }
-    XCTAssertTrue(backAfterPhoto, "button didn't come back after the photo (\(model.shutterStatus))")
-    try await Task.sleep(for: .seconds(1))
-    input.capture(pressType: MWDATMockDevice.CapturePressType.shortPress)
-    let ignored = await waitUntil(5) { DiagnosticsLog.shared.text.contains("press ignored") }
-    XCTAssertTrue(ignored, "a press while solving wasn't ignored")
-    AppModel.testModeWait = .seconds(2)
-
     let answered = await waitUntil(60) { model.workspace?.current?.answer.isEmpty == false }
     XCTAssertTrue(answered, "the first problem wasn't answered")
     XCTAssertEqual(model.workspace?.labels, ["1", "2"])
     XCTAssertEqual(entries("Problem 1").count, 1)
 
-    // Swipe: the second problem, from the same photo.
+    // Swipe: the second problem, from the same photo, with no new photo.
     let backForSwipe = await buttonBack()
     XCTAssertTrue(backForSwipe)
+    let photosBeforeSwipe = Self.count("solve: math photo (")
     input.navRight(source: MWDATMockDevice.InputSource.captouch)
     let moved = await waitUntil(10) { model.workspace?.index == 1 }
     XCTAssertTrue(moved, "the swipe didn't move to problem 2")
+    XCTAssertEqual(Self.count("solve: math photo ("), photosBeforeSwipe, "a swipe took a photo")
     let second = await waitUntil(60) { model.workspace?.current?.answer == "x equals 4." }
     XCTAssertTrue(second, "problem 2 wasn't prepared")
 

@@ -15,6 +15,10 @@ struct ConversationEntry: Codable, Identifiable, Sendable {
   let photoFile: String?
   /// The hands-free session this belongs to; nil for the in-app Solve button.
   var sessionID: UUID? = nil
+  /// "math" or "chemistry" (nil for answers saved before subjects were recorded).
+  var subject: String? = nil
+  /// A few words on what was solved, for the History list.
+  var title: String? = nil
 }
 
 /// One hands-free session: its own chat, archived when the session ends.
@@ -39,6 +43,8 @@ final class ConversationStore {
   private(set) var sessions: [ConversationSession] = []
   /// The session in progress, if any.
   private(set) var currentSessionID: UUID?
+  /// The subject new answers are filed under (set by the app as the subject changes).
+  @ObservationIgnored var subjectForNewEntries: String?
 
   @ObservationIgnored private let folder: URL
   @ObservationIgnored private var historyFile: URL { folder.appending(path: "history.json") }
@@ -124,7 +130,8 @@ final class ConversationStore {
 
   /// `sessionID` is the session the solve started in (it may have ended since).
   func add(
-    prompt: String, photo: Data?, answer: String?, error: String?, isTest: Bool, sessionID: UUID?
+    prompt: String, photo: Data?, answer: String?, error: String?, isTest: Bool, sessionID: UUID?,
+    title: String? = nil
   ) {
     let id = UUID()
     var photoFile: String?
@@ -141,7 +148,8 @@ final class ConversationStore {
       ConversationEntry(
         id: id, date: .now, prompt: prompt, answer: answer, error: error, isTest: isTest,
         photoFile: photoFile,
-        sessionID: sessionID.flatMap { id in sessions.contains { $0.id == id } ? id : nil }))
+        sessionID: sessionID.flatMap { id in sessions.contains { $0.id == id } ? id : nil },
+        subject: subjectForNewEntries, title: title))
     while entries.count > Self.maxEntries {
       deletePhoto(of: entries.removeFirst())
     }
