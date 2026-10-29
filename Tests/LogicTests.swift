@@ -611,6 +611,63 @@ final class MathReplyTests: XCTestCase {
     XCTAssertEqual(complete.answer, "x equals 4.")
   }
 
+  /// An answer written over two lines is kept whole, and isn't used (or said) until the next
+  /// tag starts: `answerIfComplete` is what the app stores and speaks.
+  func testAMultiLineAnswerIsWaitedForAndKeptWhole() {
+    let head = "Problems: 2\nProblem: 2\nQuestion: where f increases and decreases\n"
+    let first = "Answer: f is increasing on negative infinity to negative 1, and 3 to infinity,\n"
+    let second = "and decreasing on negative 1 to 3.\n"
+    let whole =
+      "f is increasing on negative infinity to negative 1, and 3 to infinity, and decreasing on negative 1 to 3."
+    // As it streams: the first line alone, then both lines, then the start of the next tag.
+    XCTAssertNil(MathReply.parse(head + first, complete: false).answerIfComplete)
+    XCTAssertNil(MathReply.parse(head + first + second, complete: false).answerIfComplete)
+    XCTAssertNil(MathReply.parse(head + first + second + "Expl", complete: false).answerIfComplete)
+    XCTAssertEqual(MathReply.parse(head + first + second + "Explain: The", complete: false).answerIfComplete, whole)
+    // The explanation isn't complete yet either, since its line is still arriving.
+    XCTAssertNil(MathReply.parse(head + first + second + "Explain: The", complete: false).explanationIfComplete)
+    // The whole reply, and a reply that ends right after the answer.
+    let reply = MathReply.parse(head + first + second + "Explain: Two\nlines.\nOwn work: no\nWork:\nWrite: x || x")
+    XCTAssertEqual(reply.answerIfComplete, whole)
+    XCTAssertEqual(reply.explanationIfComplete, "Two lines.")
+    XCTAssertEqual(reply.work, ["Write: x || x"])
+    XCTAssertEqual(MathReply.parse(head + first + second).answerIfComplete, whole)
+    // A one-line answer is complete as soon as the next tag starts.
+    XCTAssertEqual(MathReply.parse(head + "Answer: x equals 4.\nExplain:", complete: false).answerIfComplete, "x equals 4.")
+  }
+
+  /// A reply that can't be used says why, and each kind is told apart in the log and history.
+  func testUnusableRepliesAreToldApart() {
+    // A valid answer, but no Problem line: a format problem, not an unreadable photo.
+    let noProblemLine = MathReply.parse("Problems: 4\nQuestion: a limit\nAnswer: x equals 4.\nExplain: e\nOwn work: no\nWork:")
+    XCTAssertEqual(noProblemLine.failure(asked: nil), .missingProblemLine)
+    XCTAssertNil(noProblemLine.failure(asked: "4"), "a named problem's reply doesn't need the Problem line")
+    // Malformed: text with none of the expected tags.
+    let malformed = MathReply.parse("Sure! The answer to problem 4 is x = 4.")
+    XCTAssertEqual(malformed.failure(asked: nil), .unparseable)
+    XCTAssertTrue(malformed.tagsSeen.isEmpty)
+    // Unreadable: Claude said it couldn't make the photo out.
+    let unreadable = MathReply.parse("Problems:\nUnclear: the exponent in problem 4 is cut off.")
+    XCTAssertEqual(unreadable.failure(asked: nil), .unreadable)
+    // No usable answer: the right tags, but no answer.
+    let noAnswer = MathReply.parse("Problems: 4\nProblem: 4\nQuestion: a limit\nOwn work: no\nWork:")
+    XCTAssertEqual(noAnswer.failure(asked: nil), .noAnswer)
+    // A usable reply.
+    XCTAssertNil(MathReply.parse(AppModel.simulatedMathReply(label: nil)).failure(asked: nil))
+
+    let kinds: [MathReply.Failure] = [.missingProblemLine, .unparseable, .unreadable, .noAnswer]
+    XCTAssertEqual(Set(kinds.map(\.rawValue)).count, 4)
+    // Only an unreadable photo is spoken as one.
+    XCTAssertTrue(AppModel.spokenFailure(.unreadable, unclear: "it's cut off.").hasPrefix("Couldn't read that"))
+    for kind in [MathReply.Failure.missingProblemLine, .unparseable, .noAnswer] {
+      XCTAssertFalse(AppModel.spokenFailure(kind, unclear: nil).contains("read"), "\(kind) blames the photo")
+    }
+    // Request failures are named apart from replies that couldn't be used.
+    XCTAssertEqual(AppModel.requestFailureKind(ClaudeError.emptyAnswer), "reply-empty")
+    XCTAssertEqual(AppModel.requestFailureKind(ClaudeError.refused), "claude-refused")
+    XCTAssertEqual(AppModel.requestFailureKind(URLError(.timedOut)), "claude-request-failed")
+  }
+
   func testUnclearPhotoAndVerdicts() {
     XCTAssertEqual(MathReply.parse("Problems:\nUnclear: the exponent is cut off.").unclear, "the exponent is cut off.")
     XCTAssertEqual(

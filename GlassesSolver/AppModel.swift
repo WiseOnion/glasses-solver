@@ -1140,6 +1140,7 @@ final class AppModel {
       phase = .idle
       scheduleShutterRevive("after a failed photo", force: true)
       diag("solve", "FAILED: \(ErrorDetail.describe(error))")
+      diag("solve", "OUTCOME photo-capture-failed: \(ErrorDetail.describe(error))")
       errorMessage = ErrorDetail.alertText(error)
       say("Couldn't take the photo. Capture again.", meaningful: false)
       conversation.add(
@@ -1152,7 +1153,11 @@ final class AppModel {
     if sessionActive { startSessionRefresh(reason: "fresh camera for the next photo") } else { camera.endSession() }
     guard let jpeg = ClaudeClient.preparedJPEG(from: photo) else {
       phase = .idle
-      say("Couldn't read that photo. Capture again.", meaningful: false)
+      diag("solve", "OUTCOME photo-prepare-failed: the photo (\(photo.count) bytes) couldn't be made into a JPEG to send")
+      say("Couldn't use that photo. Capture again.", meaningful: false)
+      conversation.add(
+        prompt: "Solve", photo: nil, answer: nil, error: "The photo couldn't be prepared to send [photo-prepare-failed]",
+        isTest: testMode, sessionID: chatSessionID)
       return
     }
     let space = MathWorkspace(photo: photo, jpeg: jpeg)
@@ -1189,13 +1194,13 @@ final class AppModel {
         .photo(jpeg: space.jpeg, ask: ask), simulated: Self.simulatedMathReply(label: label),
         onText: { [weak self] piece in
           buffer.text += piece
-          self?.apply(MathReply.parse(ClaudeClient.completeLines(buffer.text)), asked: label, in: id, final: false)
+          self?.apply(MathReply.parse(buffer.text, complete: false), asked: label, in: id, final: false)
         },
         onRestartLine: { buffer.text = ClaudeClient.completeLines(buffer.text) })
       try Task.checkCancellation()
       let parsed = MathReply.parse(reply.text)
       apply(parsed, asked: label, in: id, final: true)
-      finished(parsed, asked: label, in: id, stopReason: reply.stopReason, sessionID: sessionID)
+      finished(parsed, text: reply.text, asked: label, in: id, stopReason: reply.stopReason, sessionID: sessionID)
     } catch where Task.isCancelled {
       diag("solve", "math request stopped (a newer photo, or the subject changed)")
     } catch {
@@ -1203,8 +1208,9 @@ final class AppModel {
     }
   }
 
-  /// Stores what a reply says so far. Says the answer the moment its line is complete, if
-  /// it's the problem being looked at, and an explanation that was asked for early.
+  /// Stores what a reply says so far. Says the answer the moment it's complete (the next tag
+  /// has started, or the reply ended), if it's the problem being looked at, and an
+  /// explanation that was asked for early.
   private func apply(_ reply: MathReply, asked: String?, in id: UUID, final: Bool) {
     guard var space = workspace, space.id == id else { return }
     if asked == nil {
@@ -1220,8 +1226,8 @@ final class AppModel {
     if asked == nil, space.problems[label] == nil, let at = space.labels.firstIndex(of: label) { space.index = at }
     var problem = space.problems[label] ?? MathProblem()
     if !reply.question.isEmpty { problem.question = reply.question }
-    if !reply.answer.isEmpty { problem.answer = reply.answer }
-    if !reply.explanation.isEmpty { problem.explanation = reply.explanation }
+    if let answer = reply.answerIfComplete { problem.answer = answer }
+    if let explanation = reply.explanationIfComplete { problem.explanation = explanation }
     if !reply.work.isEmpty { problem.work = reply.work }
     problem.ownWork = reply.ownWork
     if final { problem.status = problem.answer.isEmpty ? .failed : .ready }
@@ -1247,16 +1253,21 @@ final class AppModel {
 
   /// A reply is complete: files it, says what went wrong if there's no answer, and starts on
   /// the next problem so a swipe finds it ready.
-  private func finished(_ reply: MathReply, asked: String?, in id: UUID, stopReason: String?, sessionID: UUID?) {
+  private func finished(
+    _ reply: MathReply, text: String, asked: String?, in id: UUID, stopReason: String?, sessionID: UUID?
+  ) {
     guard let space = workspace, space.id == id else { return }
     if phase == .thinking { phase = .idle }
     let label = asked ?? reply.label
     guard let label, let problem = space.problems[label], !problem.answer.isEmpty else {
+      let failure = reply.failure(asked: asked) ?? .noAnswer
+      Self.logUnusable(failure.rawValue, reply: reply, text: text, stopReason: stopReason, request: asked)
       if asked == nil {
-        let why = space.unclear.map { "Couldn't read that: " + Self.withoutFinalStop($0) + "." } ?? "Couldn't read that."
+        let why = Self.spokenFailure(failure, unclear: reply.unclear)
         say(why + " Capture again.", meaningful: false)
         conversation.add(
-          prompt: "Solve", photo: space.photo, answer: nil, error: why, isTest: testMode, sessionID: sessionID)
+          prompt: "Solve", photo: space.photo, answer: nil, error: "\(why) [\(failure.rawValue)]", isTest: testMode,
+          sessionID: sessionID)
       } else if space.currentLabel == asked {
         say("Couldn't solve \(Speaker.itemName(label ?? "", itemWord: "problem")). Swipe back to it to try again.", meaningful: false)
       }
@@ -1265,6 +1276,11 @@ final class AppModel {
     if stopReason != "end_turn" && stopReason != "stop_sequence" {
       diag("solve", "problem \(label)'s reply ended early (\(stopReason ?? "dropped connection")); keeping what came")
     }
+    diag(
+      "solve",
+      "OUTCOME answered: problem \(label), \(problem.answer.count)-character answer, explanation "
+        + (problem.explanation.isEmpty ? "missing" : "present") + ", \(problem.work.count) work lines; tags: "
+        + reply.tagsSeen.joined(separator: ", "))
     conversation.add(
       prompt: "Problem \(label)", photo: space.photo, answer: problem.summary(label: label), error: nil,
       isTest: testMode, sessionID: sessionID)
@@ -1282,6 +1298,7 @@ final class AppModel {
   /// the problem is marked so a later swipe or press tries again.
   private func failed(_ error: Error, asked: String?, in id: UUID, sessionID: UUID?) {
     diag("solve", "math request FAILED: \(ErrorDetail.describe(error))")
+    diag("solve", "OUTCOME \(Self.requestFailureKind(error)): " + (asked.map { "problem " + $0 } ?? "the photo's first request"))
     guard var space = workspace, space.id == id else { return }
     let wasWaiting = phase == .thinking
     if wasWaiting { phase = .idle }
@@ -1393,7 +1410,13 @@ final class AppModel {
         let reply = try await self.askClaude(
           .text(ClaudeClient.explainAsk(label: label, question: problem.question, solution: problem.solution)),
           simulated: "Explain: " + Self.simulatedExplanation)
-        let explanation = MathReply.parse(reply.text).explanation
+        let parsedExplanation = MathReply.parse(reply.text)
+        let explanation = parsedExplanation.explanation
+        if explanation.isEmpty {
+          Self.logUnusable(
+            "explain-reply-no-explanation", reply: parsedExplanation, text: reply.text, stopReason: reply.stopReason,
+            request: label)
+        }
         guard var space = self.workspace, space.id == id, !explanation.isEmpty else { throw ClaudeError.emptyAnswer }
         space.problems[label]?.explanation = explanation
         self.workspace = space
@@ -1452,12 +1475,14 @@ final class AppModel {
           let reply = try await self.askClaude(
             .photo(jpeg: jpeg, ask: ClaudeClient.ownWorkAsk(label: label, reference: problem.solution)),
             simulated: "Verdict: Correct. Your work is right.")
-          verdict = MathReply.parse(reply.text).verdict ?? "Unclear. The check didn't give a result."
+          verdict = Self.verdict(in: reply, request: label)
         } else {
           let again = try await self.askClaude(
             .photo(jpeg: jpeg, ask: ClaudeClient.resolveAsk(label)), simulated: Self.simulatedMathReply(label: label))
           let second = MathReply.parse(again.text)
           if second.answer.isEmpty {
+            Self.logUnusable(
+              "check-resolve-no-answer", reply: second, text: again.text, stopReason: again.stopReason, request: label)
             verdict = "Unclear. The problem couldn't be solved a second time."
           } else {
             let secondSolution = (["Answer: \(second.answer)"] + second.work).joined(separator: "\n")
@@ -1466,7 +1491,7 @@ final class AppModel {
                 ClaudeClient.compareAsk(
                   label: label, question: problem.question, first: problem.solution, second: secondSolution)),
               simulated: "Verdict: Correct. \(problem.answer)")
-            verdict = MathReply.parse(compared.text).verdict ?? "Unclear. The check didn't give a result."
+            verdict = Self.verdict(in: compared, request: label)
           }
         }
       } catch {
@@ -1565,6 +1590,49 @@ final class AppModel {
     }
     return try await ClaudeClient(apiKey: apiKey, subject: subject, fast: fastAnswers).respond(
       to: request, onText: onText, onRestartLine: onRestartLine)
+  }
+
+  /// What the glasses say when a photo's first reply can't be used. An unreadable photo and a
+  /// reply in the wrong format are told apart.
+  static func spokenFailure(_ failure: MathReply.Failure, unclear: String?) -> String {
+    switch failure {
+    case .unreadable: "Couldn't read that: " + withoutFinalStop(unclear ?? "") + "."
+    case .unparseable, .missingProblemLine: "Claude's reply was in the wrong format."
+    case .noAnswer: "Claude didn't give an answer."
+    }
+  }
+
+  /// The kind of request failure, for the log: no reply at all, a refusal, or the request
+  /// itself (network, HTTP, timeout).
+  static func requestFailureKind(_ error: Error) -> String {
+    switch error {
+    case ClaudeError.emptyAnswer: "reply-empty"
+    case ClaudeError.refused: "claude-refused"
+    default: "claude-request-failed"
+    }
+  }
+
+  /// Logs a reply that couldn't be used: what kind of failure, how it ended, which tags it
+  /// had, and how it starts, so the log tells a format problem from an unreadable photo. Only
+  /// Claude's reply is logged, never the request, the photo or the key.
+  private static func logUnusable(_ kind: String, reply: MathReply, text: String, stopReason: String?, request: String?) {
+    let start = text.prefix(300).replacingOccurrences(of: "\n", with: " / ")
+    let tags = reply.tagsSeen.isEmpty ? "none" : reply.tagsSeen.joined(separator: ", ")
+    diag(
+      "solve",
+      "OUTCOME \(kind): " + (request.map { "problem " + $0 } ?? "the photo's first request")
+        + "; \(text.count) characters, ended by " + (stopReason ?? "a dropped connection")
+        + "; tags: \(tags); starts: \"\(start)\"")
+  }
+
+  /// A check reply's spoken verdict, or "Unclear" (logged) when it has none.
+  private static func verdict(in reply: ClaudeClient.Answer, request: String) -> String {
+    let parsed = MathReply.parse(reply.text)
+    guard let verdict = parsed.verdict else {
+      logUnusable("check-reply-no-verdict", reply: parsed, text: reply.text, stopReason: reply.stopReason, request: request)
+      return "Unclear. The check didn't give a result."
+    }
+    return verdict
   }
 
   private static func withoutFinalStop(_ text: String) -> String {
