@@ -280,8 +280,11 @@ final class GlassesIntegrationTests: XCTestCase {
     input.navRight(source: MWDATMockDevice.InputSource.captouch)
     let arrived = await waitUntil(5) { events.gestures.count == 5 }
     XCTAssertTrue(arrived, "gestures that arrived: \(events.gestures)")
-    XCTAssertEqual(
-      events.gestures, [.capturePress, .captureDoublePress, .captureHold, .touchpadDoubleTap, .swipe(.right)])
+    // Each arrives as its own kind. Sent back to back, the simulated glasses don't keep their order.
+    let expected: [ShutterButton.Gesture] = [
+      .capturePress, .captureDoublePress, .captureHold, .touchpadDoubleTap, .swipe(.right),
+    ]
+    XCTAssertEqual(Set(events.gestures.map(\.description)), Set(expected.map(\.description)))
 
     shutter.detach(from: session)
     camera.endSession()
