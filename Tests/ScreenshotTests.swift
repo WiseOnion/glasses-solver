@@ -18,6 +18,7 @@ final class ScreenshotTests: XCTestCase {
     model = AppModel()
     testModeBefore = model.testMode
     model.testMode = false  // so the screens show what a real listener sees
+    await model.setSavePhotos(false)  // its default
     model.conversation.clear()
   }
 

@@ -155,7 +155,11 @@ struct SolveView: View {
               .controlSize(.large)
               .tint(.secondary)
           } else if state.symbol == "Glasses" {
+            // A custom image doesn't scale with the font like a symbol: size it to match.
             Image("Glasses")
+              .resizable()
+              .scaledToFit()
+              .frame(width: 64, height: 44)
           } else {
             Image(systemName: state.symbol)
           }
