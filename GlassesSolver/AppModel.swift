@@ -1100,13 +1100,19 @@ final class AppModel {
     }
     Task {
       do {
-        try await PHPhotoLibrary.shared().performChanges {
-          PHAssetCreationRequest.forAsset().addResource(with: .photo, data: photo, options: nil)
-        }
+        try await Self.addToPhotos(photo)
         diag("photos", "added the photo to Photos")
       } catch {
         diag("photos", "adding to Photos FAILED: \(ErrorDetail.describe(error))")
       }
+    }
+  }
+
+  /// PhotoKit runs the change block on its own queue, so it must not be main-actor code:
+  /// Swift 6 stops the app when a main-actor closure runs anywhere else.
+  nonisolated private static func addToPhotos(_ photo: Data) async throws {
+    try await PHPhotoLibrary.shared().performChanges {
+      PHAssetCreationRequest.forAsset().addResource(with: .photo, data: photo, options: nil)
     }
   }
 
