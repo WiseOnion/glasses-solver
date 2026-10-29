@@ -87,139 +87,192 @@ struct ContentView: View {
   }
 }
 
-/// Solve: a quiet companion to the glasses. A line of status at the top, the subject, and in
-/// the middle the current state with one small capture control. Nothing else competes; the
-/// glasses do the work, and the answer screen is where the app becomes the focus.
+/// Solve: a companion to the glasses, which do the work. Built from two references:
+/// - Meta's CameraAccess sample: the root follows registration (setup until the glasses are
+///   connected), and each state gets one title, one line on what to do, and at most one action,
+///   picked by a priority-ordered ladder.
+/// - Apple's samples (Food Truck, Backyard Birds): native navigation, a segmented picker for
+///   two modes, ContentUnavailableView for "nothing here yet" states.
 struct SolveView: View {
   @Bindable var model: AppModel
   let openWorkspace: () -> Void
   @State private var showStartSession = false
   @State private var showSession = false
 
-  private var connected: Bool { model.isRegistered && model.hasActiveDevice }
-
   var body: some View {
     NavigationStack {
-      VStack(alignment: .leading, spacing: 0) {
-        status
-          .padding(.top, 4)
+      Group {
         if model.isRegistered {
-          SubjectSelector(subject: $model.subject)
-            .disabled(model.isBusy)
-            .padding(.top, 18)
-        }
-        if model.isRegistered {
-          Spacer()
-          center
-            .frame(maxWidth: .infinity)
-          Spacer()
-          bottom
+          ready
         } else {
           setup
         }
       }
-      .padding(.horizontal, 20)
-      .padding(.bottom, 8)
-      .background(Color(.systemBackground))
-      .toolbar(.hidden, for: .navigationBar)
+      .navigationTitle("Solve")
+      .navigationBarTitleDisplayMode(.inline)
+      .toolbar {
+        if model.isRegistered {
+          ToolbarItem(placement: .principal) {
+            Picker("Subject", selection: $model.subject) {
+              ForEach(ClaudeClient.Subject.allCases, id: \.self) { Text($0.title).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .fixedSize()
+            .disabled(model.isBusy)
+          }
+          ToolbarItem(placement: .topBarTrailing) {
+            Button("Hands-Free", systemImage: "eyeglasses") {
+              if model.sessionActive { showSession = true } else { showStartSession = true }
+            }
+            .disabled(!model.sessionActive && (model.isStartingSession || model.isBusy || !model.canSolve))
+          }
+        }
+      }
       .navigationDestination(isPresented: $showSession) { SessionControlsView(model: model) }
       .sheet(isPresented: $showStartSession) { StartSessionView(model: model) }
     }
   }
 
-  // MARK: - Status: one quiet line
+  // MARK: - Connected: the state, what to do, one action
 
+  private var ready: some View {
+    VStack(spacing: 0) {
+      status
+        .padding(.top, 8)
+      ContentUnavailableView {
+        Label {
+          Text(state.title)
+        } icon: {
+          if model.phase == .idle {
+            Image(systemName: state.symbol)
+          } else {
+            ProgressView()
+              .controlSize(.large)
+          }
+        }
+      } description: {
+        Text(state.detail)
+      } actions: {
+        if model.phase == .idle && model.canSolve {
+          Button("Take Photo") { Task { await model.solve() } }
+            .buttonStyle(.bordered)
+            .disabled(!model.canStartPhoto)
+          if model.subject == .chemistry {
+            Button("Check Answer Sheet") { Task { await model.checkAnswerSheet() } }
+              .disabled(!model.canStartPhoto)
+          }
+        }
+      }
+      .animation(.easeOut(duration: 0.2), value: state.title)
+      bottom
+    }
+  }
+
+  /// One small line: which glasses, and whether they're there.
   private var status: some View {
     HStack(spacing: 6) {
       Circle()
-        .fill(connected ? Color(.systemGreen) : Color(.systemGray2))
+        .fill(model.hasActiveDevice ? Color(.systemGreen) : Color(.systemGray))
         .frame(width: 6, height: 6)
       Text("Ray-Ban Meta")
-        .foregroundStyle(.primary)
       Text(statusText)
         .foregroundStyle(.secondary)
-      if model.testMode {
-        Text("· Test Mode")
-          .foregroundStyle(.secondary)
-      }
     }
     .font(.footnote)
     .accessibilityElement(children: .combine)
   }
 
   private var statusText: String {
-    if !model.isRegistered { return model.registrationState == .registering ? "Connecting…" : "Not connected" }
-    if model.sessionActive { return model.sessionPaused ? "Paused" : "Hands-free" }
-    return model.hasActiveDevice ? "Connected" : "Asleep"
+    var text = model.sessionActive ? (model.sessionPaused ? "Paused" : "Hands-free") : (model.hasActiveDevice ? "Connected" : "Asleep")
+    if model.testMode { text += " · Test Mode" }
+    return text
   }
 
-  // MARK: - Center: the state, then one small control
-
-  private var center: some View {
-    VStack(spacing: 6) {
-      Text(stateTitle)
-        .font(.title2.weight(.semibold))
-        .contentTransition(.opacity)
-      if let detail {
-        Text(detail)
-          .font(.subheadline)
-          .foregroundStyle(.secondary)
-          .multilineTextAlignment(.center)
-      }
-      control
-        .padding(.top, 28)
-    }
-    .animation(.easeOut(duration: 0.2), value: stateTitle)
-  }
-
-  private var stateTitle: String {
-    guard model.isRegistered else { return "Not Connected" }
+  /// The one thing that matters now, highest priority first.
+  private var state: (title: String, detail: String, symbol: String) {
+    let page = model.subject == .math ? "a problem" : "the page"
+    if !model.canSolve { return ("Add Your API Key", "Solving needs a Claude API key. Add it in Settings.", "key") }
     switch model.phase {
-    case .capturing: return "Taking Photo"
-    case .thinking: return "Solving"
-    case .idle: return model.hasActiveDevice || model.sessionActive ? "Ready" : "Glasses Asleep"
+    case .capturing: return ("Taking Photo", "Hold still.", "camera")
+    case .thinking: return ("Solving", "Press capture again to use a new photo.", "camera")
+    case .idle: break
     }
+    if model.sessionActive && model.sessionPaused { return ("Paused", "Tap your glasses to resume.", "pause.circle") }
+    if !model.hasActiveDevice && !model.sessionActive {
+      return ("Glasses Asleep", "Unfold your glasses to wake them.", "eyeglasses")
+    }
+    return ("Ready", "Look at \(page) and press capture on your glasses.", "camera.viewfinder")
   }
 
-  /// Only what helps right now: what to look at, or what's in the way.
-  private var detail: String? {
-    if !model.isRegistered {
-      return model.registrationState == .registering ? "Finish in the Meta AI app." : "Connect your Ray-Ban Meta glasses."
-    }
-    if !model.canSolve { return "Add your API key in Settings." }
-    if !model.hasActiveDevice { return "Unfold your glasses to wake them." }
-    if model.phase == .thinking { return "Tap again to use a new photo." }
-    if model.phase == .capturing { return nil }
-    return model.subject == .math ? "Look at a problem" : "Look at the page"
-  }
+  // MARK: - Bottom: the latest answer, as a row
 
-  private var control: some View {
-    Button {
-      Task { await model.solve() }
-    } label: {
-      ZStack {
-        Circle()
-          .fill(Color(.tertiarySystemFill))
-        Circle()
-          .strokeBorder(Color(.separator), lineWidth: 1)
-        if model.phase != .idle {
-          ProgressView()
-        } else {
-          Image(systemName: "camera")
-            .font(.system(size: 22, weight: .regular))
-            .foregroundStyle(solveEnabled ? Color.primary : Color.secondary)
+  @ViewBuilder
+  private var bottom: some View {
+    VStack(spacing: 0) {
+      if model.speechHeld {
+        Divider()
+        HStack {
+          Label("Glasses audio disconnected", systemImage: "speaker.slash")
+            .foregroundStyle(.secondary)
+          Spacer()
+          Button("Play Here") { model.playOnPhone() }
         }
+        .font(.subheadline)
+        .padding(.horizontal, 16)
+        .frame(minHeight: 44)
       }
-      .frame(width: 68, height: 68)
+      if let result = latest {
+        Divider()
+        Button(action: openWorkspace) {
+          HStack(spacing: 12) {
+            if let photo = model.lastPhoto {
+              // A thumbnail with a hairline edge, as in Food Truck's OrderRow.
+              let shape = RoundedRectangle(cornerRadius: 4, style: .continuous)
+              Image(uiImage: photo)
+                .resizable()
+                .scaledToFill()
+                .frame(width: 40, height: 40)
+                .clipShape(shape)
+                .overlay { shape.strokeBorder(.quaternary, lineWidth: 0.5) }
+                .accessibilityHidden(true)
+            }
+            VStack(alignment: .leading, spacing: 1) {
+              Text(result.title)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+              Text(result.text)
+                .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+            Image(systemName: "chevron.right")
+              .font(.footnote.weight(.semibold))
+              .foregroundStyle(.tertiary)
+          }
+          .padding(.horizontal, 16)
+          .padding(.vertical, 10)
+          .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("Opens the answer")
+      }
     }
-    .buttonStyle(PressScaleStyle(scale: 0.92))
-    .disabled(!solveEnabled)
-    .accessibilityLabel("Solve")
-    .accessibilityHint("Takes a photo with your glasses and solves it")
   }
 
-  // MARK: - Setup: before the glasses are connected (after Meta's CameraAccess sample)
+  private var latest: (title: String, text: String)? {
+    if model.subject == .math {
+      guard let current = model.currentProblem else { return nil }
+      let answer = current.problem?.answer ?? ""
+      return ("Problem \(current.label)", answer.isEmpty ? "Solving…" : answer)
+    }
+    let questions = AppModel.questions(in: model.lastAnswer)
+    guard !questions.isEmpty else { return nil }
+    let names = questions.map(\.label).prefix(6).joined(separator: ", ")
+    return ("Last page", questions.count == 1 ? "Question \(names)" : "Questions \(names)")
+  }
 
+  // MARK: - Setup: before the glasses are connected
+
+  /// What the glasses will do, then one action (the order Meta's CameraAccess onboarding uses).
   private var setup: some View {
     VStack(alignment: .leading, spacing: 0) {
       Spacer()
@@ -248,92 +301,8 @@ struct SolveView: View {
       .disabled(model.registrationState == .registering)
       .padding(.top, 12)
     }
-  }
-
-  private var solveEnabled: Bool { model.canStartPhoto && model.isRegistered && model.canSolve }
-
-  // MARK: - Bottom: secondary, small
-
-  @ViewBuilder
-  private var bottom: some View {
-    if model.isRegistered {
-      VStack(spacing: 0) {
-        if model.speechHeld {
-          HStack {
-            Label("Glasses audio disconnected", systemImage: "speaker.slash")
-              .font(.footnote)
-              .foregroundStyle(.secondary)
-            Spacer()
-            Button("Play Here") { model.playOnPhone() }
-              .font(.footnote)
-          }
-          .padding(.vertical, 10)
-          Divider()
-        }
-        if let result = latest {
-          Button(action: openWorkspace) {
-            HStack(spacing: 12) {
-              if let photo = model.lastPhoto {
-                Image(uiImage: photo)
-                  .resizable()
-                  .scaledToFill()
-                  .frame(width: 34, height: 34)
-                  .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                  .accessibilityHidden(true)
-              }
-              VStack(alignment: .leading, spacing: 1) {
-                Text(result.title)
-                  .font(.caption)
-                  .foregroundStyle(.secondary)
-                Text(result.text)
-                  .font(.subheadline)
-                  .foregroundStyle(.primary)
-                  .lineLimit(1)
-              }
-              Spacer(minLength: 0)
-              Image(systemName: "chevron.right")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.tertiary)
-            }
-            .padding(.vertical, 10)
-            .contentShape(Rectangle())
-          }
-          .buttonStyle(.plain)
-          .accessibilityHint("Opens the answer")
-          Divider()
-        }
-        HStack {
-          Button {
-            if model.sessionActive { showSession = true } else { showStartSession = true }
-          } label: {
-            Label(
-              model.sessionActive ? "Hands-Free On" : "Hands-Free",
-              systemImage: "eyeglasses")
-          }
-          .disabled(!model.sessionActive && (model.isStartingSession || model.isBusy || !model.canSolve))
-          Spacer()
-          if model.subject == .chemistry {
-            Button("Check Sheet") { Task { await model.checkAnswerSheet() } }
-              .disabled(!solveEnabled)
-          }
-        }
-        .font(.subheadline)
-        .tint(.secondary)
-        .frame(minHeight: 44)
-      }
-    }
-  }
-
-  private var latest: (title: String, text: String)? {
-    if model.subject == .math {
-      guard let current = model.currentProblem else { return nil }
-      let answer = current.problem?.answer ?? ""
-      return ("Problem \(current.label)", answer.isEmpty ? "Solving…" : answer)
-    }
-    let questions = AppModel.questions(in: model.lastAnswer)
-    guard !questions.isEmpty else { return nil }
-    let names = questions.map(\.label).prefix(6).joined(separator: ", ")
-    return ("Last page", questions.count == 1 ? "Question \(names)" : "Questions \(names)")
+    .padding(.horizontal, 20)
+    .padding(.bottom, 16)
   }
 }
 
@@ -360,35 +329,6 @@ struct GlassesTip: View {
       }
     }
     .accessibilityElement(children: .combine)
-  }
-}
-
-/// Math 131 / Chemistry, as two quiet words: only the selected one gets a soft highlight.
-struct SubjectSelector: View {
-  @Binding var subject: ClaudeClient.Subject
-
-  var body: some View {
-    HStack(spacing: 4) {
-      ForEach(ClaudeClient.Subject.allCases, id: \.self) { option in
-        Button {
-          subject = option
-        } label: {
-          Text(option.title)
-            .font(.subheadline.weight(option == subject ? .semibold : .regular))
-            .foregroundStyle(option == subject ? Color.primary : Color.secondary)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background {
-              if option == subject {
-                Capsule().fill(Color(.tertiarySystemFill))
-              }
-            }
-        }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(option == subject ? .isSelected : [])
-      }
-    }
-    .animation(.easeOut(duration: 0.15), value: subject)
   }
 }
 

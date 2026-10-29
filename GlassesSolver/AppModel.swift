@@ -580,13 +580,16 @@ final class AppModel {
   /// For the screenshot tests: puts the screens in a given state with no glasses, Claude or
   /// key involved.
   func showForScreenshots(
-    registered: Bool, glassesAwake: Bool = true, session: Bool = false, subject: ClaudeClient.Subject = .math,
+    registered: Bool, registering: Bool = false, glassesAwake: Bool = true, session: Bool = false,
+    paused: Bool = false, apiKey: Bool = true, phase: Phase = .idle, subject: ClaudeClient.Subject = .math,
     workspace: MathWorkspace? = nil, photo: UIImage? = nil, lastAnswer: String = ""
   ) {
-    registrationState = registered ? .registered : .available
+    registrationState = registered ? .registered : registering ? .registering : .available
     hasActiveDevice = glassesAwake
-    hasAPIKey = true
+    hasAPIKey = apiKey
     sessionActive = session
+    sessionPaused = paused
+    self.phase = phase
     shutterStatus = session ? .active : .off
     self.subject = subject
     self.workspace = workspace

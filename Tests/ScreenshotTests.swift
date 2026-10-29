@@ -11,16 +11,20 @@ import XCTest
 @MainActor
 final class ScreenshotTests: XCTestCase {
   private var model: AppModel!
+  private var testModeBefore = false
 
   override func setUp() async throws {
     try await super.setUp()
     model = AppModel()
+    testModeBefore = model.testMode
+    model.testMode = false  // so the screens show what a real listener sees
     model.conversation.clear()
   }
 
   override func tearDown() async throws {
     model.showForScreenshots(registered: false)
     model.conversation.clear()
+    model.testMode = testModeBefore
     model = nil
     try await super.tearDown()
   }
@@ -29,8 +33,20 @@ final class ScreenshotTests: XCTestCase {
     model.showForScreenshots(registered: false, glassesAwake: false)
     try await shoot("1-solve-disconnected", ContentView(model: model))
 
+    model.showForScreenshots(registered: false, registering: true)
+    try await shoot("1b-solve-connecting", ContentView(model: model))
+
     model.showForScreenshots(registered: true, glassesAwake: false)
     try await shoot("2-solve-connected-asleep", ContentView(model: model))
+
+    model.showForScreenshots(registered: true, apiKey: false)
+    try await shoot("2b-solve-no-api-key", ContentView(model: model))
+
+    model.showForScreenshots(registered: true, phase: .thinking, workspace: Self.workspace(), photo: TestImages.image())
+    try await shoot("3b-solve-solving", ContentView(model: model))
+
+    model.showForScreenshots(registered: true, session: true, paused: true)
+    try await shoot("3c-solve-paused", ContentView(model: model))
 
     model.showForScreenshots(registered: true, workspace: Self.workspace(), photo: TestImages.image())
     try await shoot("3-solve-math", ContentView(model: model))
