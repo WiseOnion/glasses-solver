@@ -5,7 +5,6 @@ import UIKit
 /// first. A utility list, not a chat.
 struct HistoryView: View {
   let model: AppModel
-  @Environment(\.dismiss) private var dismiss
   @State private var confirmClear = false
 
   enum Route: Hashable {
@@ -17,6 +16,7 @@ struct HistoryView: View {
     let route: Route
     let date: Date
     let subject: String
+    let symbol: String
     let topic: String
     let isLive: Bool
     var id: Route { route }
@@ -39,13 +39,13 @@ struct HistoryView: View {
       let entries = store.entries(inSession: session.id)
       return Row(
         route: .session(session.id), date: session.started, subject: Self.subjectTitle(entries),
-        topic: Self.topic(entries), isLive: session.id == store.currentSessionID)
+        symbol: Self.subjectSymbol(entries), topic: Self.topic(entries), isLive: session.id == store.currentSessionID)
     }
     rows += store.solveButtonDays.map { day in
       let entries = store.solveButtonEntries(on: day)
       return Row(
         route: .solveButton(day), date: entries.last?.date ?? day, subject: Self.subjectTitle(entries),
-        topic: Self.topic(entries), isLive: false)
+        symbol: Self.subjectSymbol(entries), topic: Self.topic(entries), isLive: false)
     }
     return rows.sorted { $0.date > $1.date }
   }
@@ -82,27 +82,23 @@ struct HistoryView: View {
         }
       }
       .navigationTitle("History")
-      .navigationBarTitleDisplayMode(.inline)
+      .navigationBarTitleDisplayMode(.large)
       .navigationDestination(for: Route.self) { route in
         HistoryDetailView(model: model, route: route)
       }
       .toolbar {
-        ToolbarItem(placement: .cancellationAction) {
-          Button("Delete All", role: .destructive) { confirmClear = true }
+        ToolbarItem(placement: .topBarTrailing) {
+          Button("Clear All") { confirmClear = true }
             .disabled(store.entries.isEmpty)
         }
-        ToolbarItem(placement: .confirmationAction) {
-          Button("Done") { dismiss() }
-        }
       }
-      .alert("Delete All History?", isPresented: $confirmClear) {
+      .alert("Delete All?", isPresented: $confirmClear) {
         Button("Cancel", role: .cancel) {}
         Button("Delete", role: .destructive) { store.clear() }
       } message: {
-        Text("This cannot be undone.")
+        Text("This will permanently delete your saved history.")
       }
     }
-    .preferredColorScheme(.dark)
   }
 
   private func delete(_ route: Route) {
@@ -121,11 +117,22 @@ struct HistoryView: View {
     }
   }
 
-  /// What was solved, in a few words: the first answer's title, and how many more.
+  static func subjectSymbol(_ entries: [ConversationEntry]) -> String {
+    entries.first(where: { $0.subject != nil })?.subject == ClaudeClient.Subject.chemistry.rawValue
+      ? ClaudeClient.Subject.chemistry.symbol : ClaudeClient.Subject.math.symbol
+  }
+
+  /// What was solved: how many problems (or questions), then the first one's topic.
   static func topic(_ entries: [ConversationEntry]) -> String {
-    let titles = entries.compactMap(entryTitle)
-    guard let first = titles.first else { return entries.count == 1 ? "1 answer" : "\(entries.count) answers" }
-    return titles.count > 1 ? "\(first) + \(titles.count - 1) more" : first
+    let solved = entries.filter { !$0.prompt.hasPrefix("Check") && $0.answer != nil }
+    let questions = solved.reduce(0) { $0 + AppModel.questions(in: $1.answer ?? "").count }
+    let isChemistry = solved.contains { $0.subject == ClaudeClient.Subject.chemistry.rawValue }
+    let count =
+      isChemistry
+      ? (questions == 1 ? "1 question" : "\(questions) questions")
+      : (solved.count == 1 ? "1 problem" : "\(solved.count) problems")
+    guard let first = solved.compactMap(entryTitle).first, !isChemistry else { return count }
+    return count + " · " + first
   }
 
   /// A few words for one answer: its saved title, the question it answered, or the questions on
@@ -155,17 +162,22 @@ private struct HistoryRow: View {
   let row: HistoryView.Row
 
   var body: some View {
-    HStack(alignment: .firstTextBaseline) {
+    HStack(spacing: 14) {
+      Image(systemName: row.symbol)
+        .font(.body)
+        .frame(width: 40, height: 40)
+        .background(Color(white: 0.16), in: Circle())
+        .accessibilityHidden(true)
       VStack(alignment: .leading, spacing: 3) {
         HStack(spacing: 6) {
+          Text(row.subject)
+            .font(.headline)
           if row.isLive {
             Circle()
-              .fill(Theme.accent)
+              .fill(Theme.connected)
               .frame(width: 6, height: 6)
               .accessibilityLabel("In progress")
           }
-          Text(row.subject)
-            .font(.headline)
         }
         Text(row.topic)
           .font(.subheadline)
@@ -203,13 +215,10 @@ private struct HistoryDetailView: View {
     }
   }
 
-  private var title: String {
+  private var date: Date {
     switch route {
-    case .session(let id):
-      let started = model.conversation.sessions.first { $0.id == id }?.started ?? .now
-      return HistoryView.subjectTitle(entries) + " · " + started.formatted(date: .omitted, time: .shortened)
-    case .solveButton(let day):
-      return HistoryView.dayTitle(day)
+    case .session(let id): model.conversation.sessions.first { $0.id == id }?.started ?? .now
+    case .solveButton(let day): day
     }
   }
 
@@ -222,17 +231,47 @@ private struct HistoryDetailView: View {
         .listRowBackground(Color.clear)
       }
       ForEach(entries) { entry in
-        HistoryEntryRow(
-          entry: entry, photo: image(for: entry),
-          onPhoto: {
-            photo = image(for: entry)
-            showPhoto = true
-          },
-          onWritten: { written = WrittenItem(entry: entry, photo: image(for: entry)) },
-          onReplay: { model.replay(entry) })
+        Section(Self.heading(entry)) {
+          HistoryEntryRow(
+            entry: entry, photo: image(for: entry),
+            onPhoto: {
+              photo = image(for: entry)
+              showPhoto = true
+            })
+          if let answer = entry.answer {
+            Button {
+              model.replay(entry)
+            } label: {
+              Label("Play Again", systemImage: "play.circle")
+            }
+            if !WrittenAnswer.parse(answer).isEmpty {
+              Button {
+                written = WrittenItem(entry: entry, photo: image(for: entry))
+              } label: {
+                HStack {
+                  Label("Written Answer", systemImage: "doc.text")
+                  Spacer()
+                  Image(systemName: "chevron.right")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(Theme.secondary)
+                }
+              }
+            }
+          }
+        }
       }
     }
-    .navigationTitle(title)
+    .toolbar {
+      ToolbarItem(placement: .principal) {
+        VStack(spacing: 0) {
+          Text(HistoryView.subjectTitle(entries))
+            .font(.headline)
+          Text(date.formatted(.dateTime.month(.wide).day()))
+            .font(.caption)
+            .foregroundStyle(Theme.secondary)
+        }
+      }
+    }
     .navigationBarTitleDisplayMode(.inline)
     .sheet(isPresented: $showPhoto) { PhotoDetailView(image: photo) }
     .fullScreenCover(item: $written) { item in
@@ -241,6 +280,19 @@ private struct HistoryDetailView: View {
         title: HistoryView.entryTitle(item.entry) ?? item.entry.prompt,
         onReplay: { model.replay(item.entry) })
     }
+  }
+
+  /// "Problem 4", "Check problem 4", or a chemistry page's questions.
+  static func heading(_ entry: ConversationEntry) -> String {
+    if let label = entry.answer.flatMap({ Speaker.problemLabel(in: $0.components(separatedBy: "\n").first ?? "") }),
+      !entry.prompt.hasPrefix("Check"), entry.subject == ClaudeClient.Subject.math.rawValue
+    {
+      return "Problem \(label)"
+    }
+    if entry.subject == ClaudeClient.Subject.chemistry.rawValue, let title = HistoryView.entryTitle(entry) {
+      return title
+    }
+    return entry.prompt
   }
 
   private func image(for entry: ConversationEntry) -> UIImage? {
@@ -252,8 +304,6 @@ private struct HistoryEntryRow: View {
   let entry: ConversationEntry
   let photo: UIImage?
   let onPhoto: () -> Void
-  let onWritten: () -> Void
-  let onReplay: () -> Void
 
   var body: some View {
     HStack(alignment: .top, spacing: 12) {
@@ -286,23 +336,14 @@ private struct HistoryEntryRow: View {
             .font(.caption2)
             .foregroundStyle(.orange)
         }
-        if let answer = entry.answer {
-          HStack(spacing: 20) {
-            if !WrittenAnswer.parse(answer).isEmpty {
-              Button("Written Answer", action: onWritten)
-            }
-            Button("Play Again", action: onReplay)
-          }
-          .font(.subheadline)
-          .buttonStyle(.borderless)
-        }
       }
     }
     .padding(.vertical, 6)
   }
 
   private var heading: String {
-    (HistoryView.entryTitle(entry) ?? entry.prompt) + " · " + entry.date.formatted(date: .omitted, time: .shortened)
+    let title = entry.prompt.hasPrefix("Check") ? nil : HistoryView.entryTitle(entry)
+    return (title.map { $0 + " · " } ?? "") + entry.date.formatted(date: .omitted, time: .shortened)
   }
 
   /// The result in a line: the answer or check result, or a chemistry page's first answer.

@@ -350,9 +350,19 @@ struct WrittenAnswerScreen: View {
             .font(.headline)
             .foregroundStyle(.white)
         }
-        ToolbarItem(placement: .confirmationAction) {
-          Button("Done") { dismiss() }
-            .foregroundStyle(.white)
+        ToolbarItem(placement: .topBarLeading) {
+          Button {
+            dismiss()
+          } label: {
+            Image(systemName: "chevron.left")
+              .font(.body.weight(.semibold))
+          }
+          .accessibilityLabel("Back")
+        }
+        if let model {
+          ToolbarItem(placement: .topBarTrailing) {
+            Button("Stop", systemImage: "stop.circle") { model.stopSpeaking() }
+          }
         }
       }
       .sheet(isPresented: $showPhoto) { PhotoDetailView(image: photo) }
@@ -365,20 +375,8 @@ struct WrittenAnswerScreen: View {
 
   @ViewBuilder
   private var header: some View {
-    if photo != nil || !subtitle.isEmpty {
+    if !subtitle.isEmpty {
       HStack(alignment: .center, spacing: 12) {
-        if let photo {
-          Button {
-            showPhoto = true
-          } label: {
-            Image(uiImage: photo)
-              .resizable()
-              .scaledToFill()
-              .frame(width: 44, height: 44)
-              .clipShape(RoundedRectangle(cornerRadius: 8))
-          }
-          .accessibilityLabel("Photo. Opens it full screen.")
-        }
         Text(subtitle)
           .font(.subheadline)
           .foregroundStyle(Color(white: 0.62))
@@ -401,10 +399,8 @@ struct WrittenAnswerScreen: View {
       return "Solving…"
     default: break
     }
-    if model.subject == .chemistry { return "Chemistry" }
-    guard let current = model.currentProblem, let space = model.workspace else { return "Math 131" }
-    return space.labels.count > 1
-      ? "Problem \(current.label) · \(space.index + 1) of \(space.labels.count)" : "Problem \(current.label)"
+    guard model.subject == .math, let space = model.workspace, space.labels.count > 1 else { return "Answer" }
+    return "Answer · \(space.index + 1) of \(space.labels.count)"
   }
 
   private var subtitle: String {
@@ -488,38 +484,74 @@ struct WrittenAnswerScreen: View {
 
   @ViewBuilder
   private var controls: some View {
-    if let model {
-      HStack(spacing: 0) {
-        if model.subject == .math {
-          let space = model.workspace
-          ControlButton(title: "Previous", symbol: "chevron.left") { model.moveProblem(by: -1) }
-            .disabled((space?.index ?? 0) == 0)
-          ControlButton(title: "Explain", symbol: "text.bubble") { model.explainCurrentProblem() }
-          ControlButton(title: "Check", symbol: "checkmark.seal") { model.checkCurrentProblem() }
-            .disabled(model.isChecking)
-          ControlButton(title: "Repeat", symbol: "arrow.counterclockwise") { model.repeatAnswer() }
-          ControlButton(title: "Stop", symbol: "stop.fill") { model.stopSpeaking() }
-          ControlButton(title: "Next", symbol: "chevron.right") { model.moveProblem(by: 1) }
-            .disabled(space.map { $0.index >= $0.labels.count - 1 } ?? true)
-        } else {
-          ControlButton(title: "Previous", symbol: "chevron.left") { model.replayQuestion(by: -1) }
-          ControlButton(title: "Repeat", symbol: "arrow.counterclockwise") { model.repeatWriteLine() }
-          ControlButton(title: "Stop", symbol: "stop.fill") { model.stopSpeaking() }
-          ControlButton(title: "Next", symbol: "chevron.right") { model.replayQuestion(by: 1) }
+    VStack(spacing: 10) {
+      if let photo {
+        HStack {
+          Button {
+            showPhoto = true
+          } label: {
+            Image(uiImage: photo)
+              .resizable()
+              .scaledToFill()
+              .frame(width: 64, height: 64)
+              .clipShape(RoundedRectangle(cornerRadius: 8))
+          }
+          .accessibilityLabel("Photo. Opens it full screen.")
+          Spacer()
         }
+        .padding(.horizontal, 20)
       }
-      .padding(.horizontal, 8)
-      .padding(.vertical, 6)
-      .overlay(alignment: .top) { Rectangle().fill(Color(white: 0.14)).frame(height: 0.5) }
-    } else if let onReplay = saved?.onReplay {
-      Button(action: onReplay) {
-        Label("Play Again", systemImage: "speaker.wave.2")
-          .frame(maxWidth: .infinity, minHeight: 44)
+      if let model {
+        VStack(spacing: 0) {
+          HStack(spacing: 0) {
+            if model.subject == .math {
+              ControlButton(title: "Explain", symbol: "text.bubble") { model.explainCurrentProblem() }
+              ControlButton(title: "Repeat", symbol: "arrow.counterclockwise") { model.repeatAnswer() }
+              ControlButton(title: "Check", symbol: "checkmark.circle") { model.checkCurrentProblem() }
+                .disabled(model.isChecking)
+            } else {
+              ControlButton(title: "Repeat", symbol: "arrow.counterclockwise") { model.repeatWriteLine() }
+            }
+          }
+          HStack {
+            Button {
+              if model.subject == .math { model.moveProblem(by: -1) } else { model.replayQuestion(by: -1) }
+            } label: {
+              Label("Previous", systemImage: "chevron.left")
+                .frame(minHeight: 44)
+            }
+            .disabled(model.subject == .math && (model.workspace?.index ?? 0) == 0)
+            Spacer()
+            Button {
+              if model.subject == .math { model.moveProblem(by: 1) } else { model.replayQuestion(by: 1) }
+            } label: {
+              HStack(spacing: 6) {
+                Text("Next")
+                Image(systemName: "chevron.right")
+              }
+              .frame(minHeight: 44)
+            }
+            .disabled(model.subject == .math && (model.workspace.map { $0.index >= $0.labels.count - 1 } ?? true))
+          }
+          .font(.subheadline)
+          .foregroundStyle(Color(white: 0.8))
+          .padding(.horizontal, 20)
+        }
+        .padding(.vertical, 6)
+        .background(Color(white: 0.07), in: RoundedRectangle(cornerRadius: 16))
+        .padding(.horizontal, 12)
+        .padding(.bottom, 4)
+      } else if let onReplay = saved?.onReplay {
+        Button(action: onReplay) {
+          Label("Play Again", systemImage: "play.circle")
+            .frame(maxWidth: .infinity, minHeight: 44)
+        }
+        .buttonStyle(.bordered)
+        .padding(.horizontal, 20)
+        .padding(.bottom, 8)
       }
-      .buttonStyle(.bordered)
-      .padding(.horizontal, 20)
-      .padding(.vertical, 8)
     }
+    .padding(.top, 10)
   }
 }
 
