@@ -108,11 +108,15 @@ struct SolveView: View {
             .disabled(model.isBusy)
             .padding(.top, 18)
         }
-        Spacer()
-        center
-          .frame(maxWidth: .infinity)
-        Spacer()
-        bottom
+        if model.isRegistered {
+          Spacer()
+          center
+            .frame(maxWidth: .infinity)
+          Spacer()
+          bottom
+        } else {
+          setup
+        }
       }
       .padding(.horizontal, 20)
       .padding(.bottom, 8)
@@ -189,35 +193,60 @@ struct SolveView: View {
     return model.subject == .math ? "Look at a problem" : "Look at the page"
   }
 
-  @ViewBuilder
   private var control: some View {
-    if model.isRegistered {
-      Button {
-        Task { await model.solve() }
-      } label: {
-        ZStack {
-          Circle()
-            .fill(Color(.tertiarySystemFill))
-          Circle()
-            .strokeBorder(Color(.separator), lineWidth: 1)
-          if model.phase != .idle {
-            ProgressView()
-          } else {
-            Image(systemName: "camera")
-              .font(.system(size: 22, weight: .regular))
-              .foregroundStyle(solveEnabled ? Color.primary : Color.secondary)
-          }
+    Button {
+      Task { await model.solve() }
+    } label: {
+      ZStack {
+        Circle()
+          .fill(Color(.tertiarySystemFill))
+        Circle()
+          .strokeBorder(Color(.separator), lineWidth: 1)
+        if model.phase != .idle {
+          ProgressView()
+        } else {
+          Image(systemName: "camera")
+            .font(.system(size: 22, weight: .regular))
+            .foregroundStyle(solveEnabled ? Color.primary : Color.secondary)
         }
-        .frame(width: 68, height: 68)
       }
-      .buttonStyle(PressScaleStyle(scale: 0.92))
-      .disabled(!solveEnabled)
-      .accessibilityLabel("Solve")
-      .accessibilityHint("Takes a photo with your glasses and solves it")
-    } else {
-      Button("Connect") { model.connectGlasses() }
-        .buttonStyle(.bordered)
-        .disabled(model.registrationState == .registering)
+      .frame(width: 68, height: 68)
+    }
+    .buttonStyle(PressScaleStyle(scale: 0.92))
+    .disabled(!solveEnabled)
+    .accessibilityLabel("Solve")
+    .accessibilityHint("Takes a photo with your glasses and solves it")
+  }
+
+  // MARK: - Setup: before the glasses are connected (after Meta's CameraAccess sample)
+
+  private var setup: some View {
+    VStack(alignment: .leading, spacing: 0) {
+      Spacer()
+      Text("Solve with your glasses")
+        .font(.title2.weight(.semibold))
+      VStack(alignment: .leading, spacing: 20) {
+        GlassesTip(symbol: "camera", title: "Press capture", text: "Your glasses take a photo and say the answer.")
+        GlassesTip(symbol: "hand.tap", title: "Double-tap the touchpad", text: "Hear how to get there.")
+        GlassesTip(symbol: "checkmark.circle", title: "Double-press capture", text: "Check an answer or your own work.")
+      }
+      .padding(.top, 28)
+      Spacer()
+      Text("The Meta AI app opens to confirm the connection.")
+        .font(.footnote)
+        .foregroundStyle(.secondary)
+        .frame(maxWidth: .infinity)
+        .multilineTextAlignment(.center)
+      Button {
+        model.connectGlasses()
+      } label: {
+        Text(model.registrationState == .registering ? "Connecting…" : "Connect Glasses")
+          .frame(maxWidth: .infinity)
+      }
+      .buttonStyle(.borderedProminent)
+      .controlSize(.large)
+      .disabled(model.registrationState == .registering)
+      .padding(.top, 12)
     }
   }
 
@@ -305,6 +334,32 @@ struct SolveView: View {
     guard !questions.isEmpty else { return nil }
     let names = questions.map(\.label).prefix(6).joined(separator: ", ")
     return ("Last page", questions.count == 1 ? "Question \(names)" : "Questions \(names)")
+  }
+}
+
+/// One thing the glasses do, for the setup screen.
+struct GlassesTip: View {
+  let symbol: String
+  let title: String
+  let text: String
+
+  var body: some View {
+    HStack(alignment: .top, spacing: 14) {
+      Image(systemName: symbol)
+        .font(.body)
+        .foregroundStyle(.secondary)
+        .frame(width: 24)
+        .accessibilityHidden(true)
+      VStack(alignment: .leading, spacing: 2) {
+        Text(title)
+          .font(.body.weight(.medium))
+        Text(text)
+          .font(.subheadline)
+          .foregroundStyle(.secondary)
+          .fixedSize(horizontal: false, vertical: true)
+      }
+    }
+    .accessibilityElement(children: .combine)
   }
 }
 
