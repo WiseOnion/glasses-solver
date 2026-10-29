@@ -197,7 +197,7 @@ final class GlassesIntegrationTests: XCTestCase {
     }
     XCTAssertTrue(answered, "the photo wasn't answered")
     try await Task.sleep(for: .seconds(1))
-    XCTAssertEqual(Self.count("solve: math photo ("), 1, "rapid presses started more than one photo")
+    XCTAssertEqual(Self.count("[solve] math photo ("), 1, "rapid presses started more than one photo")
     XCTAssertEqual(model.conversation.entries(inSession: sessionID).filter { $0.prompt == "Problem 1" }.count, 1)
     model.stopSession()
   }
@@ -249,11 +249,12 @@ final class GlassesIntegrationTests: XCTestCase {
     // Swipe: a replay, with no new photo.
     let back = await waitUntil(30) { model.shutterStatus == .active }
     XCTAssertTrue(back)
-    let photosBefore = Self.count("solve: start (")
+    let photosBefore = Self.count("[solve] start (")
+    XCTAssertGreaterThanOrEqual(photosBefore, 2, "the log didn't record the two photos")
     input.navLeft(source: MWDATMockDevice.InputSource.captouch)
     let replayed = await waitUntil(10) { DiagnosticsLog.shared.text.contains("replaying") }
     XCTAssertTrue(replayed, "the swipe didn't replay a question")
-    XCTAssertEqual(Self.count("solve: start ("), photosBefore, "a swipe took a photo")
+    XCTAssertEqual(Self.count("[solve] start ("), photosBefore, "a swipe took a photo")
     model.stopSession()
   }
 
@@ -376,11 +377,12 @@ final class GlassesIntegrationTests: XCTestCase {
     // Swipe: the second problem, from the same photo, with no new photo.
     let backForSwipe = await buttonBack()
     XCTAssertTrue(backForSwipe)
-    let photosBeforeSwipe = Self.count("solve: math photo (")
+    let photosBeforeSwipe = Self.count("[solve] math photo (")
+    XCTAssertGreaterThanOrEqual(photosBeforeSwipe, 1, "the log didn't record the photo")
     input.navRight(source: MWDATMockDevice.InputSource.captouch)
     let moved = await waitUntil(10) { model.workspace?.index == 1 }
     XCTAssertTrue(moved, "the swipe didn't move to problem 2")
-    XCTAssertEqual(Self.count("solve: math photo ("), photosBeforeSwipe, "a swipe took a photo")
+    XCTAssertEqual(Self.count("[solve] math photo ("), photosBeforeSwipe, "a swipe took a photo")
     let second = await waitUntil(60) { model.workspace?.current?.answer == "x equals 4." }
     XCTAssertTrue(second, "problem 2 wasn't prepared")
 
