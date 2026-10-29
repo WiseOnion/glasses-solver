@@ -43,6 +43,8 @@ jobs:
       # Ad-hoc signing ("-"): the SDK fails to start in an unsigned simulator app (SDK issue
       # #197). Tests run one at a time because the simulated glasses are shared.
       - name: Run tests
+        env:
+          TEST_RUNNER_SCREENSHOT_DIR: ${{ github.workspace }}/screens
         run: |
           set -o pipefail
           xcodebuild test \
@@ -56,6 +58,15 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             2>&1 | tee test.log | grep -E "Test Case|error:|failed|passed|TEST (SUCCEEDED|FAILED)|Diagnostics log|^[0-9:.]+ \[" || true
           grep -q "TEST SUCCEEDED" test.log
+
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: screens
+          path: screens
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Upload test results
         if: failure()

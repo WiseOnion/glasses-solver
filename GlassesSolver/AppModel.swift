@@ -577,6 +577,24 @@ final class AppModel {
     }
   }
 
+  /// For the screenshot tests: puts the screens in a given state with no glasses, Claude or
+  /// key involved.
+  func showForScreenshots(
+    registered: Bool, glassesAwake: Bool = true, session: Bool = false, subject: ClaudeClient.Subject = .math,
+    workspace: MathWorkspace? = nil, photo: UIImage? = nil, lastAnswer: String = ""
+  ) {
+    registrationState = registered ? .registered : .available
+    hasActiveDevice = glassesAwake
+    hasAPIKey = true
+    sessionActive = session
+    shutterStatus = session ? .active : .off
+    self.subject = subject
+    self.workspace = workspace
+    lastPhoto = photo
+    self.lastAnswer = lastAnswer
+    if workspace != nil { showWorkspace() }
+  }
+
   /// Chemistry's Check Sheet: one photo of a filled-in answer sheet, checked.
   func checkAnswerSheet() async {
     photoAction = .check

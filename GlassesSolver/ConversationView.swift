@@ -67,10 +67,17 @@ struct HistoryView: View {
     NavigationStack {
       List {
         if groups.isEmpty {
-          ContentUnavailableView(
-            "No History", systemImage: "clock",
-            description: Text("Solved problems appear here."))
+          VStack(spacing: 4) {
+            Text("No History")
+              .font(.headline)
+            Text("Solved problems will appear here.")
+              .font(.subheadline)
+              .foregroundStyle(.secondary)
+          }
+          .frame(maxWidth: .infinity)
+          .padding(.top, 120)
           .listRowBackground(Color.clear)
+          .listRowSeparator(.hidden)
         }
         ForEach(groups) { group in
           Section(group.title) {
@@ -81,8 +88,9 @@ struct HistoryView: View {
           }
         }
       }
+      .listStyle(.plain)
       .navigationTitle("History")
-      .navigationBarTitleDisplayMode(.large)
+      .navigationBarTitleDisplayMode(.inline)
       .navigationDestination(for: Route.self) { route in
         HistoryDetailView(model: model, route: route)
       }
@@ -164,14 +172,14 @@ private struct HistoryRow: View {
   var body: some View {
     HStack(spacing: 14) {
       Image(systemName: row.symbol)
-        .font(.body)
-        .frame(width: 40, height: 40)
-        .background(Color(.tertiarySystemFill), in: Circle())
+        .font(.subheadline)
+        .foregroundStyle(.secondary)
+        .frame(width: 24)
         .accessibilityHidden(true)
-      VStack(alignment: .leading, spacing: 3) {
+      VStack(alignment: .leading, spacing: 2) {
         HStack(spacing: 6) {
           Text(row.subject)
-            .font(.headline)
+            .font(.body)
           if row.isLive {
             Circle()
               .fill(Theme.connected)
@@ -272,6 +280,7 @@ private struct HistoryDetailView: View {
         }
       }
     }
+    .listStyle(.grouped)
     .navigationBarTitleDisplayMode(.inline)
     .sheet(isPresented: $showPhoto) { PhotoDetailView(image: photo) }
     .fullScreenCover(item: $written) { item in
