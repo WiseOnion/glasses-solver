@@ -1,0 +1,57 @@
+# A separate project for comparing math renderers. Not part of the app: its iOS 18 floor
+# (SwaTex needs it) doesn't touch GlassesSolver's deployment target.
+name: RendererEval
+
+options:
+  deploymentTarget:
+    iOS: "18.0"
+
+packages:
+  SwaTex:
+    url: https://github.com/PhraseHQ/SwaTex
+    revision: 2b38d0b9b9b9466ac1302ab93b37f3b90b8c74fc  # 0.5.0
+  SwiftMath:
+    url: https://github.com/mgriebling/SwiftMath
+    revision: 0b0222e102ba415b352cd29f334075622bd4e6aa
+  iosMath:
+    url: https://github.com/kostub/iosMath
+    revision: b2b19a892c54c5fd2b6cd87ee60d3339d5587550
+
+targets:
+  RendererEval:
+    type: application
+    platform: iOS
+    sources:
+      - App
+      # The app's written-answer page and KaTeX, exactly as shipped.
+      - path: ../../Math
+        type: folder
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: dev.glassessolver.renderereval
+        SWIFT_VERSION: "6.0"
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+    scheme:
+      testTargets:
+        - RendererEvalTests
+
+  RendererEvalTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - Tests
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_VERSION: "6.0"
+    dependencies:
+      - target: RendererEval
+      - package: SwaTex
+        product: SwaTex
+      - package: SwaTex
+        product: SwaTexRender
+      - package: SwiftMath
+        product: SwiftMath
+      - package: iosMath
+        product: iosMath
