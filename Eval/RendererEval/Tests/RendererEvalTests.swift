@@ -42,7 +42,7 @@ final class RendererEvalTests: XCTestCase {
           for: list, options: RenderOptions(fontSize: Self.fontSize, padding: 2), displayScale: 2)
         return Row(image: image.map { UIImage(cgImage: $0, scale: 2, orientation: .up) }, status: "ok", detail: "", milliseconds: 0)
       } catch {
-        return Row(image: nil, status: "error", detail: error.message, milliseconds: 0)
+        return Row(image: nil, status: "error", detail: String(describing: error), milliseconds: 0)
       }
     }
   }
