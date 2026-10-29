@@ -133,6 +133,11 @@ final class GlassesIntegrationTests: XCTestCase {
       XCTAssertNotNil(entry.photoFile, "press \(press): photo wasn't saved")
     }
 
+    // Two separate presses are two solves, never a check.
+    XCTAssertTrue(
+      model.conversation.entries(inSession: sessionID).allSatisfy { !$0.prompt.hasPrefix("Check") },
+      "a normal press was taken as a check")
+
     model.stopSession()
     XCTAssertFalse(model.sessionActive)
     XCTAssertNil(model.conversation.currentSessionID)
@@ -215,6 +220,8 @@ final class GlassesIntegrationTests: XCTestCase {
     let newPhoto = await waitUntil(60) { entries("Problem 1").count == 2 }
     XCTAssertTrue(newPhoto, "a press after the answer didn't take a new photo")
     XCTAssertEqual(model.workspace?.index, 0)
+    XCTAssertNil(model.workspace?.problems["2"]?.check, "the old photo's check result carried over")
+    XCTAssertEqual(entries("Check problem 2").count, 1, "a check ran again for the new photo")
     model.stopSession()
   }
 }

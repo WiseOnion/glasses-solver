@@ -736,3 +736,156 @@ final class MathReplyTests: XCTestCase {
     XCTAssertNil(ShutterButton.gesture(for: .button(.action, source: .actionButton, timestampMs: 1)))
   }
 }
+
+// MARK: - Audit: math replies, as streamed and as finished
+
+@MainActor
+final class MathReplyAuditTests: XCTestCase {
+  private let head = "Problems: 4\nProblem: 4\nQuestion: a limit\n"
+
+  /// However an answer is followed, it's complete only once the next tag has started (or a
+  /// reply Claude ended itself is over), never after its first line alone.
+  func testEveryWayAnAnswerEnds() {
+    let followers = ["Explain: why", "Own work: no", "Work:", "Write: x || x", "Problem: 5"]
+    for answer in ["Answer: x equals 4.\n", "Answer: f is increasing on 1 to 2,\nand decreasing on 2 to 3.\n"] {
+      let whole = answer.dropFirst("Answer: ".count).replacingOccurrences(of: ",\n", with: ", ")
+        .trimmingCharacters(in: .newlines)
+      XCTAssertNil(MathReply.parse(head + answer, complete: false).answerIfComplete, "said before it was over")
+      for follower in followers {
+        let tagOnly = String(follower.prefix(upTo: follower.firstIndex(of: ":")!)) + ":"
+        XCTAssertEqual(
+          MathReply.parse(head + answer + tagOnly, complete: false).answerIfComplete, whole, "followed by \(follower)")
+        XCTAssertEqual(MathReply.parse(head + answer + follower + "\n").answerIfComplete, whole)
+      }
+      // The reply ends right after the answer.
+      XCTAssertEqual(MathReply.parse(head + answer).answerIfComplete, whole)
+      XCTAssertEqual(AppModel.finalReply(.init(text: head + answer, stopReason: "end_turn")).answerIfComplete, whole)
+    }
+  }
+
+  /// Empty, malformed and partial replies never give an answer to say.
+  func testEmptyMalformedAndPartialReplies() {
+    XCTAssertEqual(MathReply.parse("").failure(asked: nil), .unparseable)
+    XCTAssertEqual(MathReply.parse("I'm not sure what this is.").failure(asked: nil), .unparseable)
+    XCTAssertNil(MathReply.parse(head + "Answer: x equ", complete: false).answerIfComplete)
+    XCTAssertNil(MathReply.parse(head + "Answer:", complete: false).answerIfComplete)
+    XCTAssertNil(MathReply.parse(head + "Answer:\nExplain: e").answerIfComplete, "an empty answer isn't an answer")
+    XCTAssertEqual(MathReply.parse(head + "Answer:\nExplain: e").failure(asked: nil), .noAnswer)
+  }
+
+  /// A reply that was cut off (out of room, refused, or dropped after its continuations) can
+  /// end partway through a line, so it's never read as finished.
+  func testACutOffReplyIsNeverTakenAsFinished() {
+    for stopReason in ["max_tokens", "refusal", nil] as [String?] {
+      let midLine = ClaudeClient.Answer(text: head + "Answer: x equ", stopReason: stopReason)
+      XCTAssertNil(AppModel.finalReply(midLine).answerIfComplete, "\(stopReason ?? "dropped"): half a line")
+      let midAnswer = ClaudeClient.Answer(text: head + "Answer: f is increasing on 1 to 2,\n", stopReason: stopReason)
+      XCTAssertNil(AppModel.finalReply(midAnswer).answerIfComplete, "\(stopReason ?? "dropped"): half an answer")
+      // An answer finished before the cut is kept.
+      let after = ClaudeClient.Answer(text: head + "Answer: x equals 4.\nExplain: Bec", stopReason: stopReason)
+      XCTAssertEqual(AppModel.finalReply(after).answerIfComplete, "x equals 4.")
+      XCTAssertNil(AppModel.finalReply(after).explanationIfComplete)
+      // A check cut off mid-verdict isn't said as one.
+      let verdict = ClaudeClient.Answer(text: "Verdict: Incorrect. The answer is x equ", stopReason: stopReason)
+      XCTAssertEqual(AppModel.verdict(in: verdict, request: "4"), "Unclear. The check didn't give a result.")
+    }
+    let finished = ClaudeClient.Answer(text: "Verdict: Correct. x equals 4.", stopReason: "end_turn")
+    XCTAssertEqual(AppModel.verdict(in: finished, request: "4"), "Correct. x equals 4.")
+  }
+
+  /// The example reply in Claude's math instructions, word for word, parses as intended.
+  func testTheInstructionsExampleReplyParses() throws {
+    let system = ClaudeClient.system
+    let start = try XCTUnwrap(system.range(of: "AN EXAMPLE REPLY, word for word\n"))
+    let rest = system[start.upperBound...]
+    let example = String(rest[..<(rest.range(of: "\n\n")?.lowerBound ?? rest.endIndex)])
+    let reply = AppModel.finalReply(.init(text: example, stopReason: "end_turn"))
+    XCTAssertNil(reply.failure(asked: nil))
+    XCTAssertEqual(reply.labels, ["2", "3"])
+    XCTAssertEqual(reply.label, "2")
+    XCTAssertEqual(
+      reply.answerIfComplete,
+      "f is increasing on negative infinity to negative 1, and 3 to infinity, and decreasing on negative 1 to 3. "
+        + "Local max of 6 at x equals negative 1, local min of negative 26 at x equals 3.")
+    XCTAssertTrue(reply.explanationIfComplete?.hasPrefix("The derivative factors") == true)
+    XCTAssertFalse(reply.ownWork)
+    XCTAssertEqual(reply.work.count, 8)
+    var problem = MathProblem()
+    problem.answer = reply.answer
+    problem.work = reply.work
+    let written = WrittenAnswer.parse(problem.written(label: "2"))
+    XCTAssertEqual(written.problems.first?.lines.count, 6)
+    XCTAssertEqual(written.problems.first?.lines.filter(\.boxed).map(\.number), [5, 6])
+  }
+
+  /// The other reply shapes the instructions ask for: a named problem, a re-solve, every kind
+  /// of verdict, an explanation alone, an unreadable photo, and lettered problems.
+  func testEveryOtherReplyShapeTheInstructionsAskFor() {
+    let named = MathReply.parse("Problems: 4, 5\nProblem: 5\nQuestion: q\nAnswer: c equals 2.\nExplain: e\nOwn work: no\nWork:\nWrite: c = 2 || c = 2")
+    XCTAssertNil(named.failure(asked: "5"))
+    XCTAssertEqual(named.answerIfComplete, "c equals 2.")
+    let resolve = MathReply.parse("Problem: 4\nAnswer: x equals 4.\nWork:\nWrite: x = 4 || x = 4")
+    XCTAssertEqual(resolve.answerIfComplete, "x equals 4.")
+    XCTAssertEqual(resolve.work, ["Write: x = 4 || x = 4"])
+    for verdict in [
+      "Correct. x equals 4.", "Incorrect. The answer is x equals 5, because the 7 wasn't distributed.",
+      "Unclear. The exponent can't be read.", "Correct. Your work is right.",
+      "Incorrect. Line 3 has a mistake: the 7 wasn't distributed to the second term.",
+    ] {
+      XCTAssertEqual(
+        AppModel.verdict(in: .init(text: "Verdict: \(verdict)", stopReason: "end_turn"), request: "4"), verdict)
+    }
+    XCTAssertEqual(MathReply.parse("Explain: First this. Then that.").explanationIfComplete, "First this. Then that.")
+    XCTAssertEqual(MathReply.parse("Problems:\nUnclear: problem 4 is cut off.").failure(asked: nil), .unreadable)
+    XCTAssertEqual(MathReply.parse("Problems: 5a, 5b\nProblem: 5a\nAnswer: 3.").labels, ["5a", "5b"])
+    XCTAssertEqual(MathReply.parse("Problems: 4, 5 and 6").labels, ["4", "5", "6"])
+    // A Write line whose LaTeX has its own colons stays one pen line.
+    XCTAssertEqual(
+      MathReply.parse("Work:\nWrite: f of x || f: [0, 2] \\to \\mathbb{R}").work, ["Write: f of x || f: [0, 2] \\to \\mathbb{R}"])
+  }
+
+  /// Own work, the answer, the explanation and the work all parse together.
+  func testAnOwnWorkReplyParses() {
+    let reply = MathReply.parse(
+      head + "Answer: x equals 4.\nExplain: Subtract 7, then divide by 3.\nOwn work: yes\nWork:\n"
+        + "Write: 3 x equals 12 || 3x = 12\nWrite: x equals 4 || x = 4\nMark: Draw a box around line 2.")
+    XCTAssertTrue(reply.ownWork)
+    XCTAssertEqual(reply.answerIfComplete, "x equals 4.")
+    XCTAssertEqual(reply.explanationIfComplete, "Subtract 7, then divide by 3.")
+    XCTAssertEqual(reply.work.count, 3)
+    XCTAssertFalse(MathReply.parse("Own work: no").ownWork)
+  }
+
+  /// What each math request actually sends: the instructions with the course notes, the
+  /// photo, and the problem asked for. The re-solve gets nothing of the first answer.
+  func testWhatEachMathRequestSends() throws {
+    let jpeg = Data([0xFF, 0xD8, 1, 2, 3])
+    func parts(_ request: ClaudeClient.MathRequest) throws -> (system: String, content: [[String: Any]]) {
+      let body = ClaudeClient.body(messages: request.messages, subject: .math)
+      let system = try XCTUnwrap((body["system"] as? [[String: Any]])?.first?["text"] as? String)
+      let messages = try XCTUnwrap(body["messages"] as? [[String: Any]])
+      XCTAssertEqual(messages.count, 1, "only one message: no earlier turns")
+      return (system, try XCTUnwrap(messages.first?["content"] as? [[String: Any]]))
+    }
+    let second = try parts(.photo(jpeg: jpeg, ask: ClaudeClient.problemAsk("2")))
+    XCTAssertTrue(second.system.contains("THIS COURSE: MATH 131, TEST 3"))
+    XCTAssertTrue(second.system.contains(ClaudeClient.courseNotes))
+    XCTAssertFalse(ClaudeClient.courseNotes.isEmpty)
+    let image = try XCTUnwrap(second.content.first?["source"] as? [String: String])
+    XCTAssertEqual(image["data"], jpeg.base64EncodedString(), "the same photo bytes")
+    XCTAssertEqual(second.content.last?["text"] as? String, "Solve problem 2 in this photo.")
+
+    let resolve = try parts(.photo(jpeg: jpeg, ask: ClaudeClient.resolveAsk("2")))
+    XCTAssertEqual(resolve.content.count, 2, "the photo and the request, nothing else")
+    XCTAssertEqual(resolve.content.last?["text"] as? String, "Re-solve problem 2 in this photo.")
+    // The first answer, its work, explanation and check exist only in the later comparison.
+    var first = MathProblem()
+    first.answer = "x equals 4."
+    first.work = ["Write: x = 4 || x = 4"]
+    first.explanation = "Because."
+    first.check = "Correct."
+    let compare = ClaudeClient.compareAsk(label: "2", question: "q", first: first.solution, second: "Answer: x equals 5.")
+    XCTAssertTrue(compare.contains("x equals 4.") && compare.contains("Write: x = 4"))
+    XCTAssertFalse(compare.contains("Because.") || compare.contains("Correct."), "no explanation or earlier check")
+  }
+}

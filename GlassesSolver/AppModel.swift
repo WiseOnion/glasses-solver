@@ -1198,7 +1198,7 @@ final class AppModel {
         },
         onRestartLine: { buffer.text = ClaudeClient.completeLines(buffer.text) })
       try Task.checkCancellation()
-      let parsed = MathReply.parse(reply.text)
+      let parsed = Self.finalReply(reply)
       apply(parsed, asked: label, in: id, final: true)
       finished(parsed, text: reply.text, asked: label, in: id, stopReason: reply.stopReason, sessionID: sessionID)
     } catch where Task.isCancelled {
@@ -1410,8 +1410,8 @@ final class AppModel {
         let reply = try await self.askClaude(
           .text(ClaudeClient.explainAsk(label: label, question: problem.question, solution: problem.solution)),
           simulated: "Explain: " + Self.simulatedExplanation)
-        let parsedExplanation = MathReply.parse(reply.text)
-        let explanation = parsedExplanation.explanation
+        let parsedExplanation = Self.finalReply(reply)
+        let explanation = parsedExplanation.explanationIfComplete ?? ""
         if explanation.isEmpty {
           Self.logUnusable(
             "explain-reply-no-explanation", reply: parsedExplanation, text: reply.text, stopReason: reply.stopReason,
@@ -1479,8 +1479,8 @@ final class AppModel {
         } else {
           let again = try await self.askClaude(
             .photo(jpeg: jpeg, ask: ClaudeClient.resolveAsk(label)), simulated: Self.simulatedMathReply(label: label))
-          let second = MathReply.parse(again.text)
-          if second.answer.isEmpty {
+          let second = Self.finalReply(again)
+          if second.answerIfComplete == nil {
             Self.logUnusable(
               "check-resolve-no-answer", reply: second, text: again.text, stopReason: again.stopReason, request: label)
             verdict = "Unclear. The problem couldn't be solved a second time."
@@ -1625,10 +1625,17 @@ final class AppModel {
         + "; tags: \(tags); starts: \"\(start)\"")
   }
 
+  /// A finished math reply. Only a reply Claude ended itself is complete: one that ran out of
+  /// room, was refused, or dropped after its continuations can end partway through a line, so
+  /// its last line is left out and a field it was still writing doesn't count as finished.
+  static func finalReply(_ reply: ClaudeClient.Answer) -> MathReply {
+    MathReply.parse(reply.text, complete: reply.stopReason == "end_turn" || reply.stopReason == "stop_sequence")
+  }
+
   /// A check reply's spoken verdict, or "Unclear" (logged) when it has none.
-  private static func verdict(in reply: ClaudeClient.Answer, request: String) -> String {
-    let parsed = MathReply.parse(reply.text)
-    guard let verdict = parsed.verdict else {
+  static func verdict(in reply: ClaudeClient.Answer, request: String) -> String {
+    let parsed = finalReply(reply)
+    guard let verdict = parsed.verdict, parsed.closed.contains("verdict") else {
       logUnusable("check-reply-no-verdict", reply: parsed, text: reply.text, stopReason: reply.stopReason, request: request)
       return "Unclear. The check didn't give a result."
     }
