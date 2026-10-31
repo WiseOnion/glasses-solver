@@ -642,6 +642,7 @@ final class Speaker: NSObject {
   /// Stops at once. `reason` goes in the log when an answer was being said, so an answer
   /// that ends early always says why.
   func stop(_ reason: String = "stopped") {
+    diag("audio", "speaker.stop: \(reason)")
     if sayingAnswer, isActive || answerOpen {
       diag("audio", "answer stopped before the end: \(reason) \(progressDescription)")
     }

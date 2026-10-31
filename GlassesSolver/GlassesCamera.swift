@@ -55,6 +55,7 @@ final class GlassesCamera {
   private let selector: AutoDeviceSelector
   private var session: DeviceSession?
   private let sessionTokens = ListenerTokenBag()
+  private let cameraTokens = ListenerTokenBag()
   private let lastSessionError = LockedValue<String?>(nil)
   private var lastSessionStop: ContinuousClock.Instant?
   private var activeCamera: Camera?
@@ -89,6 +90,7 @@ final class GlassesCamera {
       diag("camera", "session is \(existing.state); not replacing the hands-free session")
       throw GlassesError.sessionPaused
     }
+    diag("camera", "capture begins (session \(self.session.map { "\($0.state)" } ?? "none"); \(audioSnapshot()))")
     let session = try await startedSession()
 
     // The SDK pauses a `.raw` stream while the app is in the background and keeps an
@@ -111,9 +113,15 @@ final class GlassesCamera {
       throw GlassesError.cameraUnavailable
     }
     activeCamera = camera
+    // Logged until the next camera replaces it, so `.stopped` after camera.stop() is seen.
+    cameraTokens.clear()
+    camera.statePublisher.listen { state in
+      diag("camera", "camera state -> \(state)")
+    }.store(in: cameraTokens)
     defer {
       camera.stop()
       activeCamera = nil
+      diag("camera", "camera released (session \(session.state))")
     }
 
     let startedAt = ContinuousClock.now
@@ -130,7 +138,7 @@ final class GlassesCamera {
       diag(
         "camera",
         "photo FAILED after \(ContinuousClock.now - startedAt): \(ErrorDetail.describe(error)) "
-          + "(stream \(camera.stream.state), camera \(camera.state))")
+          + "(stream \(camera.stream.state), camera \(camera.state), session \(session.state); \(audioSnapshot()))")
       throw error
     }
   }
@@ -148,7 +156,12 @@ final class GlassesCamera {
   /// Ends the current session, if any. The next capture starts a new one.
   func endSession() {
     diag("session", "endSession() (state was \(session.map { "\($0.state)" } ?? "none"))")
-    if session != nil { lastSessionStop = .now }
+    if let old = session {
+      lastSessionStop = .now
+      // The stream finishes at `.stopped`, so this logs the old session's teardown and ends.
+      let states = old.stateStream()
+      Task { for await state in states { diag("session", "ended session state -> \(state)") } }
+    }
     session?.stop()
     session = nil
     sessionTokens.clear()
@@ -290,19 +303,24 @@ final class GlassesCamera {
     return try await withTimeout(seconds: 30, timeoutError: GlassesError.timedOut("taking the photo")) {
       try await shot.wait {
         stream.photoDataPublisher.listen { photo in
+          diag("camera", "photo data arrived: \(photo.data.count) bytes")
           shot.succeed(photo.data)
         }.store(in: tokens)
         stream.errorPublisher.listen { error in
-          diag("camera", "stream error: \(ErrorDetail.describe(error))")
+          diag("camera", "stream error: \(ErrorDetail.describe(error)) (stream \(stream.state); \(audioSnapshot()))")
           shot.fail(GlassesError.stream(error))
         }.store(in: tokens)
         stream.statePublisher.listen { state in
+          diag("camera", "stream state -> \(state)" + (state == .streaming ? " (\(audioSnapshot()))" : ""))
           switch state {
           case .streaming:
             guard shot.claimTrigger() else { return }
             Task {
               try? await Task.sleep(for: .seconds(1))
-              if !stream.capturePhoto(format: .jpeg) {
+              diag("camera", "capturePhoto requested (\(audioSnapshot()))")
+              let accepted = stream.capturePhoto(format: .jpeg)
+              diag("camera", "capturePhoto returned \(accepted)")
+              if !accepted {
                 shot.fail(GlassesError.captureRejected)
               }
             }
@@ -361,6 +379,7 @@ final class GlassesCamera {
               while stream.state != .stopped, ContinuousClock.now < deadline {
                 try? await Task.sleep(for: .milliseconds(100))
               }
+              diag("camera", "capturePhoto requested (standalone still)")
               photo.capturePhoto(resolution: .large, quality: .high)
             }
           case .starting:

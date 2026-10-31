@@ -1122,6 +1122,7 @@ final class AppModel {
     do {
       return try await camera.capturePhoto(highResolution: useHighResPhoto, keepSession: sessionActive)
     } catch let error as GlassesError where error.isFixedByFreshSession {
+      timing.mark("first photo attempt failed")
       // The retry is always a normal photo: the high-resolution still is experimental, and on
       // the user's glasses it failed every time ("Capture failed") while the normal one works.
       diag(

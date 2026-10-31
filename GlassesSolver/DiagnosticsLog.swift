@@ -1,3 +1,4 @@
+import AVFAudio
 import Foundation
 import MWDATCamera
 import MWDATCore
@@ -199,6 +200,17 @@ final class AppEventsLog: NSObject, MXMetricManagerSubscriber, @unchecked Sendab
       if hangs + cpu > 0 { diag("app", "exit report: \(hangs) hangs, \(cpu) CPU limit reports") }
     }
   }
+}
+
+/// The audio session as one log fragment: category, mode, outputs, inputs, and whether
+/// another app's audio is playing. Logged around camera start to see route changes.
+func audioSnapshot() -> String {
+  let session = AVAudioSession.sharedInstance()
+  let ports = { (list: [AVAudioSessionPortDescription]) in
+    list.isEmpty ? "none" : list.map { "\($0.portType.rawValue) \($0.portName)" }.joined(separator: ", ")
+  }
+  return "audio \(session.category.rawValue)/\(session.mode.rawValue), out [\(ports(session.currentRoute.outputs))], "
+    + "in [\(ports(session.currentRoute.inputs))], other audio \(session.isOtherAudioPlaying)"
 }
 
 /// Describes an error by type, case, and NSError domain/code, so a generic message such
