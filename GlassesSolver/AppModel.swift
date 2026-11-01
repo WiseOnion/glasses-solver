@@ -133,6 +133,9 @@ final class AppModel {
   }
   private(set) var lastPhoto: UIImage?
   private(set) var lastAnswer = ""
+  /// The last page answered (a solve, never a check of it): what a later photo or check is
+  /// compared with. `lastAnswer` is whatever was said last, a check included.
+  @ObservationIgnored private(set) var answerKey = ""
   /// The answer shown on the phone: the one arriving now (as it comes), or the last one.
   private(set) var shownAnswer = ""
   /// The problem and line being said now, to mark it in the written answer.
@@ -884,16 +887,19 @@ final class AppModel {
       if let apiKey, !testMode {
         // A photo taken soon after an answer goes as a follow-up to it, so a photo of the
         // listener's own work can be checked and continued from where they stopped.
+        // The page last answered, not a check of it: a check lists only the wrong answers, so
+        // a second check against it would have no key for the rest.
         let previous = lastAnswerTime.map { Date.now.timeIntervalSince($0) < Self.followUpWindow } == true
-          ? lastAnswer : nil
-        let stopNote = previous == nil ? nil : stoppedAt.map { Self.describeStop($0) }
+          && !answerKey.isEmpty ? answerKey : nil
+        // Where dictation was cut short only means something if what was cut was that page.
+        let stopNote = previous == nil || lastAnswer != answerKey ? nil : stoppedAt.map { Self.describeStop($0) }
         if previous != nil { diag("solve", "sending as a follow-up to the last answer. \(stopNote ?? "It was heard to the end.")") }
         reply = try await ClaudeClient(apiKey: apiKey, subject: subject, fast: fastAnswers).solve(
           photo: photo, prompt: prompt, previousAnswer: previous, stoppedAt: stopNote, action: action,
           onText: { [weak self] piece in self?.answerArrived(piece, runID: runID) },
           onRestartLine: { [weak self] in self?.speaker.discardUnfinishedLine() })
       } else {
-        let text = try await simulatedAnswer(photo: photo)
+        let text = try await simulatedAnswer(photo: photo, action: action)
         answerArrived(text, runID: runID)
         reply = ClaudeClient.Answer(text: text, stopReason: "end_turn")
       }
@@ -906,13 +912,14 @@ final class AppModel {
         case nil: .dropped
         default: .stopped
         }
-      let notice = cutOff.map { Speaker.cutOffNotice($0, answer: reply.text, itemWord: subject.itemWord) }
+      let (kept, notice) = Self.cutOffAnswer(reply.text, cutOff: cutOff, itemWord: subject.itemWord)
       speaker.finishAnswer(notice: notice)
-      let answer = [reply.text.trimmingCharacters(in: .whitespacesAndNewlines), notice]
+      let answer = [kept.trimmingCharacters(in: .whitespacesAndNewlines), notice]
         .compactMap { $0 }.joined(separator: "\n")
       lastAnswer = answer
       shownAnswer = answer
-      replayIndex = nil
+      replayPosition = nil
+      if action == .solve { answerKey = answer }
       lastAnswerStoppedAt = nil
       // A Test mode sample isn't a real answer, so it's never sent as one to follow up on.
       lastAnswerTime = testMode ? nil : .now
@@ -923,7 +930,7 @@ final class AppModel {
       conversation.add(
         prompt: prompt, photo: photo, answer: answer, error: nil, isTest: testMode, sessionID: chatSessionID)
     } catch where Task.isCancelled {
-      stoppedForNewPhoto(prompt: prompt, photo: photo, sessionID: chatSessionID)
+      stoppedForNewPhoto(prompt: prompt, photo: photo, sessionID: chatSessionID, action: action)
       return
     } catch {
       reportSolveFailure(error)
@@ -971,11 +978,14 @@ final class AppModel {
 
   /// A run stopped for a newer photo: files what arrived, and keeps it as the answer to
   /// follow up on if any of it was heard (the next run reads where from `speaker.progress`).
-  private func stoppedForNewPhoto(prompt: String, photo: Data, sessionID: UUID?) {
+  private func stoppedForNewPhoto(
+    prompt: String, photo: Data, sessionID: UUID?, action: ClaudeClient.PhotoAction
+  ) {
     let text = receivedText.trimmingCharacters(in: .whitespacesAndNewlines)
     diag("solve", "stopped for a newer photo, \(text.count) characters into the answer")
     if !text.isEmpty, speaker.progress != nil {
       lastAnswer = text
+      if action == .solve { answerKey = text }
       lastAnswerStoppedAt = nil
       lastAnswerTime = testMode ? nil : .now
     }
@@ -1051,7 +1061,7 @@ final class AppModel {
 
   /// Test mode's stand-in for Claude. Locked, it waits longer than iOS's ~30-second
   /// background allowance, so hearing the answer means the keep-alive worked.
-  private func simulatedAnswer(photo: Data) async throws -> String {
+  private func simulatedAnswer(photo: Data, action: ClaudeClient.PhotoAction = .solve) async throws -> String {
     let inBackground = UIApplication.shared.applicationState != .active
     let wait: Duration = inBackground ? .seconds(35) : Self.testModeWait
     diag("solve", "test mode: waiting \(wait) instead of calling Claude (app \(Self.appStateDescription))")
@@ -1060,7 +1070,27 @@ final class AppModel {
     let kilobytes = photo.count / 1024
     return "Test mode. The photo arrived, \(kilobytes) kilobytes"
       + (inBackground ? ", and the app stayed running with the phone locked. " : ". ")
-      + subjectSample
+      + (action == .check && subject == .chemistry ? Self.chemistryCheckSample : subjectSample)
+  }
+
+  /// Test mode's chemistry check of an answer sheet, in the shape the check rules ask for.
+  static let chemistryCheckSample = """
+    I can see questions 7 and 13.
+    Problem: 13
+    Answer: D, as in dog. You filled in C.
+    You got 1 of 2 right.
+    Done.
+    """
+
+  /// An answer as it's kept and said: one that was cut off loses its unfinished last line
+  /// (it may be half a question number or letter) and gets a notice naming the last
+  /// question that was complete.
+  static func cutOffAnswer(_ text: String, cutOff: Speaker.CutOff?, itemWord: String) -> (
+    text: String, notice: String?
+  ) {
+    guard let cutOff else { return (text, nil) }
+    let kept = ClaudeClient.completeLines(text)
+    return (kept, Speaker.cutOffNotice(cutOff, answer: kept, itemWord: itemWord))
   }
 
   /// Turns Save Photos to Photos on or off. Turning it on asks for add-only Photos access (the
@@ -2162,8 +2192,9 @@ final class AppModel {
 
   // MARK: - Chemistry: replaying the page
 
-  /// The question a swipe last replayed; nil until one does, after each new answer.
-  @ObservationIgnored private var replayIndex: Int?
+  /// The question a swipe last replayed, and the answer it's in: a position in an earlier
+  /// answer (one a newer photo replaced) doesn't count.
+  @ObservationIgnored private var replayPosition: (answer: String, index: Int)?
 
   /// Swipe in chemistry: says an already-answered question again, from the last answer, with
   /// no new request. Starts from the question heard last.
@@ -2179,13 +2210,14 @@ final class AppModel {
       return
     }
     let heard = speaker.progress.flatMap { progress in questions.firstIndex { $0.label == progress.problem } }
-    let from = replayIndex ?? heard ?? questions.count - 1
+    let replayed = replayPosition.flatMap { $0.answer == lastAnswer ? $0.index : nil }
+    let from = replayed ?? heard ?? questions.count - 1
     let target = from + step
     guard questions.indices.contains(target) else {
       speaker.announce(step > 0 ? "That's the last question." : "That's the first question.", ifBusy: .after)
       return
     }
-    replayIndex = target
+    replayPosition = (lastAnswer, target)
     diag("audio", "replaying \(Speaker.itemName(questions[target].label, itemWord: subject.itemWord))")
     speaker.speak(questions[target].text, isAnswer: true)
   }

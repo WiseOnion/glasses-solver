@@ -902,3 +902,95 @@ final class MathReplyAuditTests: XCTestCase {
     XCTAssertFalse(compare.contains("Because.") || compare.contains("Correct."), "no explanation or earlier check")
   }
 }
+
+// MARK: - Chemistry audit: one page, one request, played back locally
+
+@MainActor
+final class ChemistryAuditTests: XCTestCase {
+  /// A full page splits into its questions, in printed order, one answer each: 20 multiple
+  /// choice with a gap where one was cut off, then a worked part. Nothing from one question
+  /// runs into the next, and the opening line and "Done." belong to none.
+  func testAFullPageSplitsIntoItsQuestions() {
+    let numbers = (1...21).filter { $0 != 13 }
+    let choices = numbers.map { "Problem: \($0)\nAnswer: A, as in apple. Zinc. || \text{A}\quad \mathrm{Zn}" }
+    let worked = """
+      Problem: 22, part a
+      This is the mass of helium.
+      Write: mass equals, 2 point 2 8 grams || m = 2.28\text{ g}
+      Mark: Draw a box around line 1.
+      """
+    let answer = (["I can see questions 1 to 22. Question 13 is cut off, so retake the photo for that one."]
+      + choices + [worked, "Done."]).joined(separator: "\n")
+    let questions = AppModel.questions(in: answer)
+    XCTAssertEqual(questions.map(\.label), numbers.map(String.init) + ["22, part a"])
+    for question in questions.dropLast() {
+      XCTAssertEqual(question.text.components(separatedBy: "\n").count, 2, "question \(question.label) merged")
+    }
+    XCTAssertEqual(questions.last?.text, worked)
+    XCTAssertFalse(questions.contains { $0.text.contains("Done.") || $0.text.contains("cut off") })
+  }
+
+  /// A swipe counts from the question it last replayed only within the same answer. Once a
+  /// newer photo's answer replaces it, the swipe starts from that answer's own end.
+  func testASwipeAfterANewAnswerStartsFromThatAnswer() async throws {
+    let model = AppModel()
+    let pageA = (1...5).map { "Problem: \($0)\nAnswer: A, as in apple." }.joined(separator: "\n")
+    let pageB = "Problem: 10\nAnswer: B, as in boy.\nProblem: 11\nAnswer: C, as in cat."
+    model.showForScreenshots(registered: true, subject: .chemistry, lastAnswer: pageA)
+    DiagnosticsLog.shared.clear()
+    model.replayQuestion(by: -1)
+    model.replayQuestion(by: -1)
+    model.showForScreenshots(registered: true, subject: .chemistry, lastAnswer: pageB)
+    model.replayQuestion(by: -1)
+    try await Task.sleep(for: .milliseconds(200))  // log lines are added on the main actor
+    let replays = DiagnosticsLog.shared.text.components(separatedBy: "\n").filter { $0.contains("replaying") }
+    XCTAssertEqual(replays.count, 3)
+    XCTAssertTrue(replays[0].hasSuffix("replaying Question 4"))
+    XCTAssertTrue(replays[1].hasSuffix("replaying Question 3"))
+    XCTAssertTrue(replays[2].hasSuffix("replaying Question 10"), "swiped by page A's place: \(replays[2])")
+    model.stopSpeaking()
+  }
+
+  /// A cut-off answer keeps only its complete lines, and the notice names the last question
+  /// that was complete, not half of the next one's number ("1" of "12").
+  func testACutOffPageKeepsOnlyCompleteQuestions() {
+    let text = "I can see questions 7 to 12.\nProblem: 7\nAnswer: B, as in boy.\nProblem: 1"
+    let (kept, notice) = AppModel.cutOffAnswer(text, cutOff: .dropped, itemWord: "Question")
+    XCTAssertEqual(kept, "I can see questions 7 to 12.\nProblem: 7\nAnswer: B, as in boy.\n")
+    XCTAssertEqual(
+      notice,
+      "Stop. The connection dropped partway through question 7, so its last line may be unfinished. "
+        + "Take a new photo of question 7 and any after it.")
+    let whole = AppModel.cutOffAnswer(text + "2\nDone.", cutOff: nil, itemWord: "Question")
+    XCTAssertEqual(whole.text, text + "2\nDone.")
+    XCTAssertNil(whole.notice)
+  }
+
+  /// Check's sheet format matches the follow-up section's, as an "Answer:" line: said with
+  /// the bubble pause, repeatable with a double-tap, boxed on the phone. It never guesses at
+  /// an unreadable bubble, and it stays out of math's prompt.
+  func testChemistryCheckRules() {
+    let correction = "Answer: B, as in boy. You filled in C."
+    XCTAssertTrue(ClaudeClient.checkRules.contains(correction))
+    XCTAssertFalse(ClaudeClient.checkRules.contains("The answer is B"))
+    XCTAssertEqual(ClaudeClient.chemistrySystem.components(separatedBy: correction).count - 1, 2)
+    XCTAssertEqual(Speaker.answerLine(in: correction), "B, as in boy. You filled in C.")
+    XCTAssertTrue(ClaudeClient.checkRules.contains("never guess"))
+    XCTAssertTrue(ClaudeClient.checkRules.contains("can't check it without the questions"))
+    XCTAssertFalse(ClaudeClient.system.contains(ClaudeClient.checkRules))
+    XCTAssertTrue(ClaudeClient.chemistrySystem.contains(ClaudeClient.checkRules))
+  }
+
+  /// The instructor's rules are in the prompt a chemistry photo actually sends.
+  func testChemistryRequestCarriesTheCourseRules() throws {
+    let jpeg = try XCTUnwrap(ClaudeClient.preparedJPEG(from: TestImages.jpeg()))
+    let body = ClaudeClient.body(
+      jpeg: jpeg, prompt: ClaudeClient.Subject.chemistry.defaultPrompt, previousAnswer: nil, subject: .chemistry)
+    let system = try XCTUnwrap((body["system"] as? [[String: Any]])?.first?["text"] as? String)
+    for rule in ["B, as in boy", "highest principal quantum number", "DIMENSIONAL ANALYSIS", "5 ess 2"] {
+      XCTAssertTrue(system.contains(rule), rule)
+    }
+    XCTAssertFalse(system.contains(ClaudeClient.mathWorkRules))
+    XCTAssertFalse(system.contains(ClaudeClient.mathCheckRules))
+  }
+}

@@ -361,14 +361,35 @@ final class DictationTests: XCTestCase {
     XCTAssertTrue(speaker.queued.isEmpty)
   }
 
+  /// The notice comes last, and the unfinished line it cut off isn't said as if it were whole.
   func testCutOffNoticeIsSpokenLast() {
     let speaker = Speaker()
     defer { speaker.stop() }
     speaker.beginAnswer()
     speaker.continueAnswer("Problem: 3\nThis is a sum.\nWrite: x, plus")
     speaker.finishAnswer(notice: "Stop. Cut off.")
-    XCTAssertEqual(
-      speaker.queued.map(\.text), ["Problem 3.", "This is a sum.", "Start line 1.", "x, plus.", "Stop. Cut off."])
+    XCTAssertEqual(speaker.queued.map(\.text), ["Problem 3.", "This is a sum.", "Stop. Cut off."])
+  }
+
+  /// A chemistry page cut off mid-line: "Problem: 1" may be the start of "Problem: 12", and
+  /// "Answer: B, as in" the start of a longer line, so neither is said.
+  func testACutOffChemistryPageSaysOnlyWholeLines() {
+    let speaker = Speaker()
+    speaker.itemWord = "Question"
+    defer { speaker.stop() }
+    speaker.beginAnswer()
+    speaker.continueAnswer("Problem: 7\nAnswer: B, as in boy. Krypton core.\nProblem: 1")
+    speaker.finishAnswer(notice: "Stop.")
+    XCTAssertEqual(speaker.queued.map(\.text), ["Question 7.", "B, as in boy. Krypton core.", "Stop."])
+    speaker.beginAnswer()
+    speaker.continueAnswer("Problem: 7\nAnswer: B, as in")
+    speaker.finishAnswer(notice: "Stop.")
+    XCTAssertEqual(speaker.queued.map(\.text), ["Question 7.", "Stop."])
+    // An answer that ended normally still says its last line, which needs no line break.
+    speaker.beginAnswer()
+    speaker.continueAnswer("Problem: 7\nAnswer: B, as in boy.")
+    speaker.finishAnswer()
+    XCTAssertEqual(speaker.queued.map(\.text), ["Question 7.", "B, as in boy."])
   }
 
   func testANoticeDuringAnAnswerWaitsForTheEnd() {

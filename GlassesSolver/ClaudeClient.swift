@@ -337,7 +337,7 @@ struct ClaudeClient: Sendable {
     decides how long from how much there is to write.
     """
 
-  /// Checking finished work, for both subjects. It's asked for in the message
+  /// Checking finished work, in chemistry (math has `mathCheckRules`). It's asked for in the message
   /// (`PhotoAction.checkPrompt`), so the system prompt, and its cache, stay the same either way.
   static let checkRules = """
     WHEN THE MESSAGE ASKS YOU TO CHECK MY WORK
@@ -350,7 +350,12 @@ struct ClaudeClient: Sendable {
     distributed to the second term."), then "Mark: On line 3, circle the mistake." Don't \
     dictate a corrected solution.
     On a multiple-choice answer sheet, go through only the questions they got wrong: \
-    "Problem:" with the number, then "You filled in C. The answer is B, as in boy."
+    "Problem:" with the number, then "Answer: B, as in boy. You filled in C." Compare with \
+    your earlier answers when they're above; otherwise with the questions in the photo. If \
+    the photo shows only the answer sheet and you have neither, say you can't check it \
+    without the questions and stop. If you can't tell which bubble is filled in, or can't \
+    read their writing, say so for that question ("Problem: 9" then "I can't tell which \
+    bubble you filled in.") and don't count it as right or wrong; never guess.
     End with the count, "You got 4 of 6 right.", then "Done."
     """
 

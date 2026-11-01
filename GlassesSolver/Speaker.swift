@@ -922,10 +922,15 @@ final class Speaker: NSObject {
   }
 
   /// Speaks the rest of the answer, then `notice` (such as `cutOffNotice`) if there is one.
+  /// An answer cut off (a notice) drops its unfinished last line, which could be half a
+  /// question number or letter, rather than say it as if it were whole.
   func finishAnswer(notice: String? = nil) {
     guard answerOpen else { return }
     answerOpen = false
-    var rest = segments(forParagraph: unfinishedLine)
+    if notice != nil, !unfinishedLine.isEmpty {
+      diag("audio", "not saying the unfinished last line \"\(unfinishedLine.prefix(50))\" of a cut-off answer")
+    }
+    var rest = notice == nil ? segments(forParagraph: unfinishedLine) : []
     unfinishedLine = ""
     if let notice {
       rest += flushProse(beforeWrite: true)

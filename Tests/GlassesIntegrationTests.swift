@@ -313,6 +313,45 @@ final class GlassesIntegrationTests: XCTestCase {
     model.stopSession()
   }
 
+  /// A double press checks the answer sheet: the check is said and shown, but the page stays
+  /// the answer key, so a second check after fixing bubbles still has every answer to compare.
+  func testChemistryCheckKeepsThePageAsTheKey() async throws {
+    let model = AppModel()
+    let wasTestMode = model.testMode
+    let wasSubject = model.subject
+    model.testMode = true
+    model.subject = .chemistry
+    defer {
+      model.testMode = wasTestMode
+      model.subject = wasSubject
+    }
+    let ready = await waitUntil(10) { model.isRegistered && model.hasActiveDevice }
+    XCTAssertTrue(ready)
+    await model.startSession(prompt: model.subject.defaultPrompt)
+    let sessionID = try XCTUnwrap(model.conversation.currentSessionID)
+    let input = try XCTUnwrap(glasses).services.input
+    let buttonReady = await waitUntil(20) { model.shutterStatus == .active && !model.isBusy }
+    XCTAssertTrue(buttonReady)
+    try await Task.sleep(for: .seconds(1))
+
+    input.capture(pressType: MWDATMockDevice.CapturePressType.shortPress)
+    let solved = await waitUntil(60) { model.conversation.entries(inSession: sessionID).count == 1 && !model.isBusy }
+    XCTAssertTrue(solved, "the page wasn't answered")
+    let key = model.answerKey
+    XCTAssertTrue(key.contains("Problem: 7"), "the page didn't become the key: \(key)")
+    XCTAssertEqual(model.lastAnswer, key)
+
+    let back = await waitUntil(30) { model.shutterStatus == .active }
+    XCTAssertTrue(back)
+    try await Task.sleep(for: .seconds(1))
+    input.capture(pressType: MWDATMockDevice.CapturePressType.doublePress)
+    let checked = await waitUntil(60) { model.conversation.entries(inSession: sessionID).count == 2 && !model.isBusy }
+    XCTAssertTrue(checked, "the answer sheet wasn't checked")
+    XCTAssertTrue(model.lastAnswer.contains(AppModel.chemistryCheckSample), "the check isn't what's shown and replayed")
+    XCTAssertEqual(model.answerKey, key, "the check replaced the page as the key")
+    model.stopSession()
+  }
+
   /// Every gesture reaches the app as its own kind: capture short press, double press and
   /// hold, touchpad double-tap and swipes.
   func testEveryGestureReachesTheApp() async throws {
