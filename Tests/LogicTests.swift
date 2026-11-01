@@ -922,7 +922,8 @@ final class ChemistryAuditTests: XCTestCase {
     let answer = (["I can see questions 1 to 22. Question 13 is cut off, so retake the photo for that one."]
       + choices + [worked, "Done."]).joined(separator: "\n")
     let questions = AppModel.questions(in: answer)
-    XCTAssertEqual(questions.map(\.label), numbers.map(String.init) + ["22, part a"])
+    // "part a" becomes "part A", so it's said as the letter.
+    XCTAssertEqual(questions.map(\.label), numbers.map(String.init) + ["22, part A"])
     for question in questions.dropLast() {
       XCTAssertEqual(question.text.components(separatedBy: "\n").count, 2, "question \(question.label) merged")
     }
