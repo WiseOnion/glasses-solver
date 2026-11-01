@@ -912,11 +912,11 @@ final class ChemistryAuditTests: XCTestCase {
   /// runs into the next, and the opening line and "Done." belong to none.
   func testAFullPageSplitsIntoItsQuestions() {
     let numbers = (1...21).filter { $0 != 13 }
-    let choices = numbers.map { "Problem: \($0)\nAnswer: A, as in apple. Zinc. || \text{A}\quad \mathrm{Zn}" }
+    let choices = numbers.map { "Problem: \($0)\nAnswer: A, as in apple. Zinc. || \\text{A}\\quad \\mathrm{Zn}" }
     let worked = """
       Problem: 22, part a
       This is the mass of helium.
-      Write: mass equals, 2 point 2 8 grams || m = 2.28\text{ g}
+      Write: mass equals, 2 point 2 8 grams || m = 2.28\\text{ g}
       Mark: Draw a box around line 1.
       """
     let answer = (["I can see questions 1 to 22. Question 13 is cut off, so retake the photo for that one."]
