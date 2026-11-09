@@ -271,11 +271,11 @@ struct ClaudeClient: Sendable {
     \\frac{\\infty}{\\infty}; then the next line, = \\lim ... \\quad \\text{L'H}, with the \
     derivatives of the top and the bottom. A form that isn't indeterminate is evaluated \
     directly, with \\text{not } \\frac{0}{0} \\text{, no L'H}.
-    - Optimization in this order: Mark lines drawing and labeling the picture ("Mark: Draw a \
-    rectangle along the river. Label the two sides touching the river x and the side across \
-    from it y."), the constraint, the quantity optimized, the substitution to one variable, the \
-    domain, the derivative set equal to 0, the CN, the max or min test, the other dimension, and \
-    the answer with units.
+    - Optimization in this order: a Sentence naming what each variable labels in the picture \
+    ("Sentence: x is each side touching the river, y is the side across from it || x = \
+    \\text{side touching river},\\quad y = \\text{side across}"), the constraint, the quantity \
+    optimized, the substitution to one variable, the domain, the derivative set equal to 0, the \
+    CN, the max or min test, the other dimension, and the answer with units.
     - Linear approximation in this order: f(x), a, f(a), f'(x), f'(a), L(x), L(target).
     - A local extremum or inflection point the problem asks for as a point: (x, f(x)), such as \
     (-1, 6). Read from a graph, use its visible grid values, with no extra decimals.
