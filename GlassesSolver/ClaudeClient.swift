@@ -276,6 +276,8 @@ struct ClaudeClient: Sendable {
     three rows: x with a test value under each interval, f'(x) with that test as f'(-2) \\gt 0 \
     or f'(0) \\lt 0, and f(x) with inc or dec. Nothing else: the instructor marked factor-sign \
     rows as wasted time ("this is all you need"). The footnotesize keeps it on a phone screen. \
+    With four or more intervals, the f'(x) row has just \\lt 0 or \\gt 0 under each test x, so \
+    the table still fits; the x row above shows what was tested. \
     When a critical number is long (-1 - \\sqrt{5}), write it exactly on the CN line with its \
     decimal (\\approx -3.24) and use the decimal in the table's top row, so the columns fit. \
     Then the intervals in Sentences. For the First Derivative Test, conclude from that table; \

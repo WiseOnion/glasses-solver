@@ -61,6 +61,9 @@
   tr.more.boxed td { padding-top: 2px; }
 
   .katex { font-size: 1.2em; color: var(--ink); }
+  /* Tables (a sign chart) set closer, as a table is written on paper, so one with four
+     intervals still fits a phone. */
+  .katex .arraycolsep { width: 0.32em !important; }
   /* Cross-outs drawn thick enough to see at a glance. */
   .katex .cancel-pad svg line, .katex .cancel-lap svg line,
   .katex .cancel svg line, .katex svg line { stroke-width: 1.6px; }
@@ -210,8 +213,16 @@
       }
       var work = document.createElement('div');
       work.className = 'work';
-      var table = document.createElement('table');
-      table.setAttribute('role', 'presentation');
+      page.appendChild(work);
+      // One table per chain of work: a new equation starts its own, and only the lines that
+      // carry it on ("= ...") line up with it, as on paper. Unrelated equations never share a
+      // column, so one long left side can't push the rest of the work across the page.
+      var table = null;
+      function startTable() {
+        table = document.createElement('table');
+        table.setAttribute('role', 'presentation');
+        work.appendChild(table);
+      }
       problem.lines.forEach(function (line) {
         var more = line.more || [];
         // Every line stays on one row, never folded under itself (that reads like a fraction);
@@ -223,6 +234,7 @@
         }
         var aligned = line.right !== undefined;
         var hasMath = aligned || line.whole !== undefined;
+        if (!table || !aligned || line.left) startTable();
         var mathCells = [];
         var marks = (line.now ? ' now' : '') + (line.boxed && hasMath ? ' boxed' : '');
 
@@ -284,8 +296,6 @@
 
         if (line.boxed && mathCells.length) boxes.push({ work: work, cells: mathCells });
       });
-      work.appendChild(table);
-      page.appendChild(work);
       if (sideways[problemIndex]) work.scrollLeft = sideways[problemIndex];
     });
     // The page stays wherever it was scrolled: the line being read is only highlighted.
