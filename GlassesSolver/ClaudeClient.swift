@@ -131,17 +131,21 @@ struct ClaudeClient: Sendable {
     Own work: no
     Work:
     Write: f prime of x equals, 3 x squared, minus 6 x, minus 9 || f'(x) = 3x^2 - 6x - 9
+    Write: 0 equals, 3 times, x squared, minus 2 x, minus 3 || 0 = 3(x^2 - 2x - 3)
     Write: 0 equals, 3 times x minus 3, times x plus 1 || 0 = 3(x - 3)(x + 1)
-    Write: x equals negative 1, or x equals 3 || x = -1 \\quad\\text{or}\\quad x = 3
-    Write: f prime of negative 2 is 15, f prime of 0 is negative 9, f prime of 4 is 15 || f'(-2) \
-    = 15 > 0,\\quad f'(0) = -9 < 0,\\quad f'(4) = 15 > 0
-    Sentence: increasing on negative infinity to negative 1 and 3 to infinity, decreasing on \
-    negative 1 to 3 || \\text{Increasing on } (-\\infty, -1) \\cup (3, \\infty), \\text{ \
-    decreasing on } (-1, 3)
-    Write: f of negative 1 is 6, a local max, f of 3 is negative 26, a local min || f(-1) = 6 \
-    \\text{ (local max)},\\quad f(3) = -26 \\text{ (local min)}
-    Mark: Draw a box around line 5.
+    Write: x equals negative 1, or x equals 3, the critical numbers || x = -1 \\quad\\text{or}\\quad \
+    x = 3 \\quad \\text{CN}
+    Write: a sign chart, test points negative 2, 0 and 4, f prime is plus, 0 at negative 1, \
+    minus, 0 at 3, plus || \\begin{array}{rccccc} x & -2 & -1 & 0 & 3 & 4 \\\\ f'(x) & + & 0 & - \
+    & 0 & + \\end{array}
+    Sentence: increasing on negative infinity to negative 1 and 3 to infinity || \\text{inc on } \
+    (-\\infty, -1) \\cup (3, \\infty)
+    Sentence: decreasing on negative 1 to 3 || \\text{dec on } (-1, 3)
+    Write: local max at the point negative 1, 6, local min at the point 3, negative 26 || \
+    \\text{max } (-1, 6),\\quad \\text{min } (3, -26)
     Mark: Draw a box around line 6.
+    Mark: Draw a box around line 7.
+    Mark: Draw a box around line 8.
 
     \(mathCheckRules)
 
@@ -217,13 +221,16 @@ struct ClaudeClient: Sendable {
   /// How math's written work is tagged and typeset for the phone (it's never spoken).
   static let mathWorkRules = """
     PEN LINES
-    The Work is what a competent student writes on the test: the smallest amount of work that \
-    still clearly shows how the answer was found. Show the moves that earn the marks (factoring, \
-    distributing, substitution, differentiating, setting a derivative equal to 0, solving for \
-    critical numbers, sign analysis, endpoint values, a theorem's conditions, an optimization's \
-    equations, each L'Hopital step, a substitution into a formula) and skip arithmetic a teacher \
-    wouldn't need to see. Never add steps, mistakes or sloppiness to make it look human. Each \
-    pen line is on its own line and starts with a tag:
+    The Work is what a careful student writes on the test, running down the page with one \
+    meaningful move per line: distribute, combine like terms, factor, substitute, \
+    differentiate, set equal to 0, solve, simplify. Never squeeze several moves into one line \
+    as = ... = ... = .... Show the distribution, the combining of terms, the factoring that \
+    gives the critical-number equation, and every substitution before it's simplified (L(728) \
+    = 3 + \\frac{1}{1458}(728 - 729), then = 3 - \\frac{1}{1458}); also the sign analysis, \
+    endpoint values, a theorem's conditions, an optimization's equations and each L'Hopital \
+    step. Skip only bare arithmetic. Never add steps, mistakes or sloppiness to make it look \
+    human, and never explain in prose what a line already shows. Each pen line is on its own \
+    line and starts with a tag:
     "Write:" one line of the solution: a few plain words saying it (for a screen reader), then " \
     || " and the line in LaTeX: "Write: f prime of x equals, 3 x squared, minus 6 x, minus 9 || \
     f'(x) = 3x^2 - 6x - 9".
@@ -248,7 +255,32 @@ struct ClaudeClient: Sendable {
     \\underline{...} an intermediate result the problem asks for; \\cancel only a factor common \
     to the whole top and bottom, never a term of a sum. Keep restrictions such as x \\ne 2 \
     beside what they belong to. Keep each line on one line, never broken with \\\\ (the phone \
-    scrolls sideways for a long one). Never change the math to make it look nicer.
+    scrolls sideways for a long one); a \\\\ inside a sign chart's array is fine. Never change \
+    the math to make it look nicer.
+    HOW A STUDENT LAYS IT OUT
+    - A common factor that cancels: write the fraction with the factor pulled out, Mark it \
+    crossed out top and bottom, then the reduced fraction on the next line.
+    - Short labels in \\text{...}, only where they shorten the work: CN, inc, dec, max, min, CU, \
+    CD, L'H, MVT, DNE. Where f prime is undefined but f isn't defined either: x = -1 \\quad \
+    \\text{not in domain, not CN}.
+    - Sign analysis is a small sign chart on one Write line, as in the example: test points \
+    between the critical numbers, 0 where the derivative is 0, \\text{DNE} where it's undefined \
+    or f isn't defined. Then the intervals in a Sentence. The same for f double prime and \
+    concavity (CU, CD).
+    - L'Hopital: the limit with its form beside it, \\quad \\frac{0}{0} or \\quad \
+    \\frac{\\infty}{\\infty}; then the next line, = \\lim ... \\quad \\text{L'H}, with the \
+    derivatives of the top and the bottom. A form that isn't indeterminate is evaluated \
+    directly, with \\text{not } \\frac{0}{0} \\text{, no L'H}.
+    - Optimization in this order: Mark lines drawing and labeling the picture ("Mark: Draw a \
+    rectangle along the river. Label the two sides touching the river x and the side across \
+    from it y."), the constraint, the quantity optimized, the substitution to one variable, the \
+    domain, the derivative set equal to 0, the CN, the max or min test, the other dimension, and \
+    the answer with units.
+    - Linear approximation in this order: f(x), a, f(a), f'(x), f'(a), L(x), L(target).
+    - A local extremum or inflection point the problem asks for as a point: (x, f(x)), such as \
+    (-1, 6). Read from a graph, use its visible grid values, with no extra decimals.
+    - Box only final answers, never intermediate work. Two conclusions (inc and dec, CU and CD, \
+    the max and the min) go on separate lines, so each fits a phone screen.
     """
 
   /// Math's Check and Explain requests. They're asked for in the message, so the system

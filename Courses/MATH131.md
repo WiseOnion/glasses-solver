@@ -469,6 +469,50 @@ Worked:
 
 ---
 
+## Practice Test 3 (Canvas PDF, Modules 7–8)
+
+Source: the instructor's Practice Test 3 PDF. Instructions on the test: "Show all your work to receive
+full credit and simplify all answers. Use derivative notation where required." No key was posted; every
+answer below was worked by hand and checked with SymPy. The test mixes fill-in-the-blank definitions with
+worked problems that are split into lettered parts (a, b, c...), each answered on its own.
+
+- **1. Definitions (fill in the blank).** a. A point (c, f(c)) is a point of inflection if f″(c) = 0 or
+  doesn't exist and f changes **concavity** at c. b. f(c) is a local **maximum** if f(c) ≥ f(x) for all x
+  in some interval containing c. c. If f″(x) ≥ 0 for all x in I, f is concave **upward** on I.
+- **2. Linear approximation of ⁶√728.** f(x) = x^(1/6), a = 729 (3⁶ = 729), f(729) = 3,
+  f′(x) = 1/(6x^(5/6)), f′(729) = 1/(6·3⁵) = 1/1458. L(x) = 3 + (1/1458)(x − 729).
+  L(728) = 3 − 1/1458 = 4373/1458 ≈ 2.9993.
+- **3. River and 650 m of fence on three sides.** 2x + y = 650, A = x(650 − 2x) = 650x − 2x², domain
+  0 < x < 325. A′ = 650 − 4x = 0 gives CN x = 162.5; A″ = −4 < 0, so a max. y = 325.
+  **162.5 m × 325 m** (the 325 m side along the river), area **52,812.5 m²**.
+- **4. f(x) = (2x² − 5x + 3)/(x + 1).** f′(x) = 2(x² + 2x − 4)/(x + 1)². CN x = −1 ± √5; x = −1 is not in
+  the domain, so not a CN (it still splits the sign chart). f′: + on (−∞, −1 − √5), − on (−1 − √5, −1),
+  − on (−1, −1 + √5), + on (−1 + √5, ∞). Local max **(−1 − √5, −9 − 4√5)**, local min
+  **(−1 + √5, −9 + 4√5)**. The test asks for the extrema as points on the graph.
+- **5. Differentials.** a. g(t) = sec(t − 7t²) − 4: dg = (1 − 14t)sec(t − 7t²)tan(t − 7t²) dt.
+  b. p(w) = w⁵cos(9w²): dp = [5w⁴cos(9w²) − 18w⁶sin(9w²)] dw.
+- **6. L'Hôpital, if it applies.** a. (e^(4x) − 29)/(x² + 3x + 2) as x → ∞: ∞/∞ twice, then 8e^(4x) → **∞**.
+  b. w²/(e^(3w) − 5) as w → 0⁺: 0/(−4), **not indeterminate, no L'Hôpital**, limit **0**.
+  c. 2sinθcosθ/(π − θ) as θ → π: 0/0, then 2(cos²θ − sin²θ)/(−1) → **−2**.
+  d. s²e^(−s) as s → ∞: ∞·0, rewrite s²/e^s, ∞/∞ twice, 2/e^s → **0**.
+- **7. f(x) = x⁴ − 3x².** Domain (−∞, ∞). f′ = 4x³ − 6x = 2x(2x² − 3), CN x = 0, ±√6/2.
+  Dec on (−∞, −√6/2) ∪ (0, √6/2), inc on (−√6/2, 0) ∪ (√6/2, ∞). On [0.5, 2] only √6/2 is inside:
+  f(0.5) = −11/16, f(√6/2) = −9/4, f(2) = 4. **Absolute max 4 at x = 2, absolute min −9/4 at x = √6/2.**
+- **8. f(x) = x²/(x − 2).** Domain (−∞, 2) ∪ (2, ∞). From f′(x) = (x² − 4x)/(x − 2)², the quotient rule,
+  then factor out (x − 2) and cancel it once, gives f″(x) = 8/(x − 2)³. CD on (−∞, 2), CU on (2, ∞).
+  The concavity changes at x = 2, but f(2) is undefined, so **no point of inflection**.
+- **9. Read the graph** (a cubic, drawn on a −10 to 10 grid): local max **(−1, 6)**, local min **(1, 2)**,
+  CD on (−∞, 0), CU on (0, ∞). Read the grid values; don't invent decimals.
+- **10. MVT, f(x) = x³ − x on [0, 2].** A polynomial: continuous and differentiable, so MVT applies.
+  (f(2) − f(0))/(2 − 0) = 3; 3c² − 1 = 3 gives c = ±2√3/3, and only **c = 2√3/3 ≈ 1.15** is in (0, 2).
+- **11. House and 13,000 m², least fencing.** The test spells out the parts: a. primary F = 2x + y,
+  b. secondary xy = 13,000, c. F(x) = 2x + 13,000/x, d. domain x > 0, e. F′ = 2 − 13,000/x² = 0 gives
+  CN x = 10√65 (x = 0 isn't in the domain), f. F″ = 26,000/x³ > 0, so a min. y = 20√65.
+  **The sides touching the house are 10√65 ≈ 80.62 m and the side across is 20√65 ≈ 161.25 m, using
+  40√65 ≈ 322.49 m of fence.**
+
+---
+
 ## Still needed
 - 7.1: the instructor's lecture or notes (absolute and local extrema, closed interval method). From the
   first Week 10 video only: on a closed interval [a, b], find the critical numbers, then put them **and the
@@ -476,5 +520,5 @@ Worked:
   An endpoint can be an absolute extremum but never a local one (instructor, 7.2).
 - The instructor's lectures for 8.2 to 8.4, if any, for grading rules beyond the notes
   ("Module 7: Definitions, Guidelines and Procedures, and Theorems" and "Module 8 Lecture Notes").
-- Math 131 Practice Test 3 (PDF), and its key if there is one. It shows the format and how work is graded.
+- The instructor's key for Practice Test 3, if one is posted, to confirm how work is graded.
 - Anything in the instructor's own grading that differs from the textbook.

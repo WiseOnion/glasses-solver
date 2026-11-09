@@ -822,13 +822,18 @@ final class MathReplyAuditTests: XCTestCase {
         + "Local max of 6 at x equals negative 1, local min of negative 26 at x equals 3.")
     XCTAssertTrue(reply.explanationIfComplete?.hasPrefix("The derivative factors") == true)
     XCTAssertFalse(reply.ownWork)
-    XCTAssertEqual(reply.work.count, 8)
+    XCTAssertEqual(reply.work.count, 11)
     var problem = MathProblem()
     problem.answer = reply.answer
     problem.work = reply.work
     let written = WrittenAnswer.parse(problem.written(label: "2"))
-    XCTAssertEqual(written.problems.first?.lines.count, 6)
-    XCTAssertEqual(written.problems.first?.lines.filter(\.boxed).map(\.number), [5, 6])
+    XCTAssertEqual(written.problems.first?.lines.count, 8)
+    XCTAssertEqual(written.problems.first?.lines.filter(\.boxed).map(\.number), [6, 7, 8])
+    // The sign chart is one line of math, never split at a relation or a \\ inside its array.
+    let chart = try XCTUnwrap(written.problems.first?.lines[4].math)
+    XCTAssertTrue(chart.hasPrefix("\\begin{array}"))
+    XCTAssertNil(WrittenAnswer.alignedParts(chart))
+    XCTAssertEqual(WrittenAnswer.rows(chart).count, 1)
   }
 
   /// The other reply shapes the instructions ask for: a named problem, a re-solve, every kind
