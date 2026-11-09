@@ -38,6 +38,16 @@ the Week 10 module. **Where they differ, the instructor wins.** Every example an
   the sign, but it has to be shown.
 - **The conclusion is about f, not f′:** "h is decreasing on (−∞, 0)", never "h′ is decreasing".
 - **Open intervals with parentheses only**, never brackets, for increasing/decreasing.
+- **From the instructor's red pen on graded Worksheet 06 (7.1–7.2, 11/3/2026):**
+  - **No union for increasing/decreasing.** "Do not use union here": write "f is increasing on (−2, 0)
+    and (2, ∞)", not (−2, 0) ∪ (2, ∞).
+  - **The sign table needs only the intervals, a test x in each, the test in f′ with its sign, and the
+    conclusion.** Next to f′(−3) < 0, f′(−1) > 0, f′(1) < 0, f′(3) > 0 the instructor wrote "this is all
+    you need" and crossed out the rows for each factor's sign: "don't need all of this! don't waste time."
+    Layout on the worksheet: the intervals across the top, then rows x, f′(x), f(x) (inc/dec).
+  - **First Derivative Test step: "Do not write the table again."** Conclude from the table already drawn.
+  - **Give critical points as points** (x, f(x)) when the step asks for them; an approximate value is
+    labeled approximate (≈).
 - **The First Derivative Test is only for local extrema.** Don't cite it for increasing/decreasing (that
   comes from the sign test). Cite it for extrema: "By the First Derivative Test, f has a local maximum at
   x = −3", then the point.
@@ -496,7 +506,7 @@ worked problems that are split into lettered parts (a, b, c...), each answered o
   c. 2sinθcosθ/(π − θ) as θ → π: 0/0, then 2(cos²θ − sin²θ)/(−1) → **−2**.
   d. s²e^(−s) as s → ∞: ∞·0, rewrite s²/e^s, ∞/∞ twice, 2/e^s → **0**.
 - **7. f(x) = x⁴ − 3x².** Domain (−∞, ∞). f′ = 4x³ − 6x = 2x(2x² − 3), CN x = 0, ±√6/2.
-  Dec on (−∞, −√6/2) ∪ (0, √6/2), inc on (−√6/2, 0) ∪ (√6/2, ∞). On [0.5, 2] only √6/2 is inside:
+  Dec on (−∞, −√6/2) and (0, √6/2), inc on (−√6/2, 0) and (√6/2, ∞). On [0.5, 2] only √6/2 is inside:
   f(0.5) = −11/16, f(√6/2) = −9/4, f(2) = 4. **Absolute max 4 at x = 2, absolute min −9/4 at x = √6/2.**
 - **8. f(x) = x²/(x − 2).** Domain (−∞, 2) ∪ (2, ∞). From f′(x) = (x² − 4x)/(x − 2)², the quotient rule,
   then factor out (x − 2) and cancel it once, gives f″(x) = 8/(x − 2)³. CD on (−∞, 2), CU on (2, ∞).

@@ -831,7 +831,7 @@ final class MathReplyAuditTests: XCTestCase {
     XCTAssertEqual(written.problems.first?.lines.filter(\.boxed).map(\.number), [6, 7, 8])
     // The sign chart is one line of math, never split at a relation or a \\ inside its array.
     let chart = try XCTUnwrap(written.problems.first?.lines[4].math)
-    XCTAssertTrue(chart.hasPrefix("{\\footnotesize \\begin{array}{|c|c|c|c|}"))
+    XCTAssertTrue(chart.hasPrefix("{\\footnotesize \\begin{array}{c|c|c|c}"))
     XCTAssertNil(WrittenAnswer.alignedParts(chart))
     XCTAssertEqual(WrittenAnswer.rows(chart).count, 1)
   }

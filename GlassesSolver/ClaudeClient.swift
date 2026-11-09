@@ -139,13 +139,13 @@ struct ClaudeClient: Sendable {
     Write: x equals negative 1, or x equals 3, the critical numbers || x = -1 \\quad\\text{or}\\quad \
     x = 3 \\quad \\text{CN}
     Write: a sign chart, intervals negative infinity to negative 1, negative 1 to 3, and 3 to \
-    infinity, test values negative 2, 0 and 4, f prime is 15, negative 9 and 15, so plus, \
-    minus, plus, increasing, decreasing, increasing || {\\footnotesize \\begin{array}{|c|c|c|c|} \
-    \\hline \\text{Interval} & (-\\infty,-1) & (-1,3) & (3,\\infty) \\\\ \\hline \\text{Test } \
-    x & -2 & 0 & 4 \\\\ \\hline f'(x) & 15 & -9 & 15 \\\\ \\hline \\text{Sign} & + & - & + \\\\ \
-    \\hline f & \\text{inc} & \\text{dec} & \\text{inc} \\\\ \\hline \\end{array}}
+    infinity, test values negative 2, 0 and 4, f prime of negative 2 is positive, f prime of 0 \
+    is negative, f prime of 4 is positive, so increasing, decreasing, increasing || \
+    {\\footnotesize \\begin{array}{c|c|c|c} & (-\\infty,-1) & (-1,3) & (3,\\infty) \\\\ \\hline \
+    x & -2 & 0 & 4 \\\\ \\hline f'(x) & f'(-2) \\gt 0 & f'(0) \\lt 0 & f'(4) \\gt 0 \\\\ \\hline \
+    f(x) & \\text{inc} & \\text{dec} & \\text{inc} \\end{array}}
     Sentence: increasing on negative infinity to negative 1 and 3 to infinity || \\text{inc on } \
-    (-\\infty, -1) \\cup (3, \\infty)
+    (-\\infty, -1) \\text{ and } (3, \\infty)
     Sentence: decreasing on negative 1 to 3 || \\text{dec on } (-1, 3)
     Write: local max at the point negative 1, 6, local min at the point 3, negative 26 || \
     \\text{max } (-1, 6),\\quad \\text{min } (3, -26)
@@ -256,7 +256,8 @@ struct ClaudeClient: Sendable {
     w^{\\frac{4}{9}}. \\sin, \\cos, \\ln, \\log_b upright; \\sqrt{...} and \\sqrt[3]{...} over \
     the whole inside; \\left( ... \\right) around anything tall; \\begin{cases} for a piecewise \
     function; \\text{ cm}^2 and the like for units; \\quad\\text{or}\\quad between cases; \
-    intervals as (-\\infty, -2) \\cup (3, \\infty). A substitution can sit on its own line under \
+    intervals joined with "and", not a union, as the instructor marks it: (-\\infty, -2) \
+    \\text{ and } (3, \\infty). A substitution can sit on its own line under \
     the equation it goes into; use \\Rightarrow where an arrow makes the step clearer; \
     \\underline{...} an intermediate result the problem asks for; \\cancel only a factor common \
     to the whole top and bottom, never a term of a sum. Keep restrictions such as x \\ne 2 \
@@ -269,14 +270,15 @@ struct ClaudeClient: Sendable {
     - Short labels in \\text{...}, only where they shorten the work: CN, inc, dec, max, min, CU, \
     CD, L'H, MVT, DNE. Where f prime is undefined but f isn't defined either: x = -1 \\quad \
     \\text{not in domain, not CN}.
-    - Sign analysis is the textbook interval table, on one Write line, drawn as a grid exactly \
-    as in the example: {\\footnotesize \\begin{array}{|c|c|...|} with \\hline between rows, one \
-    column per test interval (split at the critical numbers and at any x where f isn't \
-    defined), and the rows Interval, Test x, f'(x) (the test value put into f', because the \
-    instructor gives no points for a sign without the value tested), Sign, and f (inc or dec). \
-    The footnotesize keeps it on a phone screen. Then the intervals in Sentences, and the First \
-    Derivative Test for extrema. For concavity the same table with an f''(x) row and CU or CD \
-    in the last row; an inflection point only where the concavity changes and f is defined.
+    - Sign analysis is the instructor's table, on one Write line, laid out exactly as in the \
+    example: {\\footnotesize \\begin{array}{c|c|...|c}, the test intervals across the top with \
+    the corner blank (split at the critical numbers and at any x where f isn't defined), then \
+    three rows: x with a test value under each interval, f'(x) with that test as f'(-2) \\gt 0 \
+    or f'(0) \\lt 0, and f(x) with inc or dec. Nothing else: the instructor marked factor-sign \
+    rows as wasted time ("this is all you need"). The footnotesize keeps it on a phone screen. \
+    Then the intervals in Sentences. For the First Derivative Test, conclude from that table; \
+    don't draw it again. For concavity the same table with f''(x) and CU or CD; an inflection \
+    point only where the concavity changes and f is defined.
     - L'Hopital: the limit with its form beside it, \\quad \\frac{0}{0} or \\quad \
     \\frac{\\infty}{\\infty}; then the next line, = \\lim ... \\quad \\text{L'H}, with the \
     derivatives of the top and the bottom. A form that isn't indeterminate is evaluated \
