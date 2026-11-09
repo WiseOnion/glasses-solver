@@ -276,6 +276,8 @@ struct ClaudeClient: Sendable {
     three rows: x with a test value under each interval, f'(x) with that test as f'(-2) \\gt 0 \
     or f'(0) \\lt 0, and f(x) with inc or dec. Nothing else: the instructor marked factor-sign \
     rows as wasted time ("this is all you need"). The footnotesize keeps it on a phone screen. \
+    When a critical number is long (-1 - \\sqrt{5}), write it exactly on the CN line with its \
+    decimal (\\approx -3.24) and use the decimal in the table's top row, so the columns fit. \
     Then the intervals in Sentences. For the First Derivative Test, conclude from that table; \
     don't draw it again. For concavity the same table with f''(x) and CU or CD; an inflection \
     point only where the concavity changes and f is defined.
@@ -289,8 +291,10 @@ struct ClaudeClient: Sendable {
     optimized, the substitution to one variable, the domain, the derivative set equal to 0, the \
     CN, the max or min test, the other dimension, and the answer with units.
     - Linear approximation in this order: f(x), a, f(a), f'(x), f'(a), L(x), L(target).
-    - A local extremum or inflection point the problem asks for as a point: (x, f(x)), such as \
-    (-1, 6). Read from a graph, use its visible grid values, with no extra decimals.
+    - Critical points, extrema and inflection points as points (x, f(x)), such as (-1, 6) or \
+    (0, 2\\sqrt[3]{2}), since the instructor corrects "critical numbers" to "points". Values \
+    exact, with any decimal beside them as \\approx 2.52: the instructor marked a bare 2.5 as \
+    only approximate. Read from a graph, use its visible grid values, with no extra decimals.
     - Box only final answers, never intermediate work. Two conclusions (inc and dec, CU and CD, \
     the max and the min) go on separate lines, so each fits a phone screen.
     """

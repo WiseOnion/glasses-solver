@@ -161,6 +161,32 @@ except possibly at c).
 - Exact values where possible (34/3, −19/2, −24/5). Decimals only where the problem needs them
   (inverse trig), or beside the exact value as "≈ −4.8".
 
+### Graded example: Worksheet 06 (7.1–7.2), 11/3/2026, scored 98
+The student's own graded paper, with the instructor's red pen. It shows what earns full marks and what
+loses points.
+
+**1a. f(x) = ∛((x² − 4)²) = (x² − 4)^(2/3).**
+- Step 1, domain: (−∞, ∞). **2/2.**
+- Step 2, f′ and the critical points. **10/10, "Good Job!"** The work that earned it:
+  f′(x) = (2/3)(x² − 4)^(−1/3)(2x), then f′(x) = 4x / (3(x² − 4)^(1/3)). f′(x) = 0 at x = 0.
+  f′ DNE where 3(x² − 4)^(1/3) = 0: x² − 4 = 0, (x + 2)(x − 2) = 0, x = ±2 (f is defined there, so they
+  count). Then f at each: f(−2) = 0, f(0) = (−4)^(2/3) = ∛16 = 2∛2, f(2) = 0. The instructor changed
+  the answer line's "Critical number(s)" to **"Points"**: (−2, 0), (0, 2∛2), (2, 0).
+- Step 3, increasing/decreasing. **5.5/6.** The table had the intervals (−∞, −2), (−2, 0), (0, 2),
+  (2, ∞) across the top and rows x (−3, −1, 1, 3), 4x, ∛(x² − 4), f′(x), f(x). The instructor circled
+  f′(−3) < 0, f′(−1) > 0, f′(1) < 0, f′(3) > 0 with **"this is all you need"** and crossed out the factor
+  rows: **"don't need all of this! don't waste time."** The answer "increasing on (−2, 0) ∪ (2, ∞)" lost
+  **0.5: "Do not use union here"**; write "(−2, 0) and (2, ∞)". Decreasing on (−∞, −2) and (0, 2).
+- Step 4, First Derivative Test ("Do not write the table again"). **2/3.** The student wrote local min 0
+  and local max "2.5"; the instructor wrote **"appr"** beside 2.5. The full answer: local minimum 0 at
+  (−2, 0) and (2, 0); local maximum 2∛2 ≈ 2.52 at (0, 2∛2). Give the exact value, with any decimal
+  marked ≈, and give the points.
+
+**1b. Absolute extrema on [−1, 1.4]. 6/7.** Endpoints and the critical number inside (x = 0):
+f(−1) = (−3)^(2/3) = ∛9 ≈ 2.08, f(0) = ∛16 = 2∛2 ≈ 2.52, f(1.4) = (1.96 − 4)^(2/3) = (−2.04)^(2/3) =
+∛4.1616 ≈ 1.61. Absolute max 2∛2 ≈ 2.52 at (0, 2∛2); absolute min ≈ 1.61 at (1.4, 1.61). The red pen
+doesn't say which point was lost; the safe form is the exact value first, then ≈, then the point.
+
 ---
 
 ## 7.3 Concavity, points of inflection, Second Derivative Test
