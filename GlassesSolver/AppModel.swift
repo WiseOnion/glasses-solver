@@ -822,22 +822,34 @@ final class AppModel {
     diag("solve", "start (app \(Self.appStateDescription), hands-free \(sessionActive), test mode \(testMode))")
 
     let photo: Data
+    // Whether the camera was opened, so a dropped photo refreshes the session only if it was used.
+    var captureStarted = false
     do {
       phase = .capturing
       // The written answer waits for the new one rather than showing the last as if it were it.
       shownAnswer = ""
       linePosition = nil
-      // A refresh started after the previous photo must finish before this one.
+      // A refresh started after the previous photo must finish before this one. Awaiting it
+      // doesn't stop for a cancel, so check before opening the camera.
       if let refresh = sessionRefreshTask {
         await refresh.value
         timing.mark("waited for the glasses to reconnect")
       }
+      try Task.checkCancellation()
+      captureStarted = true
       photo = try await captureWithRecovery()
       timing.mark("photo taken")
       try Task.checkCancellation()
       diag("solve", "photo received, \(photo.count) bytes; calling Claude")
     } catch where Task.isCancelled {
       diag("solve", "the photo was stopped for a newer one")
+      // The session has streamed once, and a second stream on it fails (SDK 1.0.0), so the
+      // newer photo gets a fresh one, as in math.
+      if sessionActive {
+        if captureStarted { startSessionRefresh(reason: "fresh camera for the next photo") }
+      } else {
+        camera.endSession()
+      }
       return
     } catch {
       phase = .idle
@@ -1275,20 +1287,29 @@ final class AppModel {
     diag("solve", "math photo (app \(Self.appStateDescription), hands-free \(sessionActive), test mode \(testMode))")
 
     let photo: Data
+    // Whether the camera was opened, so a dropped photo refreshes the session only if it was used.
+    var captureStarted = false
     do {
       phase = .capturing
-      // A refresh started after the previous photo must finish before this one.
+      // A refresh started after the previous photo must finish before this one. Awaiting it
+      // doesn't stop for a cancel, so check before opening the camera.
       if let refresh = sessionRefreshTask {
         await refresh.value
         timing.mark("waited for the glasses to reconnect")
       }
+      try Task.checkCancellation()
+      captureStarted = true
       photo = try await captureWithRecovery()
       timing.mark("photo taken")
       try Task.checkCancellation()
     } catch where Task.isCancelled {
       phase = .idle
       diag("solve", "the photo was dropped (a double press asked for Check, or a newer photo came)")
-      if sessionActive { startSessionRefresh(reason: "fresh camera for the next photo") } else { camera.endSession() }
+      if sessionActive {
+        if captureStarted { startSessionRefresh(reason: "fresh camera for the next photo") }
+      } else {
+        camera.endSession()
+      }
       return
     } catch {
       phase = .idle
