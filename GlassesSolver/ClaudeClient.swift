@@ -134,6 +134,7 @@ struct ClaudeClient: Sendable {
     Own work: no
     Work:
     Write: f prime of x equals, 3 x squared, minus 6 x, minus 9 || f'(x) = 3x^2 - 6x - 9
+    Write: underlined, f prime of x equals 0 || \\underline{f'(x) = 0}
     Write: 0 equals, 3 times, x squared, minus 2 x, minus 3 || 0 = 3(x^2 - 2x - 3)
     Write: 0 equals, 3 times x minus 3, times x plus 1 || 0 = 3(x - 3)(x + 1)
     Write: x equals negative 1, or x equals 3, the critical numbers || x = -1 \\quad\\text{or}\\quad \
@@ -149,9 +150,9 @@ struct ClaudeClient: Sendable {
     Sentence: decreasing on negative 1 to 3 || \\text{dec on } (-1, 3)
     Write: local max at the point negative 1, 6, local min at the point 3, negative 26 || \
     \\text{max } (-1, 6),\\quad \\text{min } (3, -26)
-    Mark: Draw a box around line 6.
     Mark: Draw a box around line 7.
     Mark: Draw a box around line 8.
+    Mark: Draw a box around line 9.
 
     \(mathCheckRules)
 
@@ -270,6 +271,13 @@ struct ClaudeClient: Sendable {
     - Short labels in \\text{...}, only where they shorten the work: CN, inc, dec, max, min, CU, \
     CD, L'H, MVT, DNE. Where f prime is undefined but f isn't defined either: x = -1 \\quad \
     \\text{not in domain, not CN}.
+    - Each new part of the work starts with a short underlined note on its own Write line, as a \
+    student labels their own paper and as in the example: \\underline{f'(x) = 0}, \
+    \\underline{f'(x)\\ \\text{DNE}}, \\underline{\\text{Points}}, \\underline{\\text{Endpoints}}, \
+    \\underline{f''(x) = 0}. Nothing else on that line; it starts with \\underline. The phone \
+    leaves a gap before each note, before and after a sign table, and after a boxed answer, so \
+    the parts stand apart. No other headings: a new problem or lettered part already gets its \
+    own heading from its Problem line.
     - Sign analysis is the instructor's table, on one Write line, laid out exactly as in the \
     example: {\\footnotesize \\begin{array}{c|c|...|c}, the test intervals across the top with \
     the corner blank (split at the critical numbers and at any x where f isn't defined), then \

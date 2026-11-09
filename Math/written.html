@@ -52,6 +52,7 @@
     margin: 0 -6px; padding: 4px 6px;   /* room for the box and the highlight's edges */
   }
   table { position: relative; z-index: 1; border-collapse: separate; border-spacing: 0; }
+  table.gap { margin-top: 18px; }
   /* Baselines, as TeX lines up an aligned block: the relation stays level even when one side
      has a fraction, and every cell in a row shares the same baseline. */
   td { padding: 5px 0; vertical-align: baseline; white-space: nowrap; }
@@ -218,11 +219,17 @@
       // carry it on ("= ...") line up with it, as on paper. Unrelated equations never share a
       // column, so one long left side can't push the rest of the work across the page.
       var table = null;
-      function startTable() {
+      function startTable(gap) {
         table = document.createElement('table');
         table.setAttribute('role', 'presentation');
+        if (gap) table.className = 'gap';
         work.appendChild(table);
       }
+      // A student leaves a gap where they move on to the next part: before their own
+      // underlined note (f'(x) = 0), before and after a sign table, and after a boxed answer.
+      var previous = null;
+      function isNote(line) { return /^\s*\\underline\{/.test(line.whole || ''); }
+      function isTable(line) { return /\\begin\{array\}/.test(line.whole || ''); }
       problem.lines.forEach(function (line) {
         var more = line.more || [];
         // Every line stays on one row, never folded under itself (that reads like a fraction);
@@ -234,7 +241,10 @@
         }
         var aligned = line.right !== undefined;
         var hasMath = aligned || line.whole !== undefined;
-        if (!table || !aligned || line.left) startTable();
+        var gap = previous !== null && (isNote(line) || isTable(line) || isTable(previous) ||
+          (previous.boxed && !line.boxed));
+        if (!table || !aligned || line.left || gap) startTable(gap);
+        previous = line;
         var mathCells = [];
         var marks = (line.now ? ' now' : '') + (line.boxed && hasMath ? ' boxed' : '');
 

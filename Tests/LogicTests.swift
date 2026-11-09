@@ -822,15 +822,20 @@ final class MathReplyAuditTests: XCTestCase {
         + "Local max of 6 at x equals negative 1, local min of negative 26 at x equals 3.")
     XCTAssertTrue(reply.explanationIfComplete?.hasPrefix("The derivative factors") == true)
     XCTAssertFalse(reply.ownWork)
-    XCTAssertEqual(reply.work.count, 11)
+    XCTAssertEqual(reply.work.count, 12)
     var problem = MathProblem()
     problem.answer = reply.answer
     problem.work = reply.work
     let written = WrittenAnswer.parse(problem.written(label: "2"))
-    XCTAssertEqual(written.problems.first?.lines.count, 8)
-    XCTAssertEqual(written.problems.first?.lines.filter(\.boxed).map(\.number), [6, 7, 8])
+    XCTAssertEqual(written.problems.first?.lines.count, 9)
+    XCTAssertEqual(written.problems.first?.lines.filter(\.boxed).map(\.number), [7, 8, 9])
+    // A student's own note starts a part: on its own line, starting with \underline, never
+    // split at its = (the page leaves a gap before it).
+    let note = try XCTUnwrap(written.problems.first?.lines[1].math)
+    XCTAssertTrue(note.hasPrefix("\\underline{"))
+    XCTAssertNil(WrittenAnswer.alignedParts(note))
     // The sign chart is one line of math, never split at a relation or a \\ inside its array.
-    let chart = try XCTUnwrap(written.problems.first?.lines[4].math)
+    let chart = try XCTUnwrap(written.problems.first?.lines[5].math)
     XCTAssertTrue(chart.hasPrefix("{\\footnotesize \\begin{array}{c|c|c|c}"))
     XCTAssertNil(WrittenAnswer.alignedParts(chart))
     XCTAssertEqual(WrittenAnswer.rows(chart).count, 1)
