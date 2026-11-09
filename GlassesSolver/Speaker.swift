@@ -217,8 +217,14 @@ final class Speaker: NSObject {
   /// When speech got stuck lately, for choosing how to recover.
   private var stalls: [Date] = []
   /// True from when iOS interrupts the app's audio (a call, Siri) until it says it's over,
-  /// or the audio can be started again (iOS doesn't always say).
-  private var interrupted = false
+  /// or the audio can be started again (iOS doesn't always say). It holds the built-in voice
+  /// too, or its clips would each fail to start and the rest of the answer would pass unheard.
+  private var interrupted = false {
+    didSet {
+      guard interrupted != oldValue else { return }
+      neural.held = heldForRoute || pausedByWearer || interrupted
+    }
+  }
   private var lastInterruptionRetry = Date.distantPast
   /// When the current hold started.
   private var heldSince: Date?
@@ -236,7 +242,7 @@ final class Speaker: NSObject {
   private(set) var heldForRoute = false {
     didSet {
       guard heldForRoute != oldValue else { return }
-      neural.held = heldForRoute || pausedByWearer
+      neural.held = heldForRoute || pausedByWearer || interrupted
       onHoldChanged?(heldForRoute)
     }
   }
@@ -245,7 +251,7 @@ final class Speaker: NSObject {
   private(set) var pausedByWearer = false {
     didSet {
       guard pausedByWearer != oldValue else { return }
-      neural.held = heldForRoute || pausedByWearer
+      neural.held = heldForRoute || pausedByWearer || interrupted
     }
   }
   /// True while the glasses take a photo, which briefly drops their audio.
@@ -392,10 +398,15 @@ final class Speaker: NSObject {
   /// After a call or Siri, iOS leaves the app's audio stopped: start it again, or with the
   /// phone locked the app can be suspended partway through a solve.
   private func interruptionEnded() {
-    interrupted = false
     lastProgress = Date()
-    guard isActive || answerOpen || keepAlivePlayer != nil else { return }
+    guard isActive || answerOpen || keepAlivePlayer != nil else {
+      interrupted = false
+      return
+    }
     activateSession()
+    // After the session is active again, so the built-in voice's restart (on its hold lifting)
+    // can succeed.
+    interrupted = false
     if let player = keepAlivePlayer, !player.isPlaying {
       let started = player.play()
       diag("audio", "keep-alive \(started ? "restarted" : "FAILED to restart") after the interruption")
