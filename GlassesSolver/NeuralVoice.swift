@@ -150,6 +150,9 @@ final class NeuralVoice {
   private var azureFailedAt: Date?
   private var producing = false
   private var playing = false
+  /// Pieces the voice couldn't make, passed to `onFailure` once the clip playing now has
+  /// finished, so Apple's voice doesn't talk over it.
+  private var failedTokens: [Int]?
   /// Wakes the player when a clip is ready (or making stops).
   private var readySignal: Waiter?
   /// Bumped by `stop`, so work from before it is dropped.
@@ -251,6 +254,7 @@ final class NeuralVoice {
     ready.removeAll()
     producing = false
     playing = false
+    failedTokens = nil
     // Also when paused (a hold), so the old clip is dropped rather than played on release.
     if connectedRate != 0 { player.stop() }
     finishPlaying?.finish()
@@ -309,8 +313,13 @@ final class NeuralVoice {
         ready.removeAll()
         pending.removeAll()
         producing = false
-        wakePlayer()
-        onFailure?(tokens)
+        if playing {
+          // playAll hands these over when its current clip ends.
+          failedTokens = (failedTokens ?? []) + tokens
+          wakePlayer()
+        } else {
+          onFailure?(tokens)
+        }
         return
       }
       guard current == generation, !pending.isEmpty else { break }
@@ -415,7 +424,12 @@ final class NeuralVoice {
         onEnd?(item.token)
       }
     }
-    if current == generation { playing = false }
+    guard current == generation else { return }
+    playing = false
+    if let tokens = failedTokens {
+      failedTokens = nil
+      onFailure?(tokens)
+    }
   }
 
   /// Logs a wait for the next clip (dead air), so a slow phone or network shows up in the
@@ -528,7 +542,9 @@ final class NeuralVoice {
       }
       (channel + audio.samples.count).initialize(repeating: 0, count: silence)
     }
-    guard startEngine(format: format) else { return }
+    // While held (a call, Siri, a pause), iOS may refuse to start the engine. The clip is
+    // scheduled anyway and plays when the hold lifts, instead of being skipped unheard.
+    guard startEngine(format: format) || held else { return }
     var waiterForThisClip: Waiter?
     var watchdog: Task<Void, Never>?
     let seconds = Double(frames) / Double(audio.sampleRate)
