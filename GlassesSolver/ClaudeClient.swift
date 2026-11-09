@@ -138,11 +138,12 @@ struct ClaudeClient: Sendable {
     Write: 0 equals, 3 times x minus 3, times x plus 1 || 0 = 3(x - 3)(x + 1)
     Write: x equals negative 1, or x equals 3, the critical numbers || x = -1 \\quad\\text{or}\\quad \
     x = 3 \\quad \\text{CN}
-    Write: a sign chart, critical numbers negative 1 and 3, test points negative 2, 0 and 4, f \
-    prime is plus, then minus, then plus, so a max at negative 1 and a min at 3 || \
-    \\begin{array}{r|ccccc} x & & -1 & & 3 & \\\\ \\hline \\text{test} & -2 & & 0 & & 4 \\\\ \
-    f'(x) & + & 0 & - & 0 & + \\\\ f & \\nearrow & \\text{max} & \\searrow & \\text{min} & \
-    \\nearrow \\end{array}
+    Write: a sign chart, intervals negative infinity to negative 1, negative 1 to 3, and 3 to \
+    infinity, test values negative 2, 0 and 4, f prime is 15, negative 9 and 15, so plus, \
+    minus, plus, increasing, decreasing, increasing || {\\footnotesize \\begin{array}{|c|c|c|c|} \
+    \\hline \\text{Interval} & (-\\infty,-1) & (-1,3) & (3,\\infty) \\\\ \\hline \\text{Test } \
+    x & -2 & 0 & 4 \\\\ \\hline f'(x) & 15 & -9 & 15 \\\\ \\hline \\text{Sign} & + & - & + \\\\ \
+    \\hline f & \\text{inc} & \\text{dec} & \\text{inc} \\\\ \\hline \\end{array}}
     Sentence: increasing on negative infinity to negative 1 and 3 to infinity || \\text{inc on } \
     (-\\infty, -1) \\cup (3, \\infty)
     Sentence: decreasing on negative 1 to 3 || \\text{dec on } (-1, 3)
@@ -268,14 +269,14 @@ struct ClaudeClient: Sendable {
     - Short labels in \\text{...}, only where they shorten the work: CN, inc, dec, max, min, CU, \
     CD, L'H, MVT, DNE. Where f prime is undefined but f isn't defined either: x = -1 \\quad \
     \\text{not in domain, not CN}.
-    - Sign analysis is a small sign chart on one Write line, laid out as in the example so each \
-    row means one thing: the x row holds only the critical numbers (and domain breaks), each in \
-    its own column; the test row puts a test point in each gap between them; the f'(x) row has \
-    the sign under each test point and 0 under each critical number (\\text{DNE} where f' is \
-    undefined or f isn't defined); the f row has \\nearrow or \\searrow for each gap and \
-    \\text{max} or \\text{min} where the sign changes. Then the intervals in Sentences. For \
-    concavity the same, with an f''(x) row and \\text{CU}, \\text{CD} and \\text{IP} (only \
-    where the concavity changes and f is defined).
+    - Sign analysis is the textbook interval table, on one Write line, drawn as a grid exactly \
+    as in the example: {\\footnotesize \\begin{array}{|c|c|...|} with \\hline between rows, one \
+    column per test interval (split at the critical numbers and at any x where f isn't \
+    defined), and the rows Interval, Test x, f'(x) (the test value put into f', because the \
+    instructor gives no points for a sign without the value tested), Sign, and f (inc or dec). \
+    The footnotesize keeps it on a phone screen. Then the intervals in Sentences, and the First \
+    Derivative Test for extrema. For concavity the same table with an f''(x) row and CU or CD \
+    in the last row; an inflection point only where the concavity changes and f is defined.
     - L'Hopital: the limit with its form beside it, \\quad \\frac{0}{0} or \\quad \
     \\frac{\\infty}{\\infty}; then the next line, = \\lim ... \\quad \\text{L'H}, with the \
     derivatives of the top and the bottom. A form that isn't indeterminate is evaluated \
