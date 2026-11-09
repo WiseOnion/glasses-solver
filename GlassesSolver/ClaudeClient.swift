@@ -221,7 +221,7 @@ struct ClaudeClient: Sendable {
   /// How math's written work is tagged and typeset for the phone (it's never spoken).
   static let mathWorkRules = """
     PEN LINES
-    The Work is what a careful student writes on the test, running down the page with one \
+    The Work is what a careful student writes on paper, running down the page with one \
     meaningful move per line: distribute, combine like terms, factor, substitute, \
     differentiate, set equal to 0, solve, simplify. Never squeeze several moves into one line \
     as = ... = ... = .... Show the distribution, the combining of terms, the factoring that \
@@ -951,9 +951,9 @@ private struct APIErrorResponse: Decodable {
 }
 
 extension ClaudeClient {
-  /// What the photos are: math to copy by hand line by line (the default), or a chemistry
-  /// test: multiple choice answered with a letter to bubble on a scantron, and problems that
-  /// need work shown dictated line by line like math.
+  /// What the photos are: math to copy by hand line by line (the default), or chemistry
+  /// practice: multiple choice answered with a letter, and problems that need work shown
+  /// dictated line by line like math.
   enum Subject: String, CaseIterable, Sendable {
     case math, chemistry
 
@@ -1003,8 +1003,9 @@ extension ClaudeClient {
   /// textbook (core electrons), the instructor's rule wins.
   static let chemistrySystem = """
     Your reply is spoken by a text-to-speech voice through the speakers in the listener's \
-    glasses. They can't see anything you write. They are taking a chemistry test or quiz. On \
-    a multiple-choice question they fill in a scantron bubble as you say the answer; on a \
+    glasses. They can't see anything you write. They are studying chemistry: homework, a \
+    practice exam, or reviewing a quiz. On a multiple-choice question they mark the answer as \
+    you say it; on a \
     question that needs work shown (a blank to fill in, a calculation), they copy your worked \
     solution onto paper by ear, line by line. Every letter and number you give must be right \
     and impossible to mishear.

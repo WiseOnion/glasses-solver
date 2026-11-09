@@ -64,7 +64,7 @@ final class Speaker: NSObject {
   private static let problemPause: TimeInterval = 2
   /// After "Question 4." on a multiple-choice test: time to find the row on the answer sheet.
   private static let questionPause: TimeInterval = 0.8
-  /// After a multiple-choice "Answer:" line: time to fill in the bubble.
+  /// After a multiple-choice "Answer:" line: time to mark it.
   private static let answerPause: TimeInterval = 2
 
   var rate: Float = Speaker.defaultRate
@@ -159,7 +159,7 @@ final class Speaker: NSObject {
       case continueLine
       /// "Mark:" crosses out, draws a box, and so on.
       case mark
-      /// "Answer:" on a multiple-choice test: the letter and the choice, to fill in a bubble.
+      /// "Answer:" on a multiple-choice question: the letter and the choice, to mark.
       case choice
     }
 
@@ -1010,7 +1010,7 @@ final class Speaker: NSObject {
       return prose + [Segment(text: "\(name).", rate: rate, pauseAfter: pause, penLine: nil)]
     }
     if let answer = Self.answerLine(in: paragraph) {
-      // A multiple-choice answer: said once, then time to fill in the bubble. It counts as the
+      // A multiple-choice answer: said once, then time to mark it. It counts as the
       // question's line, so a double-tap repeats it and the written page follows it.
       lineNumber += 1
       let line = PenLine(kind: .choice, text: answer, number: lineNumber)
