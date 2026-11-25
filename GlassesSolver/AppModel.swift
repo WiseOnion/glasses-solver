@@ -448,7 +448,7 @@ final class AppModel {
     self.testMode = UserDefaults.standard.bool(forKey: Self.testModeDefaultsKey)
     self.sendToCalculator = UserDefaults.standard.bool(forKey: Self.sendToCalculatorDefaultsKey)
     self.calcHost = UserDefaults.standard.string(forKey: Self.calcHostDefaultsKey)
-    self.fastAnswers =UserDefaults.standard.object(forKey: Self.fastAnswersDefaultsKey) as? Bool ?? true
+    self.fastAnswers = UserDefaults.standard.object(forKey: Self.fastAnswersDefaultsKey) as? Bool ?? true
     self.subject = UserDefaults.standard.string(forKey: Self.subjectDefaultsKey).flatMap(ClaudeClient.Subject.init)
       ?? .math
     // A photo is always a solve unless a check is asked for (the glasses' double press, or
