@@ -69,7 +69,12 @@
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>Needed to connect to your Meta AI glasses.</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>This lets your phone find and connect to your glasses over Wi-Fi.</string>
+	<string>This lets your phone find and connect to your glasses over Wi-Fi, and to the StepWise laptop on your hotspot.</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_bonjour._tcp</string>

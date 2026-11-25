@@ -34,6 +34,8 @@ final class AppModel {
   private static let azureRegionDefaultsKey = "azureRegion"
   private static let azureVoiceDefaultsKey = "azureVoice"
   private static let reverseSwipesDefaultsKey = "reverseSwipes"
+  private static let sendToCalculatorDefaultsKey = "sendToCalculator"
+  private static let calcHostDefaultsKey = "calcHost"
   /// A sample in the style the system prompt asks for, including dictated Write lines.
   private static let sampleAnswer = """
     I can see problem 3.
@@ -196,7 +198,17 @@ final class AppModel {
   var testMode: Bool {
     didSet { UserDefaults.standard.set(testMode, forKey: Self.testModeDefaultsKey) }
   }
-  var canSolve: Bool { hasAPIKey || testMode }
+  var canSolve: Bool { hasAPIKey || testMode || sendToCalculator }
+
+  /// Math photos go to the StepWise laptop, which solves them and shows the work on the TI-84.
+  /// The phone needs no API key for these: the laptop holds its own.
+  var sendToCalculator: Bool {
+    didSet { UserDefaults.standard.set(sendToCalculator, forKey: Self.sendToCalculatorDefaultsKey) }
+  }
+  /// The laptop's address when it last answered. Found again by itself when it changes.
+  private(set) var calcHost: String? {
+    didSet { UserDefaults.standard.set(calcHost, forKey: Self.calcHostDefaultsKey) }
+  }
 
   /// Claude's fast mode: the same model and care, about twice as quick to answer, at twice
   /// the price (a page costs roughly 10 to 20 cents instead of 5 to 10).
@@ -363,7 +375,8 @@ final class AppModel {
   var statusText: String {
     switch phase {
     case .capturing: return "Taking a photo with your glasses…"
-    case .thinking: return "Claude is working it out…"
+    case .thinking:
+      return sendToCalculator && subject == .math ? "The laptop is working it out…" : "Claude is working it out…"
     case .idle:
       if sessionActive {
         return sessionPaused
@@ -433,7 +446,9 @@ final class AppModel {
     self.useHighResPhoto = UserDefaults.standard.bool(forKey: Self.highResDefaultsKey)
     self.savePhotosToLibrary = UserDefaults.standard.bool(forKey: Self.savePhotosDefaultsKey)
     self.testMode = UserDefaults.standard.bool(forKey: Self.testModeDefaultsKey)
-    self.fastAnswers = UserDefaults.standard.object(forKey: Self.fastAnswersDefaultsKey) as? Bool ?? true
+    self.sendToCalculator = UserDefaults.standard.bool(forKey: Self.sendToCalculatorDefaultsKey)
+    self.calcHost = UserDefaults.standard.string(forKey: Self.calcHostDefaultsKey)
+    self.fastAnswers =UserDefaults.standard.object(forKey: Self.fastAnswersDefaultsKey) as? Bool ?? true
     self.subject = UserDefaults.standard.string(forKey: Self.subjectDefaultsKey).flatMap(ClaudeClient.Subject.init)
       ?? .math
     // A photo is always a solve unless a check is asked for (the glasses' double press, or
@@ -1267,7 +1282,7 @@ final class AppModel {
   /// arrives. The rest of the reply (explanation, written work) keeps arriving after that, and
   /// the next problem is prepared in the background.
   private func runMath() async {
-    guard Keychain.read(Self.apiKeyAccount) != nil || testMode else {
+    guard Keychain.read(Self.apiKeyAccount) != nil || testMode || sendToCalculator else {
       hasAPIKey = false
       return
     }
@@ -1336,6 +1351,10 @@ final class AppModel {
         isTest: testMode, sessionID: chatSessionID)
       return
     }
+    if sendToCalculator && !testMode {
+      await runCalculator(photo: photo, jpeg: jpeg, sessionID: chatSessionID)
+      return
+    }
     let space = MathWorkspace(photo: photo, jpeg: jpeg)
     workspace = space
     displacedWorkspace = nil
@@ -1345,6 +1364,66 @@ final class AppModel {
     defer { cue.cancel() }
     await prepare(nil, in: space.id, sessionID: chatSessionID)
     if phase == .thinking { phase = .idle }
+  }
+
+  /// A math photo in calculator mode: the StepWise laptop finds the problems, solves and checks
+  /// them, and shows the work on the TI-84. The phone uploads the photo and says the laptop's
+  /// short cues ("Got 5 problems.", "Answer on calculator."). A newer photo stops the waiting
+  /// here, never the laptop: it finishes every photo in the order they were taken.
+  private func runCalculator(photo: Data, jpeg: Data, sessionID: UUID?) async {
+    phase = .thinking
+    defer { if phase == .thinking { phase = .idle } }
+    let captureID = UUID().uuidString
+    do {
+      guard let host = await CalcBridge.find(saved: calcHost) else { throw CalcBridge.BridgeError.notFound }
+      if host != calcHost { calcHost = host }
+      try Task.checkCancellation()
+      var bridge = CalcBridge(host: host)
+      var job = try await bridge.upload(jpeg: jpeg, captureID: captureID)
+      timing.mark("photo on the laptop")
+      diag("calc", "photo sent to the laptop at \(host): job \(job.id)")
+      var spoken = 0
+      var misses = 0
+      while true {
+        if job.cue.n > spoken {
+          spoken = job.cue.n
+          if !job.cue.text.isEmpty { say(job.cue.text, after: true) }
+        }
+        if job.isFinished { break }
+        try await Task.sleep(for: .milliseconds(700))
+        do {
+          job = try await bridge.job(job.id)
+          misses = 0
+        } catch let error as CalcBridge.BridgeError {
+          throw error
+        } catch {
+          try Task.checkCancellation()
+          // The hotspot drops for a moment now and then, and the laptop keeps working meanwhile.
+          // Its address can change when it rejoins, so look for it again every few misses.
+          misses += 1
+          if misses >= 40 { throw error }
+          if misses % 8 == 0, let found = await CalcBridge.find(saved: nil), found != bridge.host {
+            diag("calc", "the laptop moved from \(bridge.host) to \(found)")
+            bridge = CalcBridge(host: found)
+            calcHost = found
+          }
+        }
+      }
+      diag("calc", "OUTCOME calculator-\(job.status): \(job.message)")
+      conversation.add(
+        prompt: "Calculator", photo: photo, answer: job.succeeded ? job.summary : nil,
+        error: job.succeeded ? nil : job.message, isTest: false, sessionID: sessionID)
+    } catch is CancellationError {
+      diag("calc", "stopped waiting on the laptop for a newer photo (the laptop still finishes this one)")
+    } catch {
+      if Task.isCancelled { return }
+      diag("calc", "OUTCOME calculator-unreachable: \(ErrorDetail.describe(error))")
+      errorMessage = error.localizedDescription
+      say("Can't reach the laptop.", meaningful: false)
+      conversation.add(
+        prompt: "Calculator", photo: photo, answer: nil, error: error.localizedDescription, isTest: false,
+        sessionID: sessionID)
+    }
   }
 
   /// "Still working." once a wait passes 20 seconds, then every 40, until the answer comes.

@@ -536,6 +536,17 @@ struct SettingsView: View {
           Text("Fast Answers start sooner and cost more. Sharper Photos read small print better but take longer. Save Photos to Photos adds each photo your glasses take to your library.")
         }
 
+        Section {
+          Toggle("Show Work on Calculator", isOn: $model.sendToCalculator)
+          if model.sendToCalculator {
+            LabeledContent("Laptop", value: model.calcHost ?? "Found on the first photo")
+          }
+        } header: {
+          Text("StepWise")
+        } footer: {
+          Text("Math photos go to the StepWise laptop, which solves them and shows each step on your TI-84. Start StepWise on the laptop and join it to this phone's hotspot. The phone finds it by itself.")
+        }
+
         Section("Speaking") {
           NavigationLink {
             VoiceSettingsView(model: model)
